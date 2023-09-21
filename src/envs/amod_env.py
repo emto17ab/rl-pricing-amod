@@ -5,10 +5,12 @@ This file contains the specifications for the AMoD system simulator.
 """
 from collections import defaultdict
 import numpy as np
+import random
 import subprocess
 import os
 import networkx as nx
 from src.misc.utils import mat2str
+from src.envs.structures import generate_passenger
 from copy import deepcopy
 import json
 
@@ -21,16 +23,23 @@ class AMoD:
         self.rebTime = self.scenario.rebTime
         self.time = 0 # current time
         self.tf = scenario.tf # final time
+        self.passenger = dict() # passenger arrivals
+        self.queue = defaultdict(list) # passenger queue at each station
         self.demand = defaultdict(dict) # demand
         self.depDemand = dict()
         self.arrDemand = dict()
         self.region = list(self.G) # set of regions
         for i in self.region:
+            self.passenger[i] = defaultdict(list)
             self.depDemand[i] = defaultdict(float)
             self.arrDemand[i] = defaultdict(float)
             
         self.price = defaultdict(dict) # price
+        self.arrivals = 0 # total number of added passengers
         for i,j,t,d,p in scenario.tripAttr: # trip attribute (origin, destination, time of request, demand, price)
+            newp, self.arrivals = generate_passenger((i,j,t,d,p), self.arrivals)
+            self.passenger[i][t].extend(newp)
+            random.shuffle(self.passenger[i][t]) # shuffle passenger list at station so that the passengers are not served in destination order
             self.demand[i,j][t] = d
             self.price[i,j][t] = p
             self.depDemand[i][t] += d
@@ -69,6 +78,9 @@ class AMoD:
         self.reward = 0
         # observation: current vehicle distribution, time, future arrivals, demand        
         self.obs = (self.acc, self.time, self.dacc, self.demand)
+
+    def matching_simple(self):
+        """A simple version of matching """
 
     def matching(self, CPLEXPATH=None, PATH='', platform = 'linux'):
         t = self.time
@@ -226,6 +238,7 @@ class AMoD:
         self.obs = (self.acc, self.time, self.dacc, self.demand)      
         self.reward = 0
         return self.obs
+
 
 class Scenario:
     def __init__(self, N1=2, N2=4, tf=60, sd=None, ninit=5, tripAttr=None, demand_input=None, demand_ratio = None,
@@ -421,3 +434,4 @@ class Scenario:
                     tripAttr.append((i,j,t,demand[i,j][t],price[i,j][t]))
 
         return tripAttr
+
