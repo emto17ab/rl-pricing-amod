@@ -1,10 +1,11 @@
-from src.envs.helper_functions import choice_passenger
+import random
+import scipy.stats as stats
 
 
 class Passenger:
     """Passenger class"""
 
-    def __init__(self, id, origin, destination, request_time, price, assign_time=None, wait_time=0, choice=None, max_wait=5) -> None:
+    def __init__(self, id, origin, destination, request_time, price, assign_time=None, wait_time=0, choice=None, max_wait=3) -> None:
         """
         price: price set for the trip
         choice: choice model for passenger
@@ -20,7 +21,7 @@ class Passenger:
         self.choice = choice
         self.max_wait = max_wait
 
-    def unmatched(self):
+    def unmatched_update(self):
         """Update state of passenger if not matched. Return True if maximum waiting time is reached otherwise False."""
 
         self.wait_time += 1
@@ -29,7 +30,7 @@ class Passenger:
         else:
             return False
 
-    def matched(self, price, timestamp):
+    def match(self, timestamp):
         """Update state of passenger once get matched. Return True if the passenger accept the price otherwise False."""
         accept = choice_passenger(self.price, self.choice)
         if accept:
@@ -37,6 +38,18 @@ class Passenger:
             return True
         else:
             return False
+
+def choice_passenger(price, mtype=None):
+    """Choice model for passenger. Return 1 if accept else return 0."""
+    if mtype is None:
+        # Use default exponential disteibution
+        # reject_prob = stats.expon.cdf(price, scale=1/2)
+        reject_prob = 0
+        sample = random.uniform(0,1)
+        if sample <= reject_prob:
+            return 0
+        else:
+            return 1
 
 
 def generate_passenger(demand, arrivals=None):

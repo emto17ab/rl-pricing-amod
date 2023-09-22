@@ -39,7 +39,7 @@ class AMoD:
         for i,j,t,d,p in scenario.tripAttr: # trip attribute (origin, destination, time of request, demand, price)
             newp, self.arrivals = generate_passenger((i,j,t,d,p), self.arrivals)
             self.passenger[i][t].extend(newp)
-            random.shuffle(self.passenger[i][t]) # shuffle passenger list at station so that the passengers are not served in destination order
+            random.Random(42).shuffle(self.passenger[i][t]) # shuffle passenger list at station so that the passengers are not served in destination order
             self.demand[i,j][t] = d
             self.price[i,j][t] = p
             self.depDemand[i][t] += d
@@ -68,19 +68,70 @@ class AMoD:
         self.beta = beta * scenario.tstep # scenario.tstep: number of steps as one timestep
         t = self.time
         self.servedDemand = defaultdict(dict)
+        self.unservedDemand = defaultdict(dict)
         for i,j in self.demand:
             self.servedDemand[i,j] = defaultdict(float)
+            self.unservedDemand[i,j] = defaultdict(float)
         
         self.N = len(self.region) # total number of cells
         
         # add the initialization of info here
-        self.info = dict.fromkeys(['revenue', 'served_demand', 'rebalancing_cost', 'operating_cost'], 0)
+        self.info = dict.fromkeys(['revenue', 'served_demand', 'unserved_demand', 'rebalancing_cost', 'operating_cost'], 0)
         self.reward = 0
         # observation: current vehicle distribution, time, future arrivals, demand        
         self.obs = (self.acc, self.time, self.dacc, self.demand)
 
-    def matching_simple(self):
-        """A simple version of matching """
+    def match_step_simple(self):
+        """A simple version of matching. Match vehicle and passenger in a first-come-first-serve manner. """
+        t = self.time
+        self.reward = 0
+        self.ext_reward = np.zeros(self.nregion)
+
+        for n in self.region:
+            accCurrent = self.acc[n][t]
+            queueCurrent = self.queue[n] + self.passenger[n][t]
+            self.queue[n] = queueCurrent
+            # Match passenger in queue in order
+            matched_leave_index = [] # Index of matched and leaving passenger in queue
+            for i, pax in enumerate(queueCurrent):
+                if accCurrent!=0:
+                    accept = pax.match(t)
+                    if accept:
+                        matched_leave_index.append(i)
+                        accCurrent -= 1
+                        self.paxFlow[pax.origin,pax.destination][t+self.demandTime[pax.origin,pax.destination][t]] +=1
+                        self.dacc[pax.destination][t+self.demandTime[pax.origin,pax.destination][t]] += 1
+                        self.servedDemand[pax.origin,pax.destination][t] +=1
+                        self.reward += pax.price - self.demandTime[pax.origin,pax.destination][t]*self.beta
+                        self.ext_reward[n] += max(0, (self.demandTime[pax.origin,pax.destination][t]*self.beta))
+
+                        self.info['revenue'] += pax.price
+                        self.info['served_demand'] += 1
+                        self.info['operating_cost'] += self.demandTime[pax.origin,pax.destination][t]*self.beta
+                    else:
+                        leave = pax.unmatched_update()
+                        if leave:
+                            matched_leave_index.append(i)
+                            self.unservedDemand[pax.origin,pax.destination][t] +=1
+
+                            self.info['unserved_demand'] += 1
+                else:
+                    leave = pax.unmatched_update()
+                    if leave:
+                        matched_leave_index.append(i)
+                        self.unservedDemand[pax.origin,pax.destination][t] +=1
+
+                        self.info['unserved_demand'] += 1
+            # Update queue
+            self.queue[n] = [self.queue[n][i] for i in range(len(self.queue[n])) if i not in matched_leave_index]
+            # Update acc. Assuminf arriving vehicle will only be availbe for the next timestamp.
+            self.acc[n][t+1] = accCurrent
+
+        self.obs = (self.acc, self.time, self.dacc, self.demand) # for acc, the time index would be t+1, but for demand, the time index would be t
+        done = False # if passenger matching is executed first
+        ext_done = [done]*self.nregion
+        return self.obs, max(0,self.reward), done, self.info, self.ext_reward, ext_done
+
 
     def matching(self, CPLEXPATH=None, PATH='', platform = 'linux'):
         t = self.time
@@ -206,6 +257,8 @@ class AMoD:
         self.dacc = defaultdict(dict)
         self.rebFlow = defaultdict(dict)
         self.paxFlow = defaultdict(dict)
+        self.passenger = dict() 
+        self.queue = defaultdict(list)
         self.edges = []
         for i in self.G:
             self.edges.append((i,i))
@@ -214,9 +267,13 @@ class AMoD:
         self.edges = list(set(self.edges))
         self.demand = defaultdict(dict) # demand
         self.price = defaultdict(dict) # price
+        self.arrivals = 0
         tripAttr = self.scenario.get_random_demand(reset=True)
         self.regionDemand= defaultdict(dict)
         for i,j,t,d,p in tripAttr: # trip attribute (origin, destination, time of request, demand, price)
+            newp, self.arrivals = generate_passenger((i,j,t,d,p), self.arrivals)
+            self.passenger[i][t].extend(newp)
+            random.Random(42).shuffle(self.passenger[i][t])
             self.demand[i,j][t] = d
             self.price[i,j][t] = p
             if t not in self.regionDemand[i]:
@@ -234,6 +291,7 @@ class AMoD:
         t = self.time
         for i,j in self.demand:
             self.servedDemand[i,j] = defaultdict(float)
+            self.unservedDemand[i,j] = defaultdict(float)
          # TODO: define states here
         self.obs = (self.acc, self.time, self.dacc, self.demand)      
         self.reward = 0
