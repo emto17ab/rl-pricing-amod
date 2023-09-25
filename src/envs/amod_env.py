@@ -124,7 +124,7 @@ class AMoD:
                         self.info['unserved_demand'] += 1
             # Update queue
             self.queue[n] = [self.queue[n][i] for i in range(len(self.queue[n])) if i not in matched_leave_index]
-            # Update acc. Assuminf arriving vehicle will only be availbe for the next timestamp.
+            # Update acc. Assuming arriving vehicle will only be availbe for the next timestamp.
             self.acc[n][t+1] = accCurrent
 
         self.obs = (self.acc, self.time, self.dacc, self.demand) # for acc, the time index would be t+1, but for demand, the time index would be t

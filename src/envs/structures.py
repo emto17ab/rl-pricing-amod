@@ -5,7 +5,7 @@ import scipy.stats as stats
 class Passenger:
     """Passenger class"""
 
-    def __init__(self, id, origin, destination, request_time, price, assign_time=None, wait_time=0, choice=None, max_wait=3) -> None:
+    def __init__(self, id, origin, destination, request_time, price, assign_time=None, wait_time=0, choice=None, max_wait=5) -> None:
         """
         price: price set for the trip
         choice: choice model for passenger
@@ -46,7 +46,7 @@ def choice_passenger(price, mtype=None):
         # reject_prob = stats.expon.cdf(price, scale=1/2)
         reject_prob = 0
         sample = random.uniform(0,1)
-        if sample <= reject_prob:
+        if sample < reject_prob:
             return 0
         else:
             return 1
