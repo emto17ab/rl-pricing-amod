@@ -4,13 +4,15 @@ Minimal Rebalancing Cost
 This file contains the specifications for the Min Reb Cost problem.
 """
 import os
+import math
 import subprocess
 from collections import defaultdict
 from src.misc.utils import mat2str
 
 def solveRebFlow(env,res_path,desiredAcc,CPLEXPATH):
     t = env.time
-    accRLTuple = [(n,int(round(desiredAcc[n]))) for n in desiredAcc]
+    accTotal = sum([env.acc[n][t+1] for n in env.acc])
+    accRLTuple = [(n,math.floor((accTotal * desiredAcc[n]))) for n in desiredAcc]
     accTuple = [(n,int(env.acc[n][t+1])) for n in env.acc]
     edgeAttr = [(i,j,env.G.edges[i,j]['time']) for i,j in env.G.edges]
     modPath = os.getcwd().replace('\\','/')+'/src/cplex_mod/'
