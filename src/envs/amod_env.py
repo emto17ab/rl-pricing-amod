@@ -76,7 +76,7 @@ class AMoD:
         self.N = len(self.region) # total number of cells
         
         # add the initialization of info here
-        self.info = dict.fromkeys(['revenue', 'served_demand', 'unserved_demand', 'rebalancing_cost', 'operating_cost'], 0)
+        self.info = dict.fromkeys(['revenue', 'served_demand', 'unserved_demand', 'rebalancing_cost', 'operating_cost', 'served_waiting'], 0)
         self.reward = 0
         # observation: current vehicle distribution, time, future arrivals, demand        
         self.obs = (self.acc, self.time, self.dacc, self.demand)
@@ -88,8 +88,11 @@ class AMoD:
         self.ext_reward = np.zeros(self.nregion)
 
         for n in self.region:
+
             accCurrent = self.acc[n][t]
-            queueCurrent = self.queue[n] + self.passenger[n][t]
+            # Update current queue
+            new_enterq = [pax for pax in self.passenger[n][t] if pax.enter()]
+            queueCurrent = self.queue[n] + new_enterq
             self.queue[n] = queueCurrent
             # Match passenger in queue in order
             matched_leave_index = [] # Index of matched and leaving passenger in queue
@@ -108,6 +111,7 @@ class AMoD:
                         self.info['revenue'] += pax.price
                         self.info['served_demand'] += 1
                         self.info['operating_cost'] += self.demandTime[pax.origin,pax.destination][t]*self.beta
+                        self.info['served_waiting'] += pax.wait_time
                     else:
                         leave = pax.unmatched_update()
                         if leave:
@@ -264,6 +268,8 @@ class AMoD:
             self.edges.append((i,i))
             for e in self.G.out_edges(i):
                 self.edges.append(e)
+        for i in self.region:
+            self.passenger[i] = defaultdict(list)
         self.edges = list(set(self.edges))
         self.demand = defaultdict(dict) # demand
         self.price = defaultdict(dict) # price

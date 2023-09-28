@@ -11,8 +11,7 @@ from src.misc.utils import mat2str
 
 def solveRebFlow(env,res_path,desiredAcc,CPLEXPATH):
     t = env.time
-    accTotal = sum([env.acc[n][t+1] for n in env.acc])
-    accRLTuple = [(n,math.floor((accTotal * desiredAcc[n]))) for n in desiredAcc]
+    accRLTuple = [(n,int(desiredAcc[n])) for n in desiredAcc]
     accTuple = [(n,int(env.acc[n][t+1])) for n in env.acc]
     edgeAttr = [(i,j,env.G.edges[i,j]['time']) for i,j in env.G.edges]
     modPath = os.getcwd().replace('\\','/')+'/src/cplex_mod/'
