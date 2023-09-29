@@ -11,4 +11,4 @@ def demand_update(d_ori, p, ph, pf):
     pf: reference price.
     
     """
-    return d_ori*(ph-p)/(ph-pf)
+    return round(d_ori*(ph-p)/(ph-pf))

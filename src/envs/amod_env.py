@@ -10,19 +10,22 @@ import subprocess
 import os
 import networkx as nx
 from src.misc.utils import mat2str
+from src.misc.helper_functions import demand_update
 from src.envs.structures import generate_passenger
 from copy import deepcopy
 import json
 
 class AMoD:
     # initialization
-    def __init__(self, scenario, beta=0.2): # updated to take scenario and beta (cost for rebalancing) as input 
+    def __init__(self, scenario, mode, beta=0.2): # updated to take scenario and beta (cost for rebalancing) as input 
         self.scenario = deepcopy(scenario) # I changed it to deep copy so that the scenario input is not modified by env 
+        self.mode = mode # Mode of rebalancing
         self.G = scenario.G # Road Graph: node - regiocon'dn, edge - connection of regions, node attr: 'accInit', edge attr: 'time'
         self.demandTime = self.scenario.demandTime
         self.rebTime = self.scenario.rebTime
         self.time = 0 # current time
         self.tf = scenario.tf # final time
+        self.tstep = scenario.tstep # TODO: set tstep if the scenario is not based on real data
         self.passenger = dict() # passenger arrivals
         self.queue = defaultdict(list) # passenger queue at each station
         self.demand = defaultdict(dict) # demand
@@ -37,9 +40,6 @@ class AMoD:
         self.price = defaultdict(dict) # price
         self.arrivals = 0 # total number of added passengers
         for i,j,t,d,p in scenario.tripAttr: # trip attribute (origin, destination, time of request, demand, price)
-            newp, self.arrivals = generate_passenger((i,j,t,d,p), self.arrivals)
-            self.passenger[i][t].extend(newp)
-            random.Random(42).shuffle(self.passenger[i][t]) # shuffle passenger list at station so that the passengers are not served in destination order
             self.demand[i,j][t] = d
             self.price[i,j][t] = p
             self.depDemand[i][t] += d
@@ -81,8 +81,12 @@ class AMoD:
         # observation: current vehicle distribution, time, future arrivals, demand        
         self.obs = (self.acc, self.time, self.dacc, self.demand)
 
-    def match_step_simple(self):
-        """A simple version of matching. Match vehicle and passenger in a first-come-first-serve manner. """
+    def match_step_simple(self, price=None):
+        """
+        A simple version of matching. Match vehicle and passenger in a first-come-first-serve manner. 
+
+        price: list of price for eacj region. Default None.
+        """
         t = self.time
         self.reward = 0
         self.ext_reward = np.zeros(self.nregion)
@@ -91,6 +95,18 @@ class AMoD:
 
             accCurrent = self.acc[n][t]
             # Update current queue
+            for j in self.G[n]:
+                d = self.demand[n,j][t]
+                p = self.price[n,j][t]
+                if (price is not None) and (sum(price) != 0):
+                    # TODO: Different demand model, scaling, and price
+                    p_ori = p
+                    p = 10 + max(self.demandTime[n,j][t]*self.tstep - 6, 0)*price[n].item()
+                    d = max(demand_update(d, p, 2*p, p_ori), 0)
+                newp, self.arrivals = generate_passenger((n,j,t,d,p), self.arrivals)
+                self.passenger[n][t].extend(newp)
+                random.Random(42).shuffle(self.passenger[n][t]) # shuffle passenger list at station so that the passengers are not served in destination order
+
             new_enterq = [pax for pax in self.passenger[n][t] if pax.enter()]
             queueCurrent = self.queue[n] + new_enterq
             self.queue[n] = queueCurrent
@@ -132,7 +148,10 @@ class AMoD:
             self.acc[n][t+1] = accCurrent
 
         self.obs = (self.acc, self.time, self.dacc, self.demand) # for acc, the time index would be t+1, but for demand, the time index would be t
-        done = False # if passenger matching is executed first
+        if (self.mode == 0) | (self.mode == 2):
+            done = False # if rebalancing needs to be carried out after
+        elif self.mode == 1:
+            done = (self.tf == t+1)
         ext_done = [done]*self.nregion
         return self.obs, max(0,self.reward), done, self.info, self.ext_reward, ext_done
 
@@ -277,9 +296,6 @@ class AMoD:
         tripAttr = self.scenario.get_random_demand(reset=True)
         self.regionDemand= defaultdict(dict)
         for i,j,t,d,p in tripAttr: # trip attribute (origin, destination, time of request, demand, price)
-            newp, self.arrivals = generate_passenger((i,j,t,d,p), self.arrivals)
-            self.passenger[i][t].extend(newp)
-            random.Random(42).shuffle(self.passenger[i][t])
             self.demand[i,j][t] = d
             self.price[i,j][t] = p
             if t not in self.regionDemand[i]:
@@ -313,7 +329,7 @@ class Scenario:
         #          float/int - total demand out of each region satisfies uniform distribution on [0, demand_input]
         #          dict/defaultdict - total demand between pairs of regions
         # demand_input will be converted to a variable static_demand to represent the demand between each pair of nodes
-        # static_demand will then be sampled according to a Poisson distribution
+        # static_demand will then be sampled according to a Poisson distributionjson_tstep
         # alpha: parameter for uniform distribution of demand levels - [1-alpha, 1+alpha] * demand_input
         self.sd = sd
         if sd != None:

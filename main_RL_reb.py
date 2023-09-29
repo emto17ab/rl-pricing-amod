@@ -36,6 +36,8 @@ parser.add_argument('--json_tstep', type=int, default=3, metavar='S',
 # Model parameters
 parser.add_argument('--test', type=bool, default=False,
                     help='activates test mode for agent evaluation')
+parser.add_argument('--mode', type=int, default=0,
+                    help='rebalancing mode. (0:manul, 1:pricing, 2:both. default 0)')
 parser.add_argument('--cplexpath', type=str, default="C:/Program Files/IBM/ILOG/CPLEX_Studio201/opl/bin/x64_win64/",
                     help='defines directory of the CPLEX installation')
 parser.add_argument('--directory', type=str, default='saved_files',
@@ -85,104 +87,127 @@ for city in train_env + test_env:
 # Define AMoD Simulator Environment
 city = np.random.choice(train_env) # initially sample a random city from the meta-training set
 scenario = Scenario(json_file=f"data/scenario_{city}.json", demand_ratio=args.demand_ratio[city], json_hr=args.json_hr[city], sd=args.seed, json_tstep=args.json_tstep, tf=args.max_steps)
-env = AMoD(scenario, beta=args.beta[city])
+env = AMoD(scenario, args.mode, beta=args.beta[city])
 # Initialize A2C-GNN
-agent = A2C(env=env, input_size=36, hidden_size=args.hidden_size, clip=args.clip, env_baseline=env_baseline).to(device)
 parser = GNNParser(env, json_file=f"data/scenario_{city}.json")
+agent = A2C(env=env, input_size=parser.nfeatures, hidden_size=args.hidden_size, clip=args.clip, env_baseline=env_baseline,mode=args.mode).to(device)
 
 if not args.test:
     #######################################
     #############Training Loop#############
     #######################################
+    num_iter = args.max_trials #set max number of trials
+    iterations = trange(num_iter) #trial iterator
     num_episodes = args.max_episodes #set number of episodes within one trial
-    iterations = trange(num_episodes) #episode iterator
     # initialize lists for book-keeping
-    episode_reward_list = [] 
-    episode_waiting_list = []
     avg_episode_reward = []
-    task_reward_list = []
+    epoch_reward_list = []
+    epoch_waiting_list = []
     a_grad_norms_list = []
     v_grad_norms_list = []
-
-    task_reward = 0
-    episode_reward_list = []
-    # initialize placeholder values for RL2 
-    #
-    # we define reward (both from customer dispatching and rebalancing) and "done" signal at node level
-    #
-    a_t = torch.zeros((env.nregion, 1)).float() # previous action
-    ext1_r_t = torch.zeros((env.nregion, 1)).float() # previous dispacthing reward for all nodes
-    ext2_r_t = torch.zeros((env.nregion, 1)).float() # previous rebalancing reward for all nodes
-    ext_d_t = [False]*env.nregion # previous done-signal for all nodes
-    ext_d_t = torch.tensor(ext_d_t).view(env.nregion, 1)
-    h_t_a = torch.zeros((env.nregion, agent.hidden_size)).float() # actor graph-GRU hidden state
-    h_t_c = torch.zeros((env.nregion, agent.hidden_size)).float() # critic graph-GRU hidden state
     seed = np.random.randint(low=0, high=100000) # select a different random seed to allow consistency across episodes
-    for episode in iterations:
-        # initialize AMoD Simulator Environment (fixed across trial)
-        np.random.seed(seed)
-        scenario = Scenario(json_file=f"data/scenario_{city}.json", demand_ratio=args.demand_ratio[city], json_hr=args.json_hr[city], sd=None, json_tstep=args.json_tstep, tf=args.max_steps)
-        env = AMoD(scenario, beta=beta[city])
-        parser = GNNParser(env, json_file=f"data/scenario_{city}.json")
-        d_t = False
-        obs = env.reset() # reset environment
-        # initialize episode-level book-keeping variables
-        episode_reward = 0
-        episode_served_demand = 0
-        episode_rebalancing_cost = 0
-        episode_waiting = 0
-        episode_ext_reward = np.zeros(env.nregion)
-        episode_ext_paxreward = np.zeros(env.nregion)
-        episode_ext_rebreward = np.zeros(env.nregion)
-        while not d_t:
-            # take matching step (Step 1 in paper)
-            o_t, paxreward, d_t, info, ext_paxreward, ext_done = env.match_step_simple()
-            episode_reward += paxreward
-            episode_ext_paxreward += ext_paxreward
-            episode_ext_reward += ext_paxreward
-            ext1_r_t = torch.from_numpy(ext_paxreward).view(env.nregion, 1)
-            # parse raw environment observations
-            data = parser.parse_obs(o_t, a_t, ext1_r_t, ext2_r_t, ext_d_t)
-            # use GNN-RL policy (Step 2 in paper)
-            a_t, h_t_a, h_t_c = agent.select_action(data, h_t_a, h_t_c)
-            # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
-            desiredAcc = {env.region[i]: int(a_t[i] *dictsum(env.acc,env.time+1))for i in range(len(env.region))}
-            # solve minimum rebalancing distance problem (Step 3 in paper)
-            rebAction = solveRebFlow(env=env,res_path='metarl-amod',desiredAcc=desiredAcc,CPLEXPATH=args.cplexpath)
-            # take action in environment
-            o_t, rebreward, d_t, info, ext_rebreward, ext_done = env.reb_step(rebAction)
-            # book-keeping
-            episode_reward += rebreward
-            episode_ext_paxreward += ext_rebreward
-            episode_ext_reward += ext_rebreward
-            ext2_r_t = torch.from_numpy(ext_rebreward).view(env.nregion, 1) 
-            ext_d_t = torch.from_numpy(np.array(ext_done)).view(env.nregion, 1)
-            r_t = paxreward + rebreward
-            task_reward += r_t
-            episode_served_demand += info['served_demand']
-            episode_rebalancing_cost += info['rebalancing_cost']
-            episode_waiting += info['served_waiting']
-            a_t = a_t.view(env.nregion, 1).float() #ensure shape consistency of action
-            # store the transition in memory
-            agent.rewards.append(r_t) 
-            # update the buffer to compute the environment dependent baseline (i.e., standardize rewards across cities)
-            if len(agent.env_baseline[city]) <= 1000: # if len buffer <= max, then: append
-                agent.env_baseline[city].append(r_t)
-            else: # else, replace oldest entry
-                _ = agent.env_baseline[city].pop(0)
-                agent.env_baseline[city].append(r_t)
-        episode_reward_list.append(episode_reward)
-        episode_waiting_list.append(episode_waiting/episode_served_demand)
-        iterations.set_description(f"{city} - Episode {episode+1} | Episode Reward: {episode_reward} | Episode average waiting: {episode_waiting/episode_served_demand}")
-    # perform on-policy backprop
-    grad_norms = agent.training_step(city=city)
-    a_grad_norms_list.append(grad_norms['a_grad_norm'])
-    v_grad_norms_list.append(grad_norms['v_grad_norm'])
-    # Send current statistics to screen
-    # iterations.set_description(f"{city} | Task Reward: {task_reward:.2f} | Grad Norms: Actor={grad_norms['a_grad_norm']:.2f}, Critic={grad_norms['v_grad_norm']:.2f}")
-    np.save(f"{args.directory}/train_logs/{city}_rewards_waiting.npy", np.array([episode_reward_list,episode_waiting_list]))
-    # Checkpoint best performing model
-    agent.save_checkpoint(path=f"{args.directory}/rl_logs/a2c_gnn.pth")
+
+    for epoch in iterations:
+        epoch_reward = 0
+        episode_reward_list = [] 
+        episode_waiting_list = []
+        # initialize placeholder values for RL2 
+        #
+        # we define reward (both from customer dispatching and rebalancing) and "done" signal at node level
+        #
+        a_t = torch.zeros((env.nregion, 1)).float() # previous action
+        ext1_r_t = torch.zeros((env.nregion, 1)).float() # previous dispacthing reward for all nodes
+        ext2_r_t = torch.zeros((env.nregion, 1)).float() # previous rebalancing reward for all nodes
+        ext_d_t = [False]*env.nregion # previous done-signal for all nodes
+        ext_d_t = torch.tensor(ext_d_t).view(env.nregion, 1)
+        h_t_a = torch.zeros((env.nregion, args.hidden_size)).float() # actor graph-GRU hidden state
+        h_t_c = torch.zeros((env.nregion, args.hidden_size)).float() # critic graph-GRU hidden state
+        for episode in range(num_episodes):
+            # initialize AMoD Simulator Environment (fixed across trial)
+            np.random.seed(seed)
+            scenario = Scenario(json_file=f"data/scenario_{city}.json", demand_ratio=args.demand_ratio[city], json_hr=args.json_hr[city], sd=None, json_tstep=args.json_tstep, tf=args.max_steps)
+            env = AMoD(scenario, args.mode, beta=beta[city])
+            parser = GNNParser(env, json_file=f"data/scenario_{city}.json")
+            d_t = False
+            obs = env.reset() # reset environment
+            # initialize episode-level book-keeping variables
+            episode_reward = 0
+            episode_served_demand = 0
+            episode_rebalancing_cost = 0
+            episode_waiting = 0
+            episode_ext_reward = np.zeros(env.nregion)
+            episode_ext_paxreward = np.zeros(env.nregion)
+            episode_ext_rebreward = np.zeros(env.nregion)
+            while not d_t:
+                if (agent.mode == 0) | (agent.mode == 2):
+                    # take matching step (Step 1 in paper)
+                    # o_t, paxreward, d_t, info, ext_paxreward, ext_done = env.pax_step(CPLEXPATH=args.cplexpath, PATH='metarl-amod')
+                    o_t, paxreward, d_t, info, ext_paxreward, ext_done = env.match_step_simple()
+                    episode_reward += paxreward
+                    episode_ext_paxreward += ext_paxreward
+                    episode_ext_reward += ext_paxreward
+                    ext1_r_t = torch.from_numpy(ext_paxreward).view(env.nregion, 1)
+                    # parse raw environment observations
+                    data = parser.parse_obs(o_t, a_t, ext1_r_t, ext2_r_t, ext_d_t)
+                    # use GNN-RL policy (Step 2 in paper)
+                    a_t, h_t_a, h_t_c = agent.select_action(data, h_t_a, h_t_c)
+                    # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
+                    desiredAcc = {env.region[i]: int(a_t[i] *dictsum(env.acc,env.time+1))for i in range(len(env.region))}
+                    # solve minimum rebalancing distance problem (Step 3 in paper)
+                    rebAction = solveRebFlow(env=env,res_path='metarl-amod',desiredAcc=desiredAcc,CPLEXPATH=args.cplexpath)
+                    # take action in environment
+                    o_t, rebreward, d_t, info, ext_rebreward, ext_done = env.reb_step(rebAction)
+                    # book-keeping
+                    episode_reward += rebreward
+                    episode_ext_paxreward += ext_rebreward
+                    episode_ext_reward += ext_rebreward
+                    ext2_r_t = torch.from_numpy(ext_rebreward).view(env.nregion, 1) 
+                    ext_d_t = torch.from_numpy(np.array(ext_done)).view(env.nregion, 1)
+                    r_t = paxreward + rebreward
+                elif agent.mode == 1:
+                    o_t, paxreward, d_t, info, ext_paxreward, ext_done = env.match_step_simple(a_t)
+                    episode_reward += paxreward
+                    episode_ext_paxreward += ext_paxreward
+                    episode_ext_reward += ext_paxreward
+                    ext1_r_t = torch.from_numpy(ext_paxreward).view(env.nregion, 1)
+                    # parse raw environment observations
+                    data = parser.parse_obs(o_t, a_t, ext1_r_t, ext2_r_t, ext_d_t)
+                    # use GNN-RL price
+                    a_t, h_t_a, h_t_c = agent.select_action(data, h_t_a, h_t_c)
+                    # Update time
+                    env.time += 1
+                    ext_d_t = torch.from_numpy(np.array(ext_done)).view(env.nregion, 1)
+                    r_t = paxreward
+                else:
+                    pass
+                epoch_reward += r_t
+                episode_served_demand += info['served_demand']
+                episode_rebalancing_cost += info['rebalancing_cost']
+                episode_waiting += info['served_waiting']
+                a_t = a_t.view(env.nregion, 1).float() #ensure shape consistency of action
+                # store the transition in memory
+                agent.rewards.append(r_t) 
+                # update the buffer to compute the environment dependent baseline (i.e., standardize rewards across cities)
+                if len(agent.env_baseline[city]) <= 1000: # if len buffer <= max, then: append
+                    agent.env_baseline[city].append(r_t)
+                else: # else, replace oldest entry
+                    _ = agent.env_baseline[city].pop(0)
+                    agent.env_baseline[city].append(r_t)
+            episode_reward_list.append(episode_reward)
+            episode_waiting_list.append(episode_waiting/episode_served_demand)
+            iterations.set_description(f"{city} - Epoch {epoch+1} | Episode Reward: {episode_reward} | Episode average waiting: {episode_waiting/episode_served_demand}")
+        # perform on-policy backprop
+        epoch_reward_list.append(sum(episode_reward_list))
+        epoch_waiting_list.append(np.mean(episode_waiting_list))
+        grad_norms = agent.training_step(city=city)
+        a_grad_norms_list.append(grad_norms['a_grad_norm'])
+        v_grad_norms_list.append(grad_norms['v_grad_norm'])
+        # Send current statistics to screen
+        iterations.set_description(f"{city} | Epoch Reward: {epoch_reward:.2f} | Epoch waiting: {sum(episode_waiting_list):.2f} | Grad Norms: Actor={grad_norms['a_grad_norm']:.2f}, Critic={grad_norms['v_grad_norm']:.2f}")
+        # Checkpoint best performing model
+        agent.save_checkpoint(path=f"{args.directory}/rl_logs/a2c_gnn_mode{agent.mode}.pth")
+    
+    np.save(f"{args.directory}/train_logs/{city}_rewards_waiting_mode{agent.mode}.npy", np.array([epoch_reward_list,epoch_waiting_list]))
 else:
     #######################################
     ######Loop over Test Environments######
