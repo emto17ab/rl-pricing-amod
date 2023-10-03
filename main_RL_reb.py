@@ -85,7 +85,8 @@ for city in train_env + test_env:
     env_baseline[city] = [0.]
     
 # Define AMoD Simulator Environment
-city = np.random.choice(train_env) # initially sample a random city from the meta-training set
+# city = np.random.choice(train_env) # initially sample a random city from the meta-training set
+city = 'nyc_man_middle'
 scenario = Scenario(json_file=f"data/scenario_{city}.json", demand_ratio=args.demand_ratio[city], json_hr=args.json_hr[city], sd=args.seed, json_tstep=args.json_tstep, tf=args.max_steps)
 env = AMoD(scenario, args.mode, beta=args.beta[city])
 # Initialize A2C-GNN

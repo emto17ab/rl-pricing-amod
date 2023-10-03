@@ -101,8 +101,8 @@ class AMoD:
                 if (price is not None) and (sum(price) != 0):
                     # TODO: Different demand model, scaling, and price
                     p_ori = p
-                    p = 10 + max(self.demandTime[n,j][t]*self.tstep - 6, 0)*price[n].item()
-                    d = max(demand_update(d, p, 2*p, p_ori), 0)
+                    p = 4 + 2*self.demandTime[n,j][t]*self.tstep*price[n].item()
+                    d = max(demand_update(d, p, 2*max(p,p_ori), p_ori), 0)
                 newp, self.arrivals = generate_passenger((n,j,t,d,p), self.arrivals)
                 self.passenger[n][t].extend(newp)
                 random.Random(42).shuffle(self.passenger[n][t]) # shuffle passenger list at station so that the passengers are not served in destination order
