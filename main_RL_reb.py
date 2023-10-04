@@ -36,8 +36,8 @@ parser.add_argument('--json_tstep', type=int, default=3, metavar='S',
 # Model parameters
 parser.add_argument('--test', type=bool, default=False,
                     help='activates test mode for agent evaluation')
-parser.add_argument('--mode', type=int, default=0,
-                    help='rebalancing mode. (0:manul, 1:pricing, 2:both. default 0)')
+parser.add_argument('--mode', type=int, default=1,
+                    help='rebalancing mode. (0:manul, 1:pricing, 2:both. default 1)')
 parser.add_argument('--cplexpath', type=str, default="C:/Program Files/IBM/ILOG/CPLEX_Studio201/opl/bin/x64_win64/",
                     help='defines directory of the CPLEX installation')
 parser.add_argument('--directory', type=str, default='saved_files',
@@ -104,6 +104,7 @@ if not args.test:
     avg_episode_reward = []
     epoch_reward_list = []
     epoch_waiting_list = []
+    epoch_servedrate_list = []
     a_grad_norms_list = []
     v_grad_norms_list = []
     seed = np.random.randint(low=0, high=100000) # select a different random seed to allow consistency across episodes
@@ -112,6 +113,7 @@ if not args.test:
         epoch_reward = 0
         episode_reward_list = [] 
         episode_waiting_list = []
+        episode_servedrate_list = []
         # initialize placeholder values for RL2 
         #
         # we define reward (both from customer dispatching and rebalancing) and "done" signal at node level
@@ -196,10 +198,13 @@ if not args.test:
                     agent.env_baseline[city].append(r_t)
             episode_reward_list.append(episode_reward)
             episode_waiting_list.append(episode_waiting/episode_served_demand)
-            iterations.set_description(f"{city} - Epoch {epoch+1} | Episode Reward: {episode_reward} | Episode average waiting: {episode_waiting/episode_served_demand}")
+            episode_servedrate_list.append(episode_served_demand/env.arrivals)
+
+            iterations.set_description(f"{city} - Epoch {epoch+1} | Episode Reward: {episode_reward} | Episode served demand rate: {episode_served_demand/env.arrivals:.2f}| Episode average waiting: {episode_waiting/episode_served_demand}")
         # perform on-policy backprop
         epoch_reward_list.append(sum(episode_reward_list))
         epoch_waiting_list.append(np.mean(episode_waiting_list))
+        epoch_servedrate_list.append(np.mean(episode_servedrate_list))
         grad_norms = agent.training_step(city=city)
         a_grad_norms_list.append(grad_norms['a_grad_norm'])
         v_grad_norms_list.append(grad_norms['v_grad_norm'])
@@ -208,7 +213,7 @@ if not args.test:
         # Checkpoint best performing model
         agent.save_checkpoint(path=f"{args.directory}/rl_logs/a2c_gnn_mode{agent.mode}.pth")
     
-    np.save(f"{args.directory}/train_logs/{city}_rewards_waiting_mode{agent.mode}.npy", np.array([epoch_reward_list,epoch_waiting_list]))
+    np.save(f"{args.directory}/train_logs/{city}_rewards_waiting_mode{agent.mode}.npy", np.array([epoch_reward_list,epoch_waiting_list,epoch_servedrate_list]))
 else:
     #######################################
     ######Loop over Test Environments######

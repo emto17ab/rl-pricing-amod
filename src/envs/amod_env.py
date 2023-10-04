@@ -91,6 +91,13 @@ class AMoD:
         self.reward = 0
         self.ext_reward = np.zeros(self.nregion)
 
+        self.info['served_demand'] = 0 # initialize served demand
+        self.info['unserved_demand'] = 0
+        self.info['served_waiting'] = 0
+        self.info["operating_cost"] = 0 # initialize operating cost
+        self.info['revenue'] = 0
+        self.info['rebalancing_cost'] = 0
+
         for n in self.region:
 
             accCurrent = self.acc[n][t]
@@ -101,8 +108,10 @@ class AMoD:
                 if (price is not None) and (sum(price) != 0):
                     # TODO: Different demand model, scaling, and price
                     p_ori = p
-                    p = 4 + 2*self.demandTime[n,j][t]*self.tstep*price[n].item()
+                    p = 4 + 1.5*self.demandTime[n,j][t]*self.tstep*price[n].item()
                     d = max(demand_update(d, p, 2*max(p,p_ori), p_ori), 0)
+                    # p = 10 + max(self.demandTime[n,j][t]*self.tstep-6,0)*price[n].item()
+                    # d = max(demand_update(d, p, 2*max(p_ori,p), p_ori), 0)
                 newp, self.arrivals = generate_passenger((n,j,t,d,p), self.arrivals)
                 self.passenger[n][t].extend(newp)
                 random.Random(42).shuffle(self.passenger[n][t]) # shuffle passenger list at station so that the passengers are not served in destination order

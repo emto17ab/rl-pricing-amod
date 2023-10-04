@@ -1,1 +1,6 @@
 ssh s233795@login1.gbar.dtu.dk
+
+xinling@10.62.3.250
+
+/home/xinling/opt/ibm/ILOG/CPLEX_Studio2211/opl/bin/x86-64_linux/
+
