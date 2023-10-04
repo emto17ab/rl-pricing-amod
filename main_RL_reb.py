@@ -101,7 +101,7 @@ if not args.test:
     iterations = trange(num_iter) #trial iterator
     num_episodes = args.max_episodes #set number of episodes within one trial
     # initialize lists for book-keeping
-    avg_episode_reward = []
+    epoch_demand_list = []
     epoch_reward_list = []
     epoch_waiting_list = []
     epoch_servedrate_list = []
@@ -111,7 +111,7 @@ if not args.test:
 
     for epoch in iterations:
         epoch_reward = 0
-        episode_reward_list = [] 
+        episode_demand_list = []
         episode_waiting_list = []
         episode_servedrate_list = []
         # initialize placeholder values for RL2 
@@ -196,13 +196,14 @@ if not args.test:
                 else: # else, replace oldest entry
                     _ = agent.env_baseline[city].pop(0)
                     agent.env_baseline[city].append(r_t)
-            episode_reward_list.append(episode_reward)
+            episode_demand_list.append(env.arrivals)
             episode_waiting_list.append(episode_waiting/episode_served_demand)
             episode_servedrate_list.append(episode_served_demand/env.arrivals)
 
             iterations.set_description(f"{city} - Epoch {epoch+1} | Episode Reward: {episode_reward} | Episode served demand rate: {episode_served_demand/env.arrivals:.2f}| Episode average waiting: {episode_waiting/episode_served_demand}")
         # perform on-policy backprop
-        epoch_reward_list.append(sum(episode_reward_list))
+        epoch_reward_list.append(epoch_reward)
+        epoch_demand_list.append(np.mean(episode_demand_list))
         epoch_waiting_list.append(np.mean(episode_waiting_list))
         epoch_servedrate_list.append(np.mean(episode_servedrate_list))
         grad_norms = agent.training_step(city=city)
@@ -213,7 +214,7 @@ if not args.test:
         # Checkpoint best performing model
         agent.save_checkpoint(path=f"{args.directory}/rl_logs/a2c_gnn_mode{agent.mode}.pth")
     
-    np.save(f"{args.directory}/train_logs/{city}_rewards_waiting_mode{agent.mode}.npy", np.array([epoch_reward_list,epoch_waiting_list,epoch_servedrate_list]))
+    np.save(f"{args.directory}/train_logs/{city}_rewards_waiting_mode{agent.mode}_{num_iter}.npy", np.array([epoch_reward_list,epoch_waiting_list,epoch_servedrate_list,epoch_demand_list]))
 else:
     #######################################
     ######Loop over Test Environments######
