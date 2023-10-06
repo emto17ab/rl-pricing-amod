@@ -525,9 +525,8 @@ class SAC(nn.Module):
             actions = []
             done = False
             while not done:
-                obs, paxreward, done, info, _, _ = env.pax_step(
-                    CPLEXPATH=cplexpath, PATH="scenario_nyc4_test",
-                )
+                obs, paxreward, done, info, _, _ = env.match_step_simple()
+
                 eps_reward += paxreward
 
                 o = parser.parse_obs(obs)

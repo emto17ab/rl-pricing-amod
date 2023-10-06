@@ -322,7 +322,7 @@ if not args.test:
             # obs, paxreward, done, info, _, _ = env.pax_step(
             #     CPLEXPATH=args.cplexpath, PATH="scenario_nyc4",
             # )
-            o_t, paxreward, done, info, _, _ = env.match_step_simple()
+            obs, paxreward, done, info, _, _ = env.match_step_simple()
 
             o = parser.parse_obs(obs=obs)
             episode_reward += paxreward
@@ -370,8 +370,7 @@ if not args.test:
         epoch_servedrate_list.append(episode_served_demand/env.arrivals)
 
         epochs.set_description(
-            f"Episode {i_episode+1} | Reward: {episode_reward:.2f} | ServedDemand: {episode_served_demand:.2f} | Reb. Cost: {episode_rebalancing_cost:.2f} \
-            | Episode served demand rate: {episode_served_demand/env.arrivals:.2f} | Waiting: {episode_waiting/episode_served_demand:.2f}"
+            f"Episode {i_episode+1} | Reward: {episode_reward:.2f} | ServedDemand: {episode_served_demand:.2f} | Reb. Cost: {episode_rebalancing_cost:.2f}  | Episode served demand rate: {episode_served_demand/env.arrivals:.2f} | Waiting: {episode_waiting/episode_served_demand:.2f}"
         )
         # Checkpoint best performing model
         if episode_reward >= best_reward:
