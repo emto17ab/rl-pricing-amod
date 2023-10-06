@@ -7,7 +7,7 @@ from src.envs.amod_env import Scenario, AMoD
 from src.algos.sac import SAC
 from src.algos.reb_flow_solver import solveRebFlow
 from src.misc.utils import dictsum
-import json
+import json, pickle
 from torch_geometric.data import Data
 import copy
 
@@ -274,6 +274,8 @@ if not args.test:
     )
 
     env = AMoD(scenario, args.mode, beta=beta[city])
+    # Save original demand for reference
+    export = {"demand_ori":env.demand}
 
     parser = GNNParser(
         env, T=6, json_file=f"data/scenario_{city}.json"
@@ -290,6 +292,7 @@ if not args.test:
         use_automatic_entropy_tuning=False,
         clip=args.clip,
         critic_version=args.critic_version,
+        mode=args.mode
     ).to(device)
 
     train_episodes = args.max_episodes  # set max number of training episodes
@@ -299,17 +302,22 @@ if not args.test:
     best_reward_test = -np.inf  # set best reward
     model.train()  # set model in train mode
 
+    # Check metrics
+    epoch_demand_list = []
+    epoch_reward_list = []
+    epoch_waiting_list = []
+    epoch_servedrate_list = []
+    
+    price_history = []
+
     for i_episode in epochs:
         obs = env.reset()  # initialize environment
+        action_rl = [0]*env.nregion
         episode_reward = 0
         episode_served_demand = 0
         episode_rebalancing_cost = 0
         episode_waiting = 0
         actions = []
-        epoch_demand_list = []
-        epoch_reward_list = []
-        epoch_waiting_list = []
-        epoch_servedrate_list = []
 
         current_eps = []
         done = False
@@ -319,49 +327,66 @@ if not args.test:
             if step > 0:
                 obs1 = copy.deepcopy(o)
 
-            # obs, paxreward, done, info, _, _ = env.pax_step(
-            #     CPLEXPATH=args.cplexpath, PATH="scenario_nyc4",
-            # )
-            obs, paxreward, done, info, _, _ = env.match_step_simple()
+            if env.mode == 0:
+                obs, paxreward, done, info, _, _ = env.match_step_simple()
 
-            o = parser.parse_obs(obs=obs)
-            episode_reward += paxreward
-            if step > 0:
-                # store transition in memroy
-                rl_reward = paxreward + rebreward
-                model.replay_buffer.store(
-                    obs1, action_rl, args.rew_scale * rl_reward, o
+                o = parser.parse_obs(obs=obs)
+                episode_reward += paxreward
+                if step > 0:
+                    # store transition in memroy
+                    rl_reward = paxreward + rebreward
+                    model.replay_buffer.store(
+                        obs1, action_rl, args.rew_scale * rl_reward, o
+                    )
+
+                action_rl = model.select_action(o)
+
+                # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
+                desiredAcc = {
+                    env.region[i]: int(
+                        action_rl[i] * dictsum(env.acc, env.time + 1))
+                    for i in range(len(env.region))
+                }
+                # solve minimum rebalancing distance problem (Step 3 in paper)
+                rebAction = solveRebFlow(
+                    env,
+                    "scenario_nyc4",
+                    desiredAcc,
+                    args.cplexpath,
                 )
+                # Take rebalancing action in environment
+                new_obs, rebreward, done, info, _, _ = env.reb_step(rebAction)
+                episode_reward += rebreward
+            elif env.mode == 1:
+                obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
 
-            action_rl = model.select_action(o)
+                o = parser.parse_obs(obs=obs)
 
-            # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
-            desiredAcc = {
-                env.region[i]: int(
-                    action_rl[i] * dictsum(env.acc, env.time + 1))
-                for i in range(len(env.region))
-            }
-            # solve minimum rebalancing distance problem (Step 3 in paper)
-            rebAction = solveRebFlow(
-                env,
-                "scenario_nyc4",
-                desiredAcc,
-                args.cplexpath,
-            )
-            # Take action in environment
-            new_obs, rebreward, done, info, _, _ = env.reb_step(rebAction)
-            episode_reward += rebreward
+                env.time += 1
+                episode_reward += paxreward
+                if step > 0:
+                    # store transition in memroy
+                    rl_reward = paxreward
+                    model.replay_buffer.store(
+                        obs1, action_rl, args.rew_scale * rl_reward, o
+                    )
+
+                action_rl = model.select_action(o)  
+            else:
+                raise ValueError("Only mode 0 and 1 is allowed")                    
+
             # track performance over episode
             episode_served_demand += info["served_demand"]
             episode_rebalancing_cost += info["rebalancing_cost"]
             episode_waiting += info['served_waiting']
+            actions.append(action_rl)
 
             step += 1
             if i_episode > 10:
                 # sample from memory and update model
                 batch = model.replay_buffer.sample_batch(
                     args.batch_size, norm=False)
-                model.update(data=batch)
+                model.update(data=batch)  
 
         # Keep metrics
         epoch_reward_list.append(episode_reward)
@@ -369,8 +394,11 @@ if not args.test:
         epoch_waiting_list.append(episode_waiting)
         epoch_servedrate_list.append(episode_served_demand/env.arrivals)
 
+        # Keep price (only needed for pricing training)
+        price_history.append(actions)
+
         epochs.set_description(
-            f"Episode {i_episode+1} | Reward: {episode_reward:.2f} | ServedDemand: {episode_served_demand:.2f} | Reb. Cost: {episode_rebalancing_cost:.2f}  | Episode served demand rate: {episode_served_demand/env.arrivals:.2f} | Waiting: {episode_waiting/episode_served_demand:.2f}"
+            f"Episode {i_episode+1} | Reward: {episode_reward:.2f} | ServedDemand: {episode_served_demand:.2f} | Episode served demand rate: {episode_served_demand/env.arrivals:.2f} | Waiting: {episode_waiting/episode_served_demand:.2f}"
         )
         # Checkpoint best performing model
         if episode_reward >= best_reward:
@@ -386,7 +414,13 @@ if not args.test:
                 best_reward_test = test_reward
                 model.save_checkpoint(
                     path=f"ckpt/{args.checkpoint_path}_test.pth")
+    # Save metrics file
     np.save(f"{args.directory}/train_logs/{city}_rewards_waiting_mode{args.mode}_{train_episodes}.npy", np.array([epoch_reward_list,epoch_waiting_list,epoch_servedrate_list,epoch_demand_list]))
+    np.save(f"{args.directory}/train_logs/{city}_price_mode{args.mode}_{train_episodes}.npy", np.array(price_history))
+    export["avail_distri"] = env.acc
+    export["demand_scaled"] = env.demand
+    with open(f"saved_files/train_logs/{env.mode}/{city}_export.pickle", 'wb') as f:
+        pickle.dump(export, f) 
 else:
     scenario = Scenario(
         json_file=f"data/scenario_{city}.json",

@@ -2,7 +2,7 @@ import numpy as np
 import torch
 from torch import nn
 import torch.nn.functional as F
-from torch.distributions import Dirichlet
+from torch.distributions import Dirichlet, Beta
 from torch_geometric.data import Data, Batch
 from torch_geometric.nn import GCNConv
 from torch_geometric.utils import grid
@@ -97,14 +97,20 @@ class GNNActor(nn.Module):
     Actor \pi(a_t | s_t) parametrizing the concentration parameters of a Dirichlet Policy.
     """
 
-    def __init__(self, in_channels, hidden_size=32, act_dim=6):
+    def __init__(self, in_channels, hidden_size=32, act_dim=6, mode=0):
         super().__init__()
+        self.mode = mode
         self.in_channels = in_channels
         self.act_dim = act_dim
         self.conv1 = GCNConv(in_channels, in_channels)
         self.lin1 = nn.Linear(in_channels, hidden_size)
         self.lin2 = nn.Linear(hidden_size, hidden_size)
-        self.lin3 = nn.Linear(hidden_size, 1)
+        if mode == 0:
+            self.lin3 = nn.Linear(hidden_size, 1)
+        elif mode == 1:
+            self.lin3 = nn.Linear(hidden_size, 2)
+        else:
+            pass
 
     def forward(self, state, edge_index, deterministic=False):
         out = F.relu(self.conv1(state, edge_index))
@@ -118,9 +124,19 @@ class GNNActor(nn.Module):
             action = (concentration) / (concentration.sum() + 1e-20)
             log_prob = None
         else:
-            m = Dirichlet(concentration + 1e-20)
-            action = m.rsample()
-            log_prob = m.log_prob(action)
+            if self.mode == 0:
+                m = Dirichlet(concentration + 1e-20)
+                action = m.rsample()
+                log_prob = m.log_prob(action)
+            elif self.mode == 1:
+                log_prob = 0
+                action = torch.zeros(concentration.shape[0])
+                for i in range(concentration.shape[0]):
+                    m = Beta(concentration0=concentration[i][0], concentration1=concentration[i][1])
+                    action[i] = m.sample()
+                    log_prob += m.log_prob(action[i])
+            else:
+                pass                
         return action, log_prob
 
 
@@ -291,6 +307,7 @@ class SAC(nn.Module):
         min_q_version=3,
         clip=200,
         critic_version=4,
+        mode = 1,
     ):
         super(SAC, self).__init__()
         self.env = env
@@ -300,6 +317,7 @@ class SAC(nn.Module):
         self.device = device
         self.path = None
         self.act_dim = env.nregion
+        self.mode = mode
 
         # SAC parameters
         self.alpha = alpha

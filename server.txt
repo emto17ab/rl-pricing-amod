@@ -4,3 +4,5 @@ xinling@10.62.3.250
 
 /home/xinling/opt/ibm/ILOG/CPLEX_Studio2211/opl/bin/x86-64_linux/
 
+--cplexpath /zhome/e1/3/204101/opt/opl/bin/x86-64_linux/
+
