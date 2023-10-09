@@ -311,7 +311,8 @@ if not args.test:
     for i_episode in epochs:
         obs = env.reset()  # initialize environment
         # Save original demand for reference
-        export = {"demand_ori":env.demand}
+        if i_episode == train_episodes - 1:
+            export = {"demand_ori":copy.deepcopy(env.demand)}
         action_rl = [0]*env.nregion
         episode_reward = 0
         episode_served_demand = 0
@@ -328,7 +329,10 @@ if not args.test:
                 obs1 = copy.deepcopy(o)
 
             if env.mode == 0:
-                obs, paxreward, done, info, _, _ = env.match_step_simple()
+                # obs, paxreward, done, info, _, _ = env.match_step_simple()
+                obs, paxreward, done, info, _, _ = env.pax_step(
+                                CPLEXPATH=args.cplexpath, PATH="scenario_nyc4"
+                            )
 
                 o = parser.parse_obs(obs=obs)
                 episode_reward += paxreward
