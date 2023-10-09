@@ -154,7 +154,7 @@ class AMoD:
                         self.info['unserved_demand'] += 1
             # Update queue
             self.queue[n] = [self.queue[n][i] for i in range(len(self.queue[n])) if i not in matched_leave_index]
-            # Update acc. Assuming arriving vehicle will only be availbe for the next timestamp.
+            # Update acc
             self.acc[n][t+1] = accCurrent
 
         self.obs = (self.acc, self.time, self.dacc, self.demand) # for acc, the time index would be t+1, but for demand, the time index would be t
@@ -162,9 +162,20 @@ class AMoD:
             done = False # if rebalancing needs to be carried out after
         elif self.mode == 1:
             done = (self.tf == t+1)
+
         ext_done = [done]*self.nregion
         return self.obs, max(0,self.reward), done, self.info, self.ext_reward, ext_done
+    
+    def matching_update(self):
+        """Update properties if there is no rebalancing after matching"""
+        t = self.time
+        # Update acc. Assuming arriving vehicle will only be availbe for the next timestamp.
+        for k in range(len(self.edges)):
+            i,j = self.edges[k]
+            if (i,j) in self.paxFlow and t in self.paxFlow[i,j]:
+                self.acc[j][t+1] += self.paxFlow[i,j][t]
 
+        self.time += 1
 
     def matching(self, CPLEXPATH=None, PATH='', platform = 'linux'):
         t = self.time

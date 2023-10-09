@@ -274,8 +274,6 @@ if not args.test:
     )
 
     env = AMoD(scenario, args.mode, beta=beta[city])
-    # Save original demand for reference
-    export = {"demand_ori":env.demand}
 
     parser = GNNParser(
         env, T=6, json_file=f"data/scenario_{city}.json"
@@ -312,6 +310,8 @@ if not args.test:
 
     for i_episode in epochs:
         obs = env.reset()  # initialize environment
+        # Save original demand for reference
+        export = {"demand_ori":env.demand}
         action_rl = [0]*env.nregion
         episode_reward = 0
         episode_served_demand = 0
@@ -362,7 +362,6 @@ if not args.test:
 
                 o = parser.parse_obs(obs=obs)
 
-                env.time += 1
                 episode_reward += paxreward
                 if step > 0:
                     # store transition in memroy
@@ -372,6 +371,8 @@ if not args.test:
                     )
 
                 action_rl = model.select_action(o)  
+
+                env.matching_update()
             else:
                 raise ValueError("Only mode 0 and 1 is allowed")                    
 
@@ -391,7 +392,7 @@ if not args.test:
         # Keep metrics
         epoch_reward_list.append(episode_reward)
         epoch_demand_list.append(env.arrivals)
-        epoch_waiting_list.append(episode_waiting)
+        epoch_waiting_list.append(episode_waiting/episode_served_demand)
         epoch_servedrate_list.append(episode_served_demand/env.arrivals)
 
         # Keep price (only needed for pricing training)
