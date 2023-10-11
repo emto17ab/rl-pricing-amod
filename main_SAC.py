@@ -411,14 +411,14 @@ if not args.test:
                 path=f"ckpt/{args.checkpoint_path}_sample.pth")
             best_reward = episode_reward
         model.save_checkpoint(path=f"ckpt/{args.checkpoint_path}_running.pth")
-        if i_episode % 10 == 0:
-            test_reward, test_served_demand, test_rebalancing_cost = model.test_agent(
-                1, env, args.cplexpath, args.directory, parser=parser
-            )
-            if test_reward >= best_reward_test:
-                best_reward_test = test_reward
-                model.save_checkpoint(
-                    path=f"ckpt/{args.checkpoint_path}_test.pth")
+        # if i_episode % 10 == 0:
+        #     test_reward, test_served_demand, test_rebalancing_cost = model.test_agent(
+        #         1, env, args.cplexpath, args.directory, parser=parser
+        #     )
+        #     if test_reward >= best_reward_test:
+        #         best_reward_test = test_reward
+        #         model.save_checkpoint(
+        #             path=f"ckpt/{args.checkpoint_path}_test.pth")
     # Save metrics file
     np.save(f"{args.directory}/train_logs/{city}_rewards_waiting_mode{args.mode}_{train_episodes}.npy", np.array([epoch_reward_list,epoch_waiting_list,epoch_servedrate_list,epoch_demand_list]))
     np.save(f"{args.directory}/train_logs/{city}_price_mode{args.mode}_{train_episodes}.npy", np.array(price_history))

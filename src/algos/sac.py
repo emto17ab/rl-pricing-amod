@@ -129,12 +129,14 @@ class GNNActor(nn.Module):
                 action = m.rsample()
                 log_prob = m.log_prob(action)
             elif self.mode == 1:
+                concentration = concentration.squeeze()
                 log_prob = 0
                 action = torch.zeros(concentration.shape[0])
                 for i in range(concentration.shape[0]):
-                    m = Beta(concentration0=concentration[i][0], concentration1=concentration[i][1])
+                    m = Beta(concentration0=torch.tensor(concentration[i][0]), concentration1=torch.tensor(concentration[i][1]))
                     action[i] = m.sample()
                     log_prob += m.log_prob(action[i])
+                action = action[None, :]
             else:
                 pass                
         return action, log_prob
