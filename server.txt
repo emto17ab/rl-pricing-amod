@@ -6,3 +6,4 @@ xinling@10.62.3.250
 
 --cplexpath /zhome/e1/3/204101/opt/opl/bin/x86-64_linux/
 
+python main_SAC.py --cplexpath /zhome/e1/3/204101/opt/opl/bin/x86-64_linux/ --mode 1 --max_episodes 2000

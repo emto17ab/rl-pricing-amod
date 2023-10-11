@@ -181,6 +181,7 @@ class AMoD:
         t = self.time
         demandAttr = [(i,j,self.demand[i,j][t], self.price[i,j][t]) for i,j in self.demand \
                       if t in self.demand[i,j] and self.demand[i,j][t]>1e-3]
+        self.arrivals += sum([i[2] for i in demandAttr])
         accTuple = [(n,self.acc[n][t+1]) for n in self.acc]
         s = "C:/Users/11481/Documents/Thesis/rl-pricing-amod"
         modPath = s.replace('\\','/')+'/src/cplex_mod/'
