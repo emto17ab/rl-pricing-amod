@@ -242,7 +242,7 @@ parser.add_argument(
 parser.add_argument(
     "--city",
     type=str,
-    default="nyc_man_middle",
+    default="san_francisco",
     help="city to train on",
 )
 parser.add_argument(
@@ -393,6 +393,8 @@ if not args.test:
                 batch = model.replay_buffer.sample_batch(
                     args.batch_size, norm=False)
                 grad_norms = model.update(data=batch)  
+            else:
+                grad_norms = {"actor_grad_norm":0, "critic1_grad_norm":0, "critic2_grad_norm":0}
 
         # Keep metrics
         epoch_reward_list.append(episode_reward)

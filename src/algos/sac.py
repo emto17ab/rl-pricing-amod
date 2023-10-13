@@ -132,7 +132,6 @@ class GNNActor(nn.Module):
                 m = Beta(concentration[:,:,0], concentration[:,:,1])
                 action = m.rsample()
                 log_prob = m.log_prob(action).sum(dim=1)
-                action *= 2
             else:
                 pass                
         return action, log_prob
