@@ -294,7 +294,7 @@ if not args.test:
     
     price_history = []
 
-    for i_episode in epochs:
+    for i_episode in range(10):
         obs = env.reset()  # initialize environment
         # Save original demand for reference
         if i_episode == train_episodes - 1:
@@ -372,13 +372,7 @@ if not args.test:
             f"Episode {i_episode+1} | Reward: {episode_reward:.2f} | ServedDemand: {episode_served_demand:.2f} | Episode served demand rate: {episode_served_demand/env.arrivals:.2f} | Waiting: {episode_waiting/episode_served_demand:.2f}"
         )
 
-    metricPath = f"{args.directory}/train_logs/"
-    if not os.path.exists(metricPath):
-        os.makedirs(metricPath)
-    # Save metrics file
-    np.save(f"{args.directory}/train_logs/{city}_rewards_waiting_mode{args.mode}_{train_episodes}_base.npy", np.array([epoch_reward_list,epoch_waiting_list,epoch_servedrate_list,epoch_demand_list]))
-    np.save(f"{args.directory}/train_logs/{city}_price_mode{args.mode}_{train_episodes}_base.npy", np.array(price_history))
-    export["avail_distri"] = env.acc
-    export["demand_scaled"] = env.demand
-    with open(f"{args.directory}/{env.mode}/{city}_export_base.pickle", 'wb') as f:
-        pickle.dump(export, f)
+    print(f"Average reward: {np.mean(epoch_reward_list)}")
+    print(f"Avergaed served demand: {np.mean(epoch_demand_list)}")
+    print(f"Average waiting time: {np.mean(epoch_waiting_list)}")
+    print(f"Avergae serve rate: {np.mean(epoch_servedrate_list)}")
