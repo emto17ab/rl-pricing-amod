@@ -9,7 +9,7 @@ from src.algos.reb_flow_solver import solveRebFlow
 from src.misc.utils import dictsum
 import json, pickle
 from torch_geometric.data import Data
-import copy
+import copy, os
 
 
 class GNNParser:
@@ -331,7 +331,7 @@ if not args.test:
             if env.mode == 0:
                 # obs, paxreward, done, info, _, _ = env.match_step_simple()
                 obs, paxreward, done, info, _, _ = env.pax_step(
-                                CPLEXPATH=args.cplexpath, PATH="scenario_nyc4"
+                                CPLEXPATH=args.cplexpath, directory=args.directory, PATH="scenario_san_francisco4"
                             )
 
                 o = parser.parse_obs(obs=obs)
@@ -354,9 +354,10 @@ if not args.test:
                 # solve minimum rebalancing distance problem (Step 3 in paper)
                 rebAction = solveRebFlow(
                     env,
-                    "scenario_nyc4",
+                    "scenario_san_francisco4",
                     desiredAcc,
                     args.cplexpath,
+                    args.directory, 
                 )
                 # Take rebalancing action in environment
                 new_obs, rebreward, done, info, _, _ = env.reb_step(rebAction)
@@ -420,11 +421,14 @@ if not args.test:
         #         model.save_checkpoint(
         #             path=f"ckpt/{args.checkpoint_path}_test.pth")
     # Save metrics file
+    metricPath = f"{args.directory}/train_logs/"
+    if not os.path.exists(metricPath):
+        os.makedirs(metricPath)
     np.save(f"{args.directory}/train_logs/{city}_rewards_waiting_mode{args.mode}_{train_episodes}.npy", np.array([epoch_reward_list,epoch_waiting_list,epoch_servedrate_list,epoch_demand_list]))
     np.save(f"{args.directory}/train_logs/{city}_price_mode{args.mode}_{train_episodes}.npy", np.array(price_history))
     export["avail_distri"] = env.acc
     export["demand_scaled"] = env.demand
-    with open(f"saved_files/train_logs/{env.mode}/{city}_export.pickle", 'wb') as f:
+    with open(f"{args.directory}/train_logs/{city}_export_mode{args.mode}_{train_episodes}.pickle", 'wb') as f:
         pickle.dump(export, f) 
 else:
     scenario = Scenario(
@@ -449,6 +453,7 @@ else:
         batch_size=100,
         use_automatic_entropy_tuning=False,
         critic_version=args.critic_version,
+        mode=args.mode
     ).to(device)
 
     print("load model")
@@ -476,7 +481,7 @@ else:
             # take matching step (Step 1 in paper)
             obs, paxreward, done, info, _, _ = env.pax_step(
                 CPLEXPATH=args.cplexpath,
-                PATH="scenario_nyc4_test",
+                PATH="scenario_san_francisco4_test",
                 directory=args.directory,
             )
 
@@ -486,20 +491,25 @@ else:
             o = parser.parse_obs(obs=obs)
             action_rl = model.select_action(o, deterministic=True)
 
-            # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
-            desiredAcc = {
-                env.region[i]: int(
-                    action_rl[i] * dictsum(env.acc, env.time + 1))
-                for i in range(len(env.region))
-            }
-            # solve minimum rebalancing distance problem (Step 3 in paper)
-            rebAction = solveRebFlow(
-                env, "scenario_nyc4_test", desiredAcc, args.cplexpath, args.directory
-            )
+            if env.mode == 0:
+                # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
+                desiredAcc = {
+                    env.region[i]: int(
+                        action_rl[i] * dictsum(env.acc, env.time + 1))
+                    for i in range(len(env.region))
+                }
+                # solve minimum rebalancing distance problem (Step 3 in paper)
+                rebAction = solveRebFlow(
+                    env, "scenario_san_francisco4_test", desiredAcc, args.cplexpath, args.directory
+                )
 
-            _, rebreward, done, info, _, _ = env.reb_step(rebAction)
+                _, rebreward, done, info, _, _ = env.reb_step(rebAction)
 
-            episode_reward += rebreward
+                episode_reward += rebreward
+            elif env.mode == 1:
+                env.matching_update()
+            else:
+                pass
             # track performance over episode
             episode_served_demand += info["served_demand"]
             episode_rebalancing_cost += info["rebalancing_cost"]

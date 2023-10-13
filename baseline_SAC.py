@@ -9,7 +9,7 @@ from src.algos.reb_flow_solver import solveRebFlow
 from src.misc.utils import dictsum
 import json, pickle
 from torch_geometric.data import Data
-import copy
+import copy, os
 
 
 class GNNParser:
@@ -317,7 +317,7 @@ if not args.test:
 
             obs, paxreward, done, info, _, _ = env.match_step_simple()
             # obs, paxreward, done, info, _, _ = env.pax_step(
-            #                 CPLEXPATH=args.cplexpath, PATH="scenario_nyc4"
+            #                 CPLEXPATH=args.cplexpath, PATH="scenario_nyc4", directory=args.directory
             #             )
 
             o = parser.parse_obs(obs=obs)
@@ -340,6 +340,7 @@ if not args.test:
                     "scenario_nyc4",
                     desiredAcc,
                     args.cplexpath,
+                    args.directory,
                 )
                 # Take rebalancing action in environment
                 new_obs, rebreward, done, info, _, _ = env.reb_step(rebAction)
@@ -371,10 +372,13 @@ if not args.test:
             f"Episode {i_episode+1} | Reward: {episode_reward:.2f} | ServedDemand: {episode_served_demand:.2f} | Episode served demand rate: {episode_served_demand/env.arrivals:.2f} | Waiting: {episode_waiting/episode_served_demand:.2f}"
         )
 
+    metricPath = f"{args.directory}/train_logs/"
+    if not os.path.exists(metricPath):
+        os.makedirs(metricPath)
     # Save metrics file
-    np.save(f"{args.directory}/baselines/{city}_rewards_waiting_mode{args.mode}_{train_episodes}.npy", np.array([epoch_reward_list,epoch_waiting_list,epoch_servedrate_list,epoch_demand_list]))
-    np.save(f"{args.directory}/baselines/{city}_price_mode{args.mode}_{train_episodes}.npy", np.array(price_history))
+    np.save(f"{args.directory}/train_logs/{city}_rewards_waiting_mode{args.mode}_{train_episodes}_base.npy", np.array([epoch_reward_list,epoch_waiting_list,epoch_servedrate_list,epoch_demand_list]))
+    np.save(f"{args.directory}/train_logs/{city}_price_mode{args.mode}_{train_episodes}_base.npy", np.array(price_history))
     export["avail_distri"] = env.acc
     export["demand_scaled"] = env.demand
-    with open(f"saved_files/baselines/{env.mode}/{city}_export.pickle", 'wb') as f:
+    with open(f"{args.directory}/{env.mode}/{city}_export_base.pickle", 'wb') as f:
         pickle.dump(export, f)
