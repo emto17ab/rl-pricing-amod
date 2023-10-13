@@ -34,6 +34,57 @@ class GNNParser:
         # 1) current availability scaled by factor, 
         # 2) Estimated availability (T timestamp) scaled by factor, 
         # 3) Estimated revenue (T timestamp) scaled by factor
+        # x = (
+        #     torch.cat(
+        #         (
+        #             torch.tensor(
+        #                 [obs[0][n][self.env.time + 1] *
+        #                     self.s for n in self.env.region]
+        #             )
+        #             .view(1, 1, self.env.nregion)
+        #             .float(),
+        #             torch.tensor(
+        #                 [
+        #                     [
+        #                         (obs[0][n][self.env.time + 1] +
+        #                          self.env.dacc[n][t])
+        #                         * self.s
+        #                         for n in self.env.region
+        #                     ]
+        #                     for t in range(
+        #                         self.env.time + 1, self.env.time + self.T + 1
+        #                     )
+        #                 ]
+        #             )
+        #             .view(1, self.T, self.env.nregion)
+        #             .float(),
+        #             torch.tensor(
+        #                 [
+        #                     [
+        #                         sum(
+        #                             [
+        #                                 (self.env.scenario.demand_input[i, j][t])
+        #                                 * (self.env.price[i, j][t])
+        #                                 * self.s
+        #                                 for j in self.env.region
+        #                             ]
+        #                         )
+        #                         for i in self.env.region
+        #                     ]
+        #                     for t in range(
+        #                         self.env.time + 1, self.env.time + self.T + 1
+        #                     )
+        #                 ]
+        #             )
+        #             .view(1, self.T, self.env.nregion)
+        #             .float(),
+        #         ),
+        #         dim=1,
+        #     )
+        #     .squeeze(0)
+        #     .view(1 + self.T + self.T, self.env.nregion)
+        #     .T
+        # )
         x = (
             torch.cat(
                 (
@@ -72,19 +123,19 @@ class GNNParser:
                                 for i in self.env.region
                             ]
                             for t in range(
-                                self.env.time + 1, self.env.time + self.T + 1
+                                self.env.time, self.env.time + 1
                             )
                         ]
                     )
-                    .view(1, self.T, self.env.nregion)
+                    .view(1, 1, self.env.nregion)
                     .float(),
                 ),
                 dim=1,
             )
             .squeeze(0)
-            .view(1 + self.T + self.T, self.env.nregion)
+            .view(1 + self.T + 1, self.env.nregion)
             .T
-        )
+        )        
         if self.json_file is not None:
             edge_index = torch.vstack(
                 (
@@ -281,7 +332,7 @@ if not args.test:
 
     model = SAC(
         env=env,
-        input_size=13,
+        input_size=8,
         hidden_size=args.hidden_size,
         p_lr=args.p_lr,
         q_lr=args.q_lr,
@@ -329,10 +380,10 @@ if not args.test:
                 obs1 = copy.deepcopy(o)
 
             if env.mode == 0:
-                obs, paxreward, done, info, _, _ = env.match_step_simple()
-                # obs, paxreward, done, info, _, _ = env.pax_step(
-                #                 CPLEXPATH=args.cplexpath, directory=args.directory, PATH="scenario_san_francisco4"
-                #             )
+                # obs, paxreward, done, info, _, _ = env.match_step_simple()
+                obs, paxreward, done, info, _, _ = env.pax_step(
+                                CPLEXPATH=args.cplexpath, directory=args.directory, PATH="scenario_san_francisco4"
+                            )
 
                 o = parser.parse_obs(obs=obs)
                 episode_reward += paxreward
@@ -447,7 +498,7 @@ else:
 
     model = SAC(
         env=env,
-        input_size=13,
+        input_size=8,
         hidden_size=256,
         p_lr=1e-3,
         q_lr=1e-3,
