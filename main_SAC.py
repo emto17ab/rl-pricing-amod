@@ -329,10 +329,10 @@ if not args.test:
                 obs1 = copy.deepcopy(o)
 
             if env.mode == 0:
-                # obs, paxreward, done, info, _, _ = env.match_step_simple()
-                obs, paxreward, done, info, _, _ = env.pax_step(
-                                CPLEXPATH=args.cplexpath, directory=args.directory, PATH="scenario_san_francisco4"
-                            )
+                obs, paxreward, done, info, _, _ = env.match_step_simple()
+                # obs, paxreward, done, info, _, _ = env.pax_step(
+                #                 CPLEXPATH=args.cplexpath, directory=args.directory, PATH="scenario_san_francisco4"
+                #             )
 
                 o = parser.parse_obs(obs=obs)
                 episode_reward += paxreward
