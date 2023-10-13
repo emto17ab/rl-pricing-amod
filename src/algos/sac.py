@@ -132,6 +132,7 @@ class GNNActor(nn.Module):
                 m = Beta(concentration[:,:,0], concentration[:,:,1])
                 action = m.rsample()
                 log_prob = m.log_prob(action).sum(dim=1)
+                action *= 2
             else:
                 pass                
         return action, log_prob
@@ -473,13 +474,13 @@ class SAC(nn.Module):
 
         self.optimizers["c1_optimizer"].zero_grad()
 
-        nn.utils.clip_grad_norm_(self.critic1.parameters(), self.clip)
+        critic1_grad_norm = nn.utils.clip_grad_norm_(self.critic1.parameters(), self.clip)
         loss_q1.backward()
         self.optimizers["c1_optimizer"].step()
 
         self.optimizers["c2_optimizer"].zero_grad()
         loss_q2.backward()
-        nn.utils.clip_grad_norm_(self.critic2.parameters(), self.clip)
+        critic2_grad_norm = nn.utils.clip_grad_norm_(self.critic2.parameters(), self.clip)
         self.optimizers["c2_optimizer"].step()
 
         # Update target networks by polyak averaging.
@@ -506,7 +507,7 @@ class SAC(nn.Module):
         self.optimizers["a_optimizer"].zero_grad()
         loss_pi = self.compute_loss_pi(data)
         loss_pi.backward(retain_graph=False)
-        nn.utils.clip_grad_norm_(self.actor.parameters(), 10)
+        actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), 10)
         self.optimizers["a_optimizer"].step()
 
         # Unfreeze Q-networks
@@ -514,6 +515,8 @@ class SAC(nn.Module):
             p.requires_grad = True
         for p in self.critic2.parameters():
             p.requires_grad = True
+
+        return {"actor_grad_norm":actor_grad_norm, "critic1_grad_norm":critic1_grad_norm, "critic2_grad_norm":critic2_grad_norm}
 
     def configure_optimizers(self):
         optimizers = dict()

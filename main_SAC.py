@@ -392,7 +392,7 @@ if not args.test:
                 # sample from memory and update model
                 batch = model.replay_buffer.sample_batch(
                     args.batch_size, norm=False)
-                model.update(data=batch)  
+                grad_norms = model.update(data=batch)  
 
         # Keep metrics
         epoch_reward_list.append(episode_reward)
@@ -404,7 +404,7 @@ if not args.test:
         price_history.append(actions)
 
         epochs.set_description(
-            f"Episode {i_episode+1} | Reward: {episode_reward:.2f} | ServedDemand: {episode_served_demand:.2f} | Episode served demand rate: {episode_served_demand/env.arrivals:.2f} | Waiting: {episode_waiting/episode_served_demand:.2f}"
+            f"Episode {i_episode+1} | Reward: {episode_reward:.2f} | Grad Norms: Actor={grad_norms['actor_grad_norm']:.2f}, Critic1={grad_norms['critic1_grad_norm']:.2f}, Critic2={grad_norms['critic2_grad_norm']:.2f}"
         )
         # Checkpoint best performing model
         if episode_reward >= best_reward:
