@@ -6,7 +6,7 @@ import torch
 from src.envs.amod_env import Scenario, AMoD
 from src.algos.sac import SAC
 from src.algos.reb_flow_solver import solveRebFlow
-from src.misc.utils import dictsum
+from src.misc.utils import dictsum, nestdictsum
 import json, pickle
 from torch_geometric.data import Data
 import copy, os
@@ -362,6 +362,7 @@ if not args.test:
     for i_episode in epochs:
         obs = env.reset()  # initialize environment
         # Save original demand for reference
+        demand_ori = nestdictsum(env.demand)
         if i_episode == train_episodes - 1:
             export = {"demand_ori":copy.deepcopy(env.demand)}
         action_rl = [0]*env.nregion
@@ -449,7 +450,7 @@ if not args.test:
 
         # Keep metrics
         epoch_reward_list.append(episode_reward)
-        epoch_demand_list.append(env.arrivals)
+        epoch_demand_list.append(env.arrivals/demand_ori)
         epoch_waiting_list.append(episode_waiting/episode_served_demand)
         epoch_servedrate_list.append(episode_served_demand/env.arrivals)
 
