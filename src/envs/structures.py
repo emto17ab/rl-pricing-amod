@@ -1,10 +1,11 @@
-from src.envs.helper_functions import choice_passenger
+import random
+import scipy.stats as stats
 
 
 class Passenger:
     """Passenger class"""
 
-    def __init__(self, id, origin, destination, request_time, price, assign_time=None, wait_time=0, choice=None, max_wait=5) -> None:
+    def __init__(self, id, origin, destination, request_time, price, entered=False, assign_time=None, wait_time=0, choice=None, max_wait=5) -> None:
         """
         price: price set for the trip
         choice: choice model for passenger
@@ -15,12 +16,13 @@ class Passenger:
         self.destination = destination
         self.request_time = request_time
         self.price = price
+        self.entered = entered
         self.assign_time = assign_time
         self.wait_time = wait_time
         self.choice = choice
         self.max_wait = max_wait
 
-    def unmatched(self):
+    def unmatched_update(self):
         """Update state of passenger if not matched. Return True if maximum waiting time is reached otherwise False."""
 
         self.wait_time += 1
@@ -29,14 +31,45 @@ class Passenger:
         else:
             return False
 
-    def matched(self, price, timestamp):
+    def match(self, timestamp):
         """Update state of passenger once get matched. Return True if the passenger accept the price otherwise False."""
-        accept = choice_passenger(self.price, self.choice)
+        accept = choice_passenger_accept(self.price, self.choice)
         if accept:
             self.assign_time = timestamp
             return True
         else:
             return False
+        
+    def enter(self, price=None):
+        if price is not None:
+            self.price = price
+        enterq = choice_passenger_enter(self.price, self.choice)
+        self.entered = enterq
+        return enterq     
+
+def choice_passenger_enter(price, mtype=None):
+    """Choice model for passenger entering queue. Return True if enter else return False."""
+    if mtype is None:
+        # Use default exponential disteibution
+        # reject_prob = stats.expon.cdf(price, scale=1/2)
+        reject_prob = 0
+        sample = random.uniform(0,1)
+        if sample < reject_prob:
+            return False
+        else:
+            return True
+        
+def choice_passenger_accept(price, mtype=None):
+    """Choice model for passenger accepting ride match. Return True if accept else return False."""
+    if mtype is None:
+        # Use default exponential disteibution
+        # reject_prob = stats.expon.cdf(price, scale=1/2)
+        reject_prob = 0
+        sample = random.uniform(0,1)
+        if sample < reject_prob:
+            return False
+        else:
+            return True
 
 
 def generate_passenger(demand, arrivals=None):
