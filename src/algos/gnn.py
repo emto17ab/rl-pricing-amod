@@ -17,7 +17,8 @@ import json
 import torch
 from torch import nn
 import torch.nn.functional as F
-from torch.distributions import Dirichlet
+from torch.distributions import Dirichlet, Beta, LKJCholesky, Normal, TransformedDistribution, MultivariateNormal
+from torch.distributions.transforms import CumulativeDistributionTransform
 from torch_geometric.data import Data
 from torch_geometric.nn import GCNConv
 from torch_geometric.nn import global_mean_pool, global_max_pool
@@ -45,9 +46,17 @@ class GNNParser():
         self.T = T
         self.s = scale_factor
         self.json_file = json_file
+        self.mode = env.mode
         if self.json_file is not None:
             with open(json_file,"r") as file:
                 self.data = json.load(file)
+
+        if self.mode == 0:
+            self.nfeatures = 36
+        elif self.mode == 1:
+            self.nfeatures = 35
+        else:
+            pass
         
     def parse_obs(self, obs, a_t_1, r1_t_1, r2_t_1, d_t_1):
         # Takes input from the environemnt and returns a graph (with node features and connectivity)
@@ -55,18 +64,33 @@ class GNNParser():
         # In order, x is a collection of the following information:
         # 1) current availability, 2) Estimated availability, 3) one-hot representation of time-of-day
         # 4) current demand, 5) RL2 info (i.e., a_{t-1}, r_{t-1} (both matching and rebalancing), d_{t-1}
-        x = torch.cat((
-            torch.tensor([obs[0][n][self.env.time+1] for n in self.env.region]).view(1, 1, self.env.nregion).float(),
-            torch.tensor([[(obs[0][n][self.env.time+1] + self.env.dacc[n][t]) for n in self.env.region] \
-                          for t in range(self.env.time+1, self.env.time+self.T+1)]).view(1, self.T, self.env.nregion).float(),
-        torch.nn.functional.one_hot(torch.tensor([self.env.time]*self.env.nregion), num_classes=self.env.tf).view(1, self.env.tf, self.env.nregion).float(),
-            torch.tensor([sum([(self.env.demand[i,j][self.env.time+1]) \
-                          for j in self.env.region]) for i in self.env.region]).view(1, 1, self.env.nregion).float(),
-            a_t_1.view(1, 1, self.env.nregion).float(),
-            r1_t_1.view(1, 1, self.env.nregion).float(),
-            r2_t_1.view(1, 1, self.env.nregion).float(),
-            d_t_1.view(1, 1, self.env.nregion).float()),
-              dim=1).squeeze(0).view(36, self.env.nregion).T
+        if self.mode == 0:
+            x = torch.cat((
+                torch.tensor([obs[0][n][self.env.time+1] for n in self.env.region]).view(1, 1, self.env.nregion).float(),
+                torch.tensor([[(obs[0][n][self.env.time+1] + self.env.dacc[n][t]) for n in self.env.region] \
+                            for t in range(self.env.time+1, self.env.time+self.T+1)]).view(1, self.T, self.env.nregion).float(),
+            torch.nn.functional.one_hot(torch.tensor([self.env.time]*self.env.nregion), num_classes=self.env.tf).view(1, self.env.tf, self.env.nregion).float(),
+                torch.tensor([sum([(self.env.demand[i,j][self.env.time+1]) \
+                            for j in self.env.region]) for i in self.env.region]).view(1, 1, self.env.nregion).float(),
+                a_t_1.view(1, 1, self.env.nregion).float(),
+                r1_t_1.view(1, 1, self.env.nregion).float(),
+                r2_t_1.view(1, 1, self.env.nregion).float(),
+                d_t_1.view(1, 1, self.env.nregion).float()),
+                dim=1).squeeze(0).view(self.nfeatures, self.env.nregion).T
+        elif self.mode == 1:
+            x = torch.cat((
+                torch.tensor([obs[0][n][self.env.time+1] for n in self.env.region]).view(1, 1, self.env.nregion).float(),
+                torch.tensor([[(obs[0][n][self.env.time+1] + self.env.dacc[n][t]) for n in self.env.region] \
+                            for t in range(self.env.time+1, self.env.time+self.T+1)]).view(1, self.T, self.env.nregion).float(),
+            torch.nn.functional.one_hot(torch.tensor([self.env.time]*self.env.nregion), num_classes=self.env.tf).view(1, self.env.tf, self.env.nregion).float(),
+                torch.tensor([sum([(self.env.demand[i,j][self.env.time+1]) \
+                            for j in self.env.region]) for i in self.env.region]).view(1, 1, self.env.nregion).float(),
+                a_t_1.view(1, 1, self.env.nregion).float(),
+                r1_t_1.view(1, 1, self.env.nregion).float(),
+                d_t_1.view(1, 1, self.env.nregion).float()),
+                dim=1).squeeze(0).view(self.nfeatures, self.env.nregion).T
+        else:
+            pass            
         if self.json_file is not None:
             edge_index = torch.vstack((torch.tensor([edge['i'] for edge in self.data["topology_graph"]]).view(1,-1), 
                                       torch.tensor([edge['j'] for edge in self.data["topology_graph"]]).view(1,-1))).long()
@@ -84,8 +108,9 @@ class Actor(torch.nn.Module):
     """
     Actor \pi(a_t | s_t) parametrizing the concentration parameters of a Dirichlet Policy.
     """
-    def __init__(self, input_size=4, hidden_dim=256, output_dim=1):
+    def __init__(self, input_size=4, hidden_dim=256, output_dim=1, mode=0):
         super(Actor, self).__init__()
+        self.mode = mode
         self.hidden_dim = hidden_dim
         
         self.lin1 = nn.Linear(input_size, hidden_dim)
@@ -109,7 +134,12 @@ class Actor(torch.nn.Module):
         x_temp = F.relu(self.h_to_g(h))
         x_temp = torch.cat([x, x_temp], dim=1)
 
-        a = F.softplus(self.g_to_a(x_temp))
+        if self.mode == 0:
+            a = F.softplus(self.g_to_a(x_temp))
+        elif self.mode == 1:
+            a = F.softplus(self.g_to_a(x_temp))
+        elif self.mode == 2:
+            raise ValueError("Rebalancing mode 2 not implemented.")
         return a, h
 
 #########################################
@@ -120,8 +150,9 @@ class Critic(torch.nn.Module):
     """
     Critic parametrizing the value function estimator V(s_t).
     """
-    def __init__(self, input_size=4, hidden_dim=256, output_dim=1):
+    def __init__(self, input_size=4, hidden_dim=256, output_dim=1, mode=0):
         super(Critic, self).__init__()
+        self.mode = mode
         self.hidden_dim = hidden_dim
         
         self.lin1 = nn.Linear(input_size, hidden_dim)
@@ -159,17 +190,25 @@ class A2C(nn.Module):
     Advantage Actor Critic algorithm for the AMoD control problem. 
     """
     def __init__(self, env, input_size, hidden_size=128, eps=np.finfo(np.float32).eps.item(), device=torch.device("cpu"),
-                clip=50, env_baseline=None):
+                clip=50, env_baseline=None, mode=0):
         super(A2C, self).__init__()
         self.env = env
+        self.mode = mode
         self.eps = eps
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.device = device
         self.clip = clip if clip is not None else -1
         
-        self.actor = Actor(self.input_size, self.hidden_size, 1)
-        self.critic = Critic(self.input_size, self.hidden_size, 1)
+        if self.mode == 0:
+            self.actor = Actor(self.input_size, self.hidden_size, 1, self.mode)
+            self.critic = Critic(self.input_size, self.hidden_size, 1, self.mode)
+        elif self.mode == 1:
+            self.actor = Actor(self.input_size, self.hidden_size, 2, self.mode)
+            self.critic = Critic(self.input_size, self.hidden_size, 1, self.mode)
+        else:
+            # TODO
+            pass
         
         self.optimizers = self.configure_optimizers()
         
@@ -196,10 +235,29 @@ class A2C(nn.Module):
     def select_action(self, obs, h_a, h_c):
         a_probs, value, h_a, h_c = self.forward(obs, h_a, h_c)
         
-        m = Dirichlet(concentration=a_probs.view(-1,))
-        
-        action = m.sample()
-        self.saved_actions.append(SavedAction(m.log_prob(action), value))
+        if self.mode == 0:
+            m = Dirichlet(concentration=a_probs.view(-1,))
+            
+            action = m.sample()
+            self.saved_actions.append(SavedAction(m.log_prob(action), value))
+        elif self.mode == 1:
+        # Construct a Gaussian copula from a multivariate normal.
+            # base_dist = MultivariateNormal(
+            #     loc=torch.zeros(10),
+            #     scale_tril=LKJCholesky(10).sample(),
+            # )
+            # transform = CumulativeDistributionTransform(Normal(0, 1))
+            # copula = TransformedDistribution(base_dist, [transform])
+            # action = copula.sample()
+            prob = 0
+            action = torch.zeros(a_probs.shape[0])
+            for i in range(a_probs.shape[0]):
+                m = Beta(concentration0=a_probs[i][0], concentration1=a_probs[i][1])
+                action[i] = m.sample()
+                prob += m.log_prob(action[i])
+            self.saved_actions.append(SavedAction(prob, value))
+        else:
+            pass
         return action, h_a, h_c
 
     def training_step(self, city):
