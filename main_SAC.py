@@ -88,12 +88,14 @@ class GNNParser:
         x = (
             torch.cat(
                 (
+                    # Current availability
                     torch.tensor(
                         [obs[0][n][self.env.time + 1] *
                             self.s for n in self.env.region]
                     )
                     .view(1, 1, self.env.nregion)
                     .float(),
+                    # Estimated availability
                     torch.tensor(
                         [
                             [
@@ -109,23 +111,27 @@ class GNNParser:
                     )
                     .view(1, self.T, self.env.nregion)
                     .float(),
+                    # Queue length
                     torch.tensor(
                         [
+                            len(self.env.queue[n]) * self.s for n in self.env.region
+                        ]
+                    )
+                    .view(1, 1, self.env.nregion)
+                    .float(),
+                    # Current demand
+                    torch.tensor(
                             [
                                 sum(
                                     [
-                                        (self.env.scenario.demand_input[i, j][t])
-                                        * (self.env.price[i, j][t])
+                                        (self.env.demand[i, j][self.env.time])
+                                        # * (self.env.price[i, j][self.env.time])
                                         * self.s
                                         for j in self.env.region
                                     ]
                                 )
                                 for i in self.env.region
                             ]
-                            for t in range(
-                                self.env.time, self.env.time + 1
-                            )
-                        ]
                     )
                     .view(1, 1, self.env.nregion)
                     .float(),
@@ -133,9 +139,9 @@ class GNNParser:
                 dim=1,
             )
             .squeeze(0)
-            .view(1 + self.T + 1, self.env.nregion)
+            .view(1 + self.T + 1 + 1, self.env.nregion)
             .T
-        )        
+        )       
         if self.json_file is not None:
             edge_index = torch.vstack(
                 (
@@ -332,7 +338,7 @@ if not args.test:
 
     model = SAC(
         env=env,
-        input_size=8,
+        input_size=9,
         hidden_size=args.hidden_size,
         p_lr=args.p_lr,
         q_lr=args.q_lr,

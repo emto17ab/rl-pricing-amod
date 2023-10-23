@@ -293,7 +293,7 @@ class GNNCritic5(nn.Module):
 #########################################
 
 
-class SAC(nn.Module):
+class RSAC(nn.Module):
     """
     Advantage Actor Critic algorithm for the AMoD control problem.
     """

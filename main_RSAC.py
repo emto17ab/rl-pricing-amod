@@ -4,7 +4,7 @@ from tqdm import trange
 import numpy as np
 import torch
 from src.envs.amod_env import Scenario, AMoD
-from src.algos.sac import SAC
+from src.algos.rsac import RSAC
 from src.algos.reb_flow_solver import solveRebFlow
 from src.misc.utils import dictsum, nestdictsum
 import json, pickle
@@ -336,7 +336,7 @@ if not args.test:
         env, T=6, json_file=f"data/scenario_{city}.json"
     )  # Timehorizon T=6 (K in paper)
 
-    model = SAC(
+    model = RSAC(
         env=env,
         input_size=8,
         hidden_size=args.hidden_size,
