@@ -34,69 +34,18 @@ class GNNParser:
         # 1) current availability scaled by factor, 
         # 2) Estimated availability (T timestamp) scaled by factor, 
         # 3) Estimated revenue (T timestamp) scaled by factor
-        # x = (
-        #     torch.cat(
-        #         (
-        #             torch.tensor(
-        #                 [obs[0][n][self.env.time + 1] *
-        #                     self.s for n in self.env.region]
-        #             )
-        #             .view(1, 1, self.env.nregion)
-        #             .float(),
-        #             torch.tensor(
-        #                 [
-        #                     [
-        #                         (obs[0][n][self.env.time + 1] +
-        #                          self.env.dacc[n][t])
-        #                         * self.s
-        #                         for n in self.env.region
-        #                     ]
-        #                     for t in range(
-        #                         self.env.time + 1, self.env.time + self.T + 1
-        #                     )
-        #                 ]
-        #             )
-        #             .view(1, self.T, self.env.nregion)
-        #             .float(),
-        #             torch.tensor(
-        #                 [
-        #                     [
-        #                         sum(
-        #                             [
-        #                                 (self.env.scenario.demand_input[i, j][t])
-        #                                 * (self.env.price[i, j][t])
-        #                                 * self.s
-        #                                 for j in self.env.region
-        #                             ]
-        #                         )
-        #                         for i in self.env.region
-        #                     ]
-        #                     for t in range(
-        #                         self.env.time + 1, self.env.time + self.T + 1
-        #                     )
-        #                 ]
-        #             )
-        #             .view(1, self.T, self.env.nregion)
-        #             .float(),
-        #         ),
-        #         dim=1,
-        #     )
-        #     .squeeze(0)
-        #     .view(1 + self.T + self.T, self.env.nregion)
-        #     .T
-        # )
-        x = (
-            torch.cat(
+        x = np.squeeze(
+            np.concatenate(
                 (
                     # Current availability
-                    torch.tensor(
+                    np.array(
                         [obs[0][n][self.env.time + 1] *
                             self.s for n in self.env.region]
                     )
-                    .view(1, 1, self.env.nregion)
-                    .float(),
+                    .reshape(1, 1, self.env.nregion)
+                    .astype(float),
                     # Estimated availability
-                    torch.tensor(
+                    np.array(
                         [
                             [
                                 (obs[0][n][self.env.time + 1] +
@@ -109,18 +58,18 @@ class GNNParser:
                             )
                         ]
                     )
-                    .view(1, self.T, self.env.nregion)
-                    .float(),
+                    .reshape(1, self.T, self.env.nregion)
+                    .astype(float),
                     # Queue length
-                    torch.tensor(
+                    np.array(
                         [
                             len(self.env.queue[n]) * self.s for n in self.env.region
                         ]
                     )
-                    .view(1, 1, self.env.nregion)
-                    .float(),
+                    .reshape(1, 1, self.env.nregion)
+                    .astype(float),
                     # Current demand
-                    torch.tensor(
+                    np.array(
                             [
                                 sum(
                                     [
@@ -133,15 +82,12 @@ class GNNParser:
                                 for i in self.env.region
                             ]
                     )
-                    .view(1, 1, self.env.nregion)
-                    .float(),
+                    .reshape(1, 1, self.env.nregion)
+                    .astype(float),
                 ),
-                dim=1,
-            )
-            .squeeze(0)
-            .view(1 + self.T + 1 + 1, self.env.nregion)
-            .T
-        )        
+                axis=1,
+            ),0).reshape(1 + self.T + 1 + 1, self.env.nregion).T        
+        
         if self.json_file is not None:
             edge_index = torch.vstack(
                 (
@@ -257,8 +203,8 @@ parser.add_argument(
 parser.add_argument(
     "--batch_size",
     type=int,
-    default=100,
-    help="batch size for training (default: 100)",
+    default=32,
+    help="batch size for training (default: 32)",
 )
 parser.add_argument(
     "--alpha",
@@ -338,7 +284,7 @@ if not args.test:
 
     model = RSAC(
         env=env,
-        input_size=8,
+        input_size=9,
         hidden_size=args.hidden_size,
         p_lr=args.p_lr,
         q_lr=args.q_lr,
@@ -381,9 +327,6 @@ if not args.test:
         current_eps = []
         done = False
         step = 0
-        h_a = torch.zeros((env.nregion, model.input_size)).float() # actor graph-GRU hidden state
-        h_c_1 = torch.zeros((env.nregion, model.input_size)).float()
-        h_c_2 = torch.zeros((env.nregion, model.input_size)).float()
         while not done:
             # take matching step (Step 1 in paper)
             if step > 0:
@@ -395,8 +338,14 @@ if not args.test:
 
             episode_reward += paxreward
 
-            action_rl, h_a, h_c_1, h_c_2 = model.select_action(o, h_a, h_c_1, h_c_2)  
-            model.rewards.append(episode_reward)
+            if step > 0:
+                # store transition in memroy
+                rl_reward = paxreward
+                model.replay_buffer.store(
+                    obs1, action_rl, args.rew_scale * rl_reward, o, done, o.edge_index
+                )
+
+            action_rl = model.select_action(o)  
 
             env.matching_update()                
 
@@ -408,7 +357,12 @@ if not args.test:
 
             step += 1
 
-        grad_norms = model.update()
+        if i_episode > args.batch_size*2:
+            # sample from memory and update model
+            batch = model.replay_buffer.sample_batch()
+            grad_norms = model.update(batch)  
+        else:
+            grad_norms = {"actor_grad_norm":0, "critic1_grad_norm":0, "critic2_grad_norm":0}
 
         # Keep metrics
         epoch_reward_list.append(episode_reward)

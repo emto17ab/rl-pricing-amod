@@ -1,4 +1,7 @@
 import numpy as np
+import torch.nn as nn
+from copy import deepcopy
+
 
 def mat2str(mat):
     return str(mat).replace("'",'"').replace('(','<').replace(')','>').replace('[','{').replace(']','}')  
@@ -16,3 +19,12 @@ def moving_average(a, n=3) :
     ret = np.cumsum(a, dtype=float)
     ret[n:] = ret[n:] - ret[:-n]
     return ret[n - 1:] / n
+
+def set_requires_grad_flag(net: nn.Module, requires_grad: bool) -> None:
+    for p in net.parameters():
+        p.requires_grad = requires_grad
+
+def create_target(net: nn.Module) -> nn.Module:
+    target = deepcopy(net)
+    set_requires_grad_flag(target, False)
+    return target
