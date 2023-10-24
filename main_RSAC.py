@@ -203,8 +203,20 @@ parser.add_argument(
 parser.add_argument(
     "--batch_size",
     type=int,
-    default=32,
-    help="batch size for training (default: 32)",
+    default=128,
+    help="batch size for training (default: 128)",
+)
+parser.add_argument(
+    "--buffer_cap",
+    type=int,
+    default=1000,
+    help="Buffer capacity (default: 1000)",
+)
+parser.add_argument(
+    "--replay_ratio",
+    type=int,
+    default=4,
+    help="Number of actions for each gradient update (default: 4)",
 )
 parser.add_argument(
     "--alpha",
@@ -357,7 +369,7 @@ if not args.test:
 
             step += 1
 
-        if i_episode > args.batch_size*2:
+        if i_episode > args.batch_size*4 and i_episode%args.replay_ratio == 0:
             # Sample from memory and update model. Start to sample when the buffer size is at least twice the batch_size.
             batch = model.replay_buffer.sample_batch()
             grad_norms = model.update(batch)  
@@ -406,14 +418,15 @@ else:
     env = AMoD(scenario, beta=beta[city])
     parser = GNNParser(env, T=6, json_file=f"data/scenario_{city}.json")
 
-    model = SAC(
+    model = RSAC(
         env=env,
         input_size=8,
         hidden_size=256,
         p_lr=1e-3,
         q_lr=1e-3,
         alpha=0.3,
-        batch_size=100,
+        batch_size=args.batch_size,
+        buffer_cap=args.buffer_cap,
         use_automatic_entropy_tuning=False,
         critic_version=args.critic_version,
         mode=args.mode

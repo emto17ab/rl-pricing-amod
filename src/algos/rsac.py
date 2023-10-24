@@ -303,6 +303,7 @@ class RSAC(nn.Module):
         gamma=0.99,
         polyak=0.995,
         batch_size=128,
+        buffer_cap=1000,
         p_lr=3e-4,
         q_lr=1e-3,
         use_automatic_entropy_tuning=False,
@@ -351,7 +352,7 @@ class RSAC(nn.Module):
         self.step = 0
         self.nodes = env.nregion
 
-        self.replay_buffer = RecurrentReplyData((env.nregion, input_size), self.act_dim, env.tf, device, batch_size=self.BATCH_SIZE)
+        self.replay_buffer = RecurrentReplyData((env.nregion, input_size), self.act_dim, env.tf, device, capacity=buffer_cap, batch_size=self.BATCH_SIZE)
 
         # trackers
         self.hidden = None
