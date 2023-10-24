@@ -342,7 +342,7 @@ if not args.test:
                 # store transition in memroy
                 rl_reward = paxreward
                 model.replay_buffer.store(
-                    obs1, action_rl, args.rew_scale * rl_reward, o, done, o.edge_index
+                    obs1.x, action_rl, args.rew_scale * rl_reward, o.x, done, o.edge_index
                 )
 
             action_rl = model.select_action(o)  
@@ -358,7 +358,7 @@ if not args.test:
             step += 1
 
         if i_episode > args.batch_size*2:
-            # sample from memory and update model
+            # Sample from memory and update model. Start to sample when the buffer size is at least twice the batch_size.
             batch = model.replay_buffer.sample_batch()
             grad_norms = model.update(batch)  
         else:

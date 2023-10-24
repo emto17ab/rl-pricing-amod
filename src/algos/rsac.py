@@ -17,6 +17,10 @@ RecurrentBatch = namedtuple('RecurrentBatch', 'o a r d m edge_index')
 class RecurrentReplyData:
 
     def __init__(self, o_dim, a_dim, max_steps, device, capacity=200, batch_size=32):
+        """
+        max_steps: Number of time step in one episode
+        capacity: Buffer capacity
+        """
         
         # placeholders
         self.o = np.zeros((capacity, max_steps, *o_dim))
@@ -48,8 +52,8 @@ class RecurrentReplyData:
         self.r[self.episode_ptr, self.time_ptr] = r
         self.d[self.episode_ptr, self.time_ptr] = d
         self.m[self.episode_ptr, self.time_ptr] = 1    
-        if self.edge_index is not None:
-            self.edge_index = edge_index.to(self.device)
+        if self.edge_index is None:
+            self.edge_index = edge_index
 
         if d:
 
@@ -84,8 +88,9 @@ class RecurrentReplyData:
         r = torch.tensor(r).float().to(self.device)
         d = torch.tensor(d).float().to(self.device)
         m = torch.tensor(m).float().to(self.device)
+        edge_index = self.edge_index.to(self.device)
 
-        return RecurrentBatch(o, a, r, d, m, self.edge_index)
+        return RecurrentBatch(o, a, r, d, m, edge_index)
 
 class Scalar(nn.Module):
     def __init__(self, init_value):
@@ -136,7 +141,7 @@ class GNNActor(nn.Module):
             elif self.mode == 1:
                 m = Beta(concentration[:,:,:self.act_dim], concentration[:,:,self.act_dim:])
                 action = m.rsample()
-                log_prob = m.log_prob(action).sum(dim=1)
+                log_prob = m.log_prob(action).sum(dim=-1)
             else:
                 pass                
         return action, log_prob
@@ -243,7 +248,7 @@ class GNNCritic4(nn.Module):
         # out = F.relu(self.conv1(state, edge_index))
         # x = out + state
         # x = x.reshape(-1, self.act_dim, self.in_channels)  # (B,N,21)
-        concat = torch.cat([x, action.unsqueeze(-1)], dim=-1)  # (B,N,22)
+        concat = torch.cat([x, action], dim=-1)  # (B,N,22)
         x = F.relu(self.lin1(concat))
         x = F.relu(self.lin2(x))  # (B, N, H)
         # x = torch.sum(x, dim=1)  # (B, H)
@@ -420,7 +425,7 @@ class RSAC(nn.Module):
         with torch.no_grad():
             summary, self.hidden = self.actor_summarizer(x, data.edge_index, self.hidden, return_hidden=True)
             a, _ = self.actor(summary, deterministic)
-        a = a.squeeze(-1)
+        a = a.squeeze(0)
         a = a.detach().cpu().numpy()[0]
         return list(a)
 
@@ -453,7 +458,7 @@ class RSAC(nn.Module):
             q2_pi_targ = self.critic2_target(critic2_summary_2_Tplus1, a2)
             q_pi_targ = torch.min(q1_pi_targ, q2_pi_targ)
 
-            backup = b.r + self.gamma * (q_pi_targ - self.alpha * logp_a2)
+            backup = b.r.squeeze(-1) + self.gamma * (q_pi_targ - self.alpha * logp_a2)
 
         loss_q1 = F.mse_loss(q1, backup)
         loss_q2 = F.mse_loss(q2, backup)
@@ -500,19 +505,19 @@ class RSAC(nn.Module):
 
         # Freeze Q-networks so you don't waste computational effort
         # computing gradients for them during the policy learning step.
-        for p in self.critic1_summarizer.parameters():
-            p.requires_grad = False
-        for p in self.critic2_summarizer.parameters():
-            p.requires_grad = False
-        for p in self.critic1.parameters():
-            p.requires_grad = False
-        for p in self.critic2.parameters():
-            p.requires_grad = False
+        # for p in self.critic1_summarizer.parameters():
+        #     p.requires_grad = False
+        # for p in self.critic2_summarizer.parameters():
+        #     p.requires_grad = False
+        # for p in self.critic1.parameters():
+        #     p.requires_grad = False
+        # for p in self.critic2.parameters():
+        #     p.requires_grad = False
 
         # Compute loss for actor
         actions, logp_a = self.actor(actor_summary_1_T)
-        q1_1 = self.critic1(critic1_summary_1_T, actions)
-        q2_a = self.critic2(critic2_summary_1_T, actions)
+        q1_1 = self.critic1(critic1_summary_1_T.detach(), actions)
+        q2_a = self.critic2(critic2_summary_1_T.detach(), actions)
         q_a = torch.min(q1_1, q2_a)
 
         if self.use_automatic_entropy_tuning:
@@ -528,21 +533,21 @@ class RSAC(nn.Module):
         # one gradient descent step for policy network
         self.optimizers["a_summarizer_optimizer"].zero_grad()
         self.optimizers["a_optimizer"].zero_grad()
-        loss_pi.backward(retain_graph=False)
+        loss_pi.backward()
         actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), 10)
         self.optimizers["a_optimizer"].step()
         _ = nn.utils.clip_grad_norm_(self.actor_summarizer.parameters(), 10)
         self.optimizers["a_summarizer_optimizer"].step()
 
         # Unfreeze Q-networks
-        for p in self.critic1_summarizer.parameters():
-            p.requires_grad = True
-        for p in self.critic2_summarizer.parameters():
-            p.requires_grad = True
-        for p in self.critic1.parameters():
-            p.requires_grad = True
-        for p in self.critic2.parameters():
-            p.requires_grad = True
+        # for p in self.critic1_summarizer.parameters():
+        #     p.requires_grad = True
+        # for p in self.critic2_summarizer.parameters():
+        #     p.requires_grad = True
+        # for p in self.critic1.parameters():
+        #     p.requires_grad = True
+        # for p in self.critic2.parameters():
+        #     p.requires_grad = True
 
         return {"actor_grad_norm":actor_grad_norm, "critic1_grad_norm":critic1_grad_norm, "critic2_grad_norm":critic2_grad_norm}
 
