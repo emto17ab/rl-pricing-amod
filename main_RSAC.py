@@ -276,6 +276,7 @@ args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 device = torch.device("cuda" if args.cuda else "cpu")
 city = args.city
+env_baseline = []
 
 
 if not args.test:
@@ -305,7 +306,8 @@ if not args.test:
         use_automatic_entropy_tuning=False,
         clip=args.clip,
         critic_version=args.critic_version,
-        mode=args.mode
+        mode=args.mode,
+        env_baseline=env_baseline,
     ).to(device)
 
     train_episodes = args.max_episodes  # set max number of training episodes
@@ -368,6 +370,12 @@ if not args.test:
             actions.append(action_rl)
 
             step += 1
+            # update baseline
+            if len(model.env_baseline) <= 1000:
+                model.env_baseline.append(args.rew_scale * rl_reward)
+            else:
+                _ = model.env_baseline.pop(0)
+                model.env_baseline.append(args.rew_scale * rl_reward)
 
         if i_episode > args.batch_size*4:
             # Sample from memory and update model. Start to sample when the buffer size is at least four times the batch_size.
