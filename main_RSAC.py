@@ -329,7 +329,7 @@ if not args.test:
         demand_ori = nestdictsum(env.demand)
         if i_episode == train_episodes - 1:
             export = {"demand_ori":copy.deepcopy(env.demand)}
-        action_rl = [0]*env.nregion
+        action_rl = torch.tensor([0.5]*env.nregion)
         episode_reward = 0
         episode_served_demand = 0
         episode_rebalancing_cost = 0
@@ -369,8 +369,8 @@ if not args.test:
 
             step += 1
 
-        if i_episode > args.batch_size*4 and i_episode%args.replay_ratio == 0:
-            # Sample from memory and update model. Start to sample when the buffer size is at least twice the batch_size.
+        if i_episode > args.batch_size*4:
+            # Sample from memory and update model. Start to sample when the buffer size is at least four times the batch_size.
             batch = model.replay_buffer.sample_batch()
             grad_norms = model.update(batch)  
         else:

@@ -10,6 +10,8 @@ class Summarizer(nn.Module):
     def __init__(self, input_dim, nregion, hidden_dim, num_layers=2, recurrent_type='lstm'):
 
         super().__init__()
+
+        self.batchnorm = nn.BatchNorm1d(num_features=nregion)
         self.conv1 = GCNConv(input_dim, input_dim)
 
         if recurrent_type == 'lstm':
@@ -27,10 +29,12 @@ class Summarizer(nn.Module):
             batch_size, timesteps, regions, features = observations.size()
 
             x = observations.view(batch_size*timesteps, regions, features)
+            x = self.batchnorm(x)
             out = F.relu(self.conv1(x, edge_index))
-            out = out.view(batch_size, timesteps, -1)
-        else:       
-            out = F.relu(self.conv1(observations, edge_index))
+            out = out.view(batch_size, timesteps, -1)        
+        else:
+            x = self.batchnorm(observations)
+            out = F.relu(self.conv1(x, edge_index))
             out = out.view(1, 1,-1)
 
         self.rnn.flatten_parameters()

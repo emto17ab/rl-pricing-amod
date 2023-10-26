@@ -16,7 +16,7 @@ import random
 RecurrentBatch = namedtuple('RecurrentBatch', 'o a r d m edge_index')
 class RecurrentReplyData:
 
-    def __init__(self, o_dim, a_dim, max_steps, device, capacity=200, batch_size=32):
+    def __init__(self, o_dim, a_dim, max_steps, device, capacity=2000, batch_size=32):
         """
         max_steps: Number of time step in one episode
         capacity: Buffer capacity
@@ -91,6 +91,22 @@ class RecurrentReplyData:
         edge_index = self.edge_index.to(self.device)
 
         return RecurrentBatch(o, a, r, d, m, edge_index)
+    
+    def get_latest(self):
+        o = self.o[self.episode_ptr - 1]
+        a = self.a[self.episode_ptr - 1]
+        r = self.r[self.episode_ptr - 1]
+        d = self.d[self.episode_ptr - 1]
+        m = self.m[self.episode_ptr - 1]        
+
+        o = torch.tensor(o).unsqueeze(0).float().to(self.device)
+        a = torch.tensor(a).unsqueeze(0).float().to(self.device)
+        r = torch.tensor(r).unsqueeze(0).float().to(self.device)
+        d = torch.tensor(d).unsqueeze(0).float().to(self.device)
+        m = torch.tensor(m).unsqueeze(0).float().to(self.device)
+        edge_index = self.edge_index.to(self.device)
+
+        return RecurrentBatch(o, a, r, d, m, edge_index)       
 
 class Scalar(nn.Module):
     def __init__(self, init_value):
