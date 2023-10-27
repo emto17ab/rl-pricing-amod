@@ -108,7 +108,7 @@ class GNNActor(nn.Module):
         if mode == 0:
             self.lin3 = nn.Linear(hidden_size, 1)
         elif mode == 1:
-            self.lin3 = nn.Linear(hidden_size, 2)
+            self.lin3 = nn.Linear(hidden_size, 4)
         else:
             pass
 
@@ -129,9 +129,13 @@ class GNNActor(nn.Module):
                 action = m.rsample()
                 log_prob = m.log_prob(action)
             elif self.mode == 1:
-                m = Beta(concentration[:,:,0], concentration[:,:,1])
-                action = m.rsample()
-                log_prob = m.log_prob(action).sum(dim=1)
+                m_o = Beta(concentration[:,:,0], concentration[:,:,1])
+                m_d = Beta(concentration[:,:,2], concentration[:,:,3])
+                action_o = m_o.rsample()
+                action_d = m_d.rsample()
+                log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_d.log_prob(action_d).sum(dim=-1)
+                action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1)),-1)
+                
             else:
                 pass                
         return action, log_prob
@@ -229,7 +233,7 @@ class GNNCritic4(nn.Module):
         super().__init__()
         self.act_dim = act_dim
         self.conv1 = GCNConv(in_channels, in_channels)
-        self.lin1 = nn.Linear(in_channels + 1, hidden_size)
+        self.lin1 = nn.Linear(in_channels + 2, hidden_size)
         self.lin2 = nn.Linear(hidden_size, hidden_size)
         self.lin3 = nn.Linear(hidden_size, 1)
         self.in_channels = in_channels
@@ -238,7 +242,7 @@ class GNNCritic4(nn.Module):
         out = F.relu(self.conv1(state, edge_index))
         x = out + state
         x = x.reshape(-1, self.act_dim, self.in_channels)  # (B,N,21)
-        concat = torch.cat([x, action.unsqueeze(-1)], dim=-1)  # (B,N,22)
+        concat = torch.cat([x, action], dim=-1)  # (B,N,22)
         x = F.relu(self.lin1(concat))
         x = F.relu(self.lin2(x))  # (B, N, H)
         x = torch.sum(x, dim=1)  # (B, H)
@@ -408,8 +412,8 @@ class SAC(nn.Module):
         with torch.no_grad():
             a, _ = self.actor(data.x, data.edge_index, deterministic)
         a = a.squeeze(-1)
-        a = a.detach().cpu().numpy()[0]
-        return list(a)
+        a = a.detach().cpu().numpy().tolist()
+        return a
 
     def compute_loss_q(self, data):
         (
@@ -425,7 +429,7 @@ class SAC(nn.Module):
             data.x_t,
             data.edge_index_t,
             data.reward,
-            data.action.reshape(-1, self.nodes),
+            data.action.reshape(-1, self.nodes, 2),
         )
 
         q1 = self.critic1(state_batch, edge_index, action_batch)

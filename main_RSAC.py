@@ -331,7 +331,7 @@ if not args.test:
         demand_ori = nestdictsum(env.demand)
         if i_episode == train_episodes - 1:
             export = {"demand_ori":copy.deepcopy(env.demand)}
-        action_rl = torch.tensor([0.5]*env.nregion)
+        action_rl = [0]*env.nregion
         episode_reward = 0
         episode_served_demand = 0
         episode_rebalancing_cost = 0
@@ -351,10 +351,9 @@ if not args.test:
             o = parser.parse_obs(obs=obs)
 
             episode_reward += paxreward
-
+            rl_reward = paxreward
             if step > 0:
                 # store transition in memroy
-                rl_reward = paxreward
                 model.replay_buffer.store(
                     obs1.x, action_rl, args.rew_scale * rl_reward, o.x, done, o.edge_index
                 )
@@ -377,7 +376,7 @@ if not args.test:
                 _ = model.env_baseline.pop(0)
                 model.env_baseline.append(args.rew_scale * rl_reward)
 
-        if i_episode > args.batch_size*4:
+        if i_episode > args.batch_size:
             # Sample from memory and update model. Start to sample when the buffer size is at least four times the batch_size.
             batch = model.replay_buffer.sample_batch()
             grad_norms = model.update(batch)  

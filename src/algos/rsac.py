@@ -477,7 +477,7 @@ class RSAC(nn.Module):
             q2_pi_targ = self.critic2_target(critic2_summary_2_Tplus1, a2)
             q_pi_targ = torch.min(q1_pi_targ, q2_pi_targ)
 
-            backup = (b.r.squeeze(-1) - np.mean(self.env_baseline)) / np.std(self.env_baseline + self.eps) + self.gamma * (q_pi_targ - self.alpha * logp_a2)
+            backup = (b.r.squeeze(-1) - np.mean(self.env_baseline)) / (np.std(self.env_baseline) + self.eps) + self.gamma * (q_pi_targ - self.alpha * logp_a2)
 
         loss_q1 = F.mse_loss(q1, backup)
         loss_q2 = F.mse_loss(q2, backup)
