@@ -2,43 +2,37 @@ import torch
 import torch.nn as nn
 import numpy as np
 from torch_geometric.nn import GCNConv
+from torch_geometric_temporal import TGCN2
 import torch.nn.functional as F
 
 
 class Summarizer(nn.Module):
 
-    def __init__(self, input_dim, nregion, hidden_dim, num_layers=2, recurrent_type='lstm'):
+    def __init__(self, recurrent_input_dim, recurrent_hidden_dim, batch_size):
 
         super().__init__()
-
-        self.batchnorm = nn.BatchNorm1d(num_features=nregion)
-        self.conv1 = GCNConv(input_dim, input_dim)
-
-        if recurrent_type == 'lstm':
-            self.rnn = nn.LSTM(input_dim*nregion, hidden_dim, batch_first=True, num_layers=num_layers)
-        elif recurrent_type == 'rnn':
-            self.rnn = nn.RNN(input_dim*nregion, hidden_dim, batch_first=True, num_layers=num_layers)
-        elif recurrent_type == 'gru':
-            self.rnn = nn.GRU(input_dim*nregion, hidden_dim, batch_first=True, num_layers=num_layers)
-        else:
-            raise ValueError(f"{recurrent_type} not recognized")
+        self.rnn = TGCN2(in_channels=recurrent_input_dim, out_channels=recurrent_hidden_dim, batch_size=batch_size)
 
     def forward(self, observations, edge_index, hidden=None, return_hidden=False):
         
         if len(observations.shape) > 3:
-            batch_size, timesteps, regions, features = observations.size()
-
-            x = observations.view(batch_size*timesteps, regions, features)
-            x = self.batchnorm(x)
-            out = F.relu(self.conv1(x, edge_index))
-            out = out.view(batch_size, timesteps, -1)        
+            # batch training
+            batch_size, timesteps, regions, _ = observations.size()
+            x_recurrent = observations[:,:,:,-1].unsqueeze(-1)
+            x_other = observations[:,:,:,:-1]
+            
+            outputs = []
+            for t in range(timesteps):
+                hidden = self.rnn(x_recurrent[:, t, :, :], edge_index, H=hidden)
+                outputs.append(hidden.unsqueeze(1))
+            summary =  torch.cat([x_other, torch.cat(outputs, dim=1)],-1)
         else:
-            x = self.batchnorm(observations)
-            out = F.relu(self.conv1(x, edge_index))
-            out = out.view(1, 1,-1)
+            # select action
+            x_recurrent = observations[:,-1].unsqueeze(-1).unsqueeze(0)
+            x_other = observations[:,:-1].unsqueeze(0)
+            hidden = self.rnn(x_recurrent, edge_index, H=hidden)
+            summary =  torch.cat([x_other, hidden],-1)
 
-        self.rnn.flatten_parameters()
-        summary, hidden = self.rnn(out, hidden)
         if return_hidden:
             return summary, hidden
         else:

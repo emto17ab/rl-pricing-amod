@@ -51,7 +51,7 @@ class GNNParser:
                                 (obs[0][n][self.env.time + 1] +
                                  self.env.dacc[n][t])
                                 * self.s
-                                for n in self.env.region
+                                 for n in self.env.region
                             ]
                             for t in range(
                                 self.env.time + 1, self.env.time + self.T + 1
@@ -203,7 +203,7 @@ parser.add_argument(
 parser.add_argument(
     "--batch_size",
     type=int,
-    default=128,
+    default=32,
     help="batch size for training (default: 128)",
 )
 parser.add_argument(
@@ -297,8 +297,11 @@ if not args.test:
 
     model = RSAC(
         env=env,
-        input_size=9,
+        recurrent_input_size=1,
+        recurrent_hidden_size=16,
+        other_input_size=8,
         hidden_size=args.hidden_size,
+        sample_steps=1,
         p_lr=args.p_lr,
         q_lr=args.q_lr,
         alpha=args.alpha,
@@ -376,12 +379,12 @@ if not args.test:
                 _ = model.env_baseline.pop(0)
                 model.env_baseline.append(args.rew_scale * rl_reward)
 
-        if i_episode > args.batch_size:
-            # Sample from memory and update model. Start to sample when the buffer size is at least four times the batch_size.
-            batch = model.replay_buffer.sample_batch()
-            grad_norms = model.update(batch)  
-        else:
-            grad_norms = {"actor_grad_norm":0, "critic1_grad_norm":0, "critic2_grad_norm":0}
+            if i_episode > 10:
+                # Sample from memory and update model. Start to sample when the buffer size is at least the lower bound.
+                batch = model.replay_buffer.sample_batch()
+                grad_norms = model.update(batch)  
+            else:
+                grad_norms = {"actor_grad_norm":0, "critic1_grad_norm":0, "critic2_grad_norm":0}
 
         # Keep metrics
         epoch_reward_list.append(episode_reward)
@@ -429,6 +432,7 @@ else:
         env=env,
         input_size=8,
         hidden_size=256,
+        sample_steps=1,
         p_lr=1e-3,
         q_lr=1e-3,
         alpha=0.3,

@@ -16,7 +16,7 @@ import random
 RecurrentBatch = namedtuple('RecurrentBatch', 'o a r d m edge_index')
 class RecurrentReplyData:
 
-    def __init__(self, o_dim, a_dim, max_steps, device, capacity=2000, batch_size=32):
+    def __init__(self, o_dim, a_dim, max_steps, sample_steps, device, capacity=2000, batch_size=32):
         """
         max_steps: Number of time step in one episode
         capacity: Buffer capacity
@@ -42,6 +42,8 @@ class RecurrentReplyData:
         self.capacity = capacity
         self.o_dim = o_dim
         self.a_dim = a_dim
+        self.max_steps = max_steps
+        self.sample_steps = sample_steps
         self.batch_size = batch_size  
         self.device = device            
 
@@ -73,15 +75,33 @@ class RecurrentReplyData:
 
     def sample_batch(self):
 
-        assert self.num_episodes >= self.batch_size
+        # assert self.num_episodes >= self.batch_size
 
-        choices = np.random.choice(range(self.capacity), size=self.batch_size)
+        o_reshape = []
+        a_reshape = []
+        r_reshape = []
+        d_reshape = []
+        m_reshape = []
+        current_buffer = min(self.num_episodes,self.capacity)
+        for i in range(0, self.max_steps - 1 - (self.sample_steps - 1), self.sample_steps):
+            o_reshape.append(self.o[:current_buffer,i:i+self.sample_steps+1,:,:]) 
+            a_reshape.append(self.a[:current_buffer,i:i+self.sample_steps,:])
+            r_reshape.append(self.r[:current_buffer,i:i+self.sample_steps,:])
+            d_reshape.append(self.d[:current_buffer,i:i+self.sample_steps,:])
+            m_reshape.append(self.m[:current_buffer,i:i+self.sample_steps,:])
+        o_reshape = np.concatenate(o_reshape, axis=0)
+        a_reshape = np.concatenate(a_reshape, axis=0)
+        r_reshape = np.concatenate(r_reshape, axis=0)
+        d_reshape = np.concatenate(d_reshape, axis=0)
+        m_reshape = np.concatenate(m_reshape, axis=0)
 
-        o = self.o[choices]
-        a = self.a[choices]
-        r = self.r[choices]
-        d = self.d[choices]
-        m = self.m[choices]        
+        choices = np.random.choice(range(o_reshape.shape[0]), size=self.batch_size)
+
+        o = o_reshape[choices]
+        a = a_reshape[choices]
+        r = r_reshape[choices]
+        d = d_reshape[choices]
+        m = m_reshape[choices]        
 
         o = torch.tensor(o).float().to(self.device)
         a = torch.tensor(a).float().to(self.device)
@@ -130,18 +150,18 @@ class GNNActor(nn.Module):
         self.mode = mode
         self.in_channels = in_channels
         self.act_dim = act_dim
-        # self.conv1 = GCNConv(in_channels, in_channels)
+        self.conv1 = GCNConv(in_channels, in_channels)
         self.lin1 = nn.Linear(in_channels, hidden_size)
         self.lin2 = nn.Linear(hidden_size, hidden_size)
         if self.mode == 0:
-            self.lin3 = nn.Linear(hidden_size, act_dim)
+            self.lin3 = nn.Linear(hidden_size, 1)
         elif self.mode == 1:
-            self.lin3 = nn.Linear(hidden_size, act_dim*2)
+            self.lin3 = nn.Linear(hidden_size, 2)
 
-    def forward(self, x, deterministic=False):
-        # out = F.relu(self.conv1(state, edge_index))
-        # x = out + state
-        # x = x.reshape(-1, self.act_dim, self.in_channels)
+    def forward(self, state, edge_index, deterministic=False):
+        out = F.relu(self.conv1(state, edge_index))
+        x = out + state
+        x = x.reshape(-1, self.act_dim, self.in_channels)
         x = F.leaky_relu(self.lin1(x))
         x = F.leaky_relu(self.lin2(x))
         x = F.softplus(self.lin3(x))
@@ -155,12 +175,12 @@ class GNNActor(nn.Module):
                 action = m.rsample()
                 log_prob = m.log_prob(action)
             elif self.mode == 1:
-                m = Beta(concentration[:,:,:self.act_dim], concentration[:,:,self.act_dim:])
+                m = Beta(concentration[:,:,0], concentration[:,:,1])
                 action = m.rsample()
-                log_prob = m.log_prob(action).sum(dim=-1)
+                log_prob = m.log_prob(action).sum(dim=1)
             else:
                 pass                
-        return action, log_prob
+        return action.unsqueeze(-1), log_prob
 
 
 #########################################
@@ -254,20 +274,22 @@ class GNNCritic4(nn.Module):
     def __init__(self, in_channels, hidden_size=32, act_dim=6):
         super().__init__()
         self.act_dim = act_dim
-        # self.conv1 = GCNConv(in_channels, in_channels)
-        self.lin1 = nn.Linear(in_channels + act_dim, hidden_size)
+        self.conv1 = GCNConv(in_channels, in_channels)
+        self.lin1 = nn.Linear(in_channels + 1, hidden_size)
         self.lin2 = nn.Linear(hidden_size, hidden_size)
         self.lin3 = nn.Linear(hidden_size, 1)
         self.in_channels = in_channels
 
-    def forward(self, x, action):
-        # out = F.relu(self.conv1(state, edge_index))
-        # x = out + state
-        # x = x.reshape(-1, self.act_dim, self.in_channels)  # (B,N,21)
+    def forward(self, state, edge_index, action):
+        out = F.relu(self.conv1(state, edge_index))
+        x = out + state
+        x = x.reshape(-1, self.act_dim, self.in_channels)  # (B,N,21)
+        # batch_size, timesteps, regions = action.size()
+        # action = action.view(batch_size*timesteps,regions,-1)
         concat = torch.cat([x, action], dim=-1)  # (B,N,22)
         x = F.relu(self.lin1(concat))
         x = F.relu(self.lin2(x))  # (B, N, H)
-        # x = torch.sum(x, dim=1)  # (B, H)
+        x = torch.sum(x, dim=1)  # (B, H)
         x = self.lin3(x).squeeze(-1)  # (B)
         return x
 
@@ -313,13 +335,16 @@ class RSAC(nn.Module):
     def __init__(
         self,
         env,
-        input_size,
+        recurrent_input_size,
+        recurrent_hidden_size,
+        other_input_size,
         hidden_size=32,
         alpha=0.2,
         gamma=0.99,
         polyak=0.995,
         batch_size=128,
         buffer_cap=1000,
+        sample_steps=4,
         p_lr=3e-4,
         q_lr=1e-3,
         use_automatic_entropy_tuning=False,
@@ -337,7 +362,10 @@ class RSAC(nn.Module):
         super(RSAC, self).__init__()
         self.env = env
         self.eps = eps
-        self.input_size = input_size
+        self.recurrent_input_size = recurrent_input_size
+        self.recurrent_hidden_size = recurrent_hidden_size
+        self.other_input_size = other_input_size
+        self.input_size = recurrent_input_size + other_input_size
         self.hidden_size = hidden_size
         self.device = device
         self.path = None
@@ -370,22 +398,22 @@ class RSAC(nn.Module):
         self.step = 0
         self.nodes = env.nregion
 
-        self.replay_buffer = RecurrentReplyData((env.nregion, input_size), self.act_dim, env.tf, device, capacity=buffer_cap, batch_size=self.BATCH_SIZE)
+        self.replay_buffer = RecurrentReplyData((env.nregion, self.input_size), self.act_dim, env.tf, sample_steps, device, capacity=buffer_cap, batch_size=self.BATCH_SIZE)
 
         # trackers
-        self.hidden = None
+        self.hidden = torch.zeros((1, env.nregion, self.recurrent_hidden_size)).float()
 
         # nnets
 
-        self.actor_summarizer =Summarizer(self.input_size, env.nregion, self.hidden_size)
+        self.actor_summarizer =Summarizer(self.recurrent_input_size, self.recurrent_hidden_size, batch_size)
 
-        self.critic1_summarizer = Summarizer(self.input_size, env.nregion, self.hidden_size)
+        self.critic1_summarizer = Summarizer(self.recurrent_input_size, self.recurrent_hidden_size, batch_size)
         self.critic1_summarizer_target = create_target(self.critic1_summarizer)
 
-        self.critic2_summarizer = Summarizer(self.input_size, env.nregion, self.hidden_size)
+        self.critic2_summarizer = Summarizer(self.recurrent_input_size, self.recurrent_hidden_size, batch_size)
         self.critic2_summarizer_target = create_target(self.critic2_summarizer)
 
-        self.actor = GNNActor(self.hidden_size, self.hidden_size, act_dim=self.act_dim, mode=mode)
+        self.actor = GNNActor(self.recurrent_hidden_size+self.other_input_size, self.hidden_size, act_dim=self.act_dim, mode=mode)
     
         if critic_version == 1:
             GNNCritic = GNNCritic1
@@ -399,10 +427,10 @@ class RSAC(nn.Module):
             GNNCritic = GNNCritic5
         
         self.critic1 = GNNCritic(
-            self.hidden_size, self.hidden_size, act_dim=self.act_dim
+            self.recurrent_hidden_size+self.other_input_size, self.hidden_size, act_dim=self.act_dim
         )
         self.critic2 = GNNCritic(
-            self.hidden_size, self.hidden_size, act_dim=self.act_dim
+            self.recurrent_hidden_size+self.other_input_size, self.hidden_size, act_dim=self.act_dim
         )
         assert self.critic1.parameters() != self.critic2.parameters()   
 
@@ -440,17 +468,21 @@ class RSAC(nn.Module):
 
     def select_action(self, data, deterministic=False):
 
-        x = torch.from_numpy(data.x[np.newaxis, :, :]).float()
+        x = torch.from_numpy(data.x).float()
         with torch.no_grad():
             summary, self.hidden = self.actor_summarizer(x, data.edge_index, self.hidden, return_hidden=True)
-            a, _ = self.actor(summary, deterministic)
-        a = a.squeeze(0)
+            a, _ = self.actor(summary, data.edge_index, deterministic)
+        a = a.squeeze(-1)
         a = a.detach().cpu().numpy()[0]
         return list(a)
 
     def update(self, b: RecurrentBatch):
 
         bs, num_time = b.r.shape[0], b.r.shape[1]
+
+        # Action and reward
+        a1 = b.a.reshape(bs*num_time,self.env.nregion,-1)
+        r = b.r.reshape(bs*num_time,-1).squeeze(-1)
 
         # Summary
         actor_summary = self.actor_summarizer(b.o, b.edge_index)
@@ -460,24 +492,22 @@ class RSAC(nn.Module):
         critic1_summary_target = self.critic1_summarizer_target(b.o, b.edge_index)
         critic2_summary_target = self.critic2_summarizer_target(b.o, b.edge_index)
 
-        actor_summary_1_T, actor_summary_2_Tplus1 = actor_summary[:, :-1, :], actor_summary[:, 1:, :]
-        critic1_summary_1_T, critic1_summary_2_Tplus1 = critic1_summary[:, :-1, :], critic1_summary_target[:, 1:, :]
-        critic2_summary_1_T, critic2_summary_2_Tplus1 = critic2_summary[:, :-1, :], critic2_summary_target[:, 1:, :]      
-
-        assert actor_summary.shape == (bs, num_time+1, self.hidden_size)
+        actor_summary_1_T, actor_summary_2_Tplus1 = actor_summary[:, :-1, :, :].reshape(bs*num_time,self.env.nregion,-1), actor_summary[:, 1:, :, :].reshape(bs*num_time,self.env.nregion,-1)
+        critic1_summary_1_T, critic1_summary_2_Tplus1 = critic1_summary[:, :-1, :, :].reshape(bs*num_time,self.env.nregion,-1), critic1_summary_target[:, 1:, :, :].reshape(bs*num_time,self.env.nregion,-1)
+        critic2_summary_1_T, critic2_summary_2_Tplus1 = critic2_summary[:, :-1, :, :].reshape(bs*num_time,self.env.nregion,-1), critic2_summary_target[:, 1:, :, :].reshape(bs*num_time,self.env.nregion,-1)      
 
         # Compute loss for critic
-        q1 = self.critic1(critic1_summary_1_T, b.a)
-        q2 = self.critic2(critic2_summary_1_T, b.a)
+        q1 = self.critic1(critic1_summary_1_T, b.edge_index, a1)
+        q2 = self.critic2(critic2_summary_1_T, b.edge_index, a1)
 
         with torch.no_grad():
             # Target actions come from *current* policy
-            a2, logp_a2 = self.actor(actor_summary_2_Tplus1)
-            q1_pi_targ = self.critic1_target(critic1_summary_2_Tplus1, a2)
-            q2_pi_targ = self.critic2_target(critic2_summary_2_Tplus1, a2)
+            a2, logp_a2 = self.actor(actor_summary_2_Tplus1, b.edge_index)
+            q1_pi_targ = self.critic1_target(critic1_summary_2_Tplus1, b.edge_index, a2)
+            q2_pi_targ = self.critic2_target(critic2_summary_2_Tplus1, b.edge_index, a2)
             q_pi_targ = torch.min(q1_pi_targ, q2_pi_targ)
 
-            backup = (b.r.squeeze(-1) - np.mean(self.env_baseline)) / (np.std(self.env_baseline) + self.eps) + self.gamma * (q_pi_targ - self.alpha * logp_a2)
+            backup = (r - np.mean(self.env_baseline)) / (np.std(self.env_baseline) + self.eps) + self.gamma * (q_pi_targ - self.alpha * logp_a2)
 
         loss_q1 = F.mse_loss(q1, backup)
         loss_q2 = F.mse_loss(q2, backup)
@@ -534,9 +564,9 @@ class RSAC(nn.Module):
         #     p.requires_grad = False
 
         # Compute loss for actor
-        actions, logp_a = self.actor(actor_summary_1_T)
-        q1_1 = self.critic1(critic1_summary_1_T.detach(), actions)
-        q2_a = self.critic2(critic2_summary_1_T.detach(), actions)
+        actions, logp_a = self.actor(actor_summary_1_T,b.edge_index)
+        q1_1 = self.critic1(critic1_summary_1_T.detach(), b.edge_index, actions)
+        q2_a = self.critic2(critic2_summary_1_T.detach(), b.edge_index, actions)
         q_a = torch.min(q1_1, q2_a)
 
         if self.use_automatic_entropy_tuning:
