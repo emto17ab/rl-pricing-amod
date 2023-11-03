@@ -63,10 +63,10 @@ class RecurrentReplyData:
             self.o[self.episode_ptr, self.time_ptr+1] = no
 
             # reset pointers
-            if self.episode_ptr < self.capacity - 1:
+            if self.episode_ptr < self.capacity -1:
                 self.episode_ptr += 1
             else:
-                self.episode_ptr = 500 + ((self.episode_ptr + 1) % self.capacity)
+                self.episode_ptr = 100 + ((self.episode_ptr + 1) % self.capacity)
             self.time_ptr = 0
 
             # update trackers
@@ -510,7 +510,8 @@ class RSAC(nn.Module):
             q2_pi_targ = self.critic2_target(critic2_summary_2_Tplus1, b.edge_index, a2)
             q_pi_targ = torch.min(q1_pi_targ, q2_pi_targ)
 
-            backup = (r - np.mean(self.env_baseline)) / (np.std(self.env_baseline) + self.eps) + self.gamma * (q_pi_targ - self.alpha * logp_a2)
+            # backup = (r - np.mean(self.env_baseline)) / (np.std(self.env_baseline) + self.eps) + self.gamma * (q_pi_targ - self.alpha * logp_a2)
+            backup = r + self.gamma * (q_pi_targ - self.alpha * logp_a2)
 
         loss_q1 = F.mse_loss(q1, backup)
         loss_q2 = F.mse_loss(q2, backup)
