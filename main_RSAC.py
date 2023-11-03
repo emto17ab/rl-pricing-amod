@@ -380,7 +380,7 @@ if not args.test:
                 _ = model.env_baseline.pop(0)
                 model.env_baseline.append(args.rew_scale * rl_reward)
 
-        if i_episode > 10:
+        if i_episode > 40:
             # Sample from memory and update model. Start to sample when the buffer size is at least the lower bound.
             batch = model.replay_buffer.sample_batch()
             grad_norms = model.update(batch)  
