@@ -298,7 +298,7 @@ if not args.test:
     model = RSAC(
         env=env,
         recurrent_input_size=1,
-        recurrent_hidden_size=16,
+        recurrent_hidden_size=4,
         other_input_size=8,
         hidden_size=args.hidden_size,
         sample_steps=1,

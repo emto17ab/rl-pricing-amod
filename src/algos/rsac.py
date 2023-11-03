@@ -404,7 +404,7 @@ class RSAC(nn.Module):
         self.replay_buffer = RecurrentReplyData((env.nregion, self.input_size), self.act_dim, env.tf, sample_steps, device, capacity=buffer_cap, batch_size=self.BATCH_SIZE)
 
         # trackers
-        self.hidden = torch.zeros((1, env.nregion, self.recurrent_hidden_size)).float()
+        self.hidden = None
 
         # nnets
 
@@ -463,7 +463,7 @@ class RSAC(nn.Module):
             )
 
     def reinitialize_hidden(self):
-        self.hidden = torch.zeros((1, self.env.nregion, self.recurrent_hidden_size)).float()
+        self.hidden = None
 
     def parse_obs(self, obs):
         state = self.obs_parser.parse_obs(obs)
@@ -484,8 +484,8 @@ class RSAC(nn.Module):
         bs, num_time = b.r.shape[0], b.r.shape[1]
 
         # Action and reward
-        a1 = b.a.reshape(bs*num_time,self.env.nregion,-1)
-        r = b.r.reshape(bs*num_time,-1).squeeze(-1)
+        a1 = b.a[:,-1,:].unsqueeze(-1)
+        r = b.r[:,-1,:].squeeze(-1)
 
         # Summary
         actor_summary = self.actor_summarizer(b.o, b.edge_index)
@@ -495,9 +495,9 @@ class RSAC(nn.Module):
         critic1_summary_target = self.critic1_summarizer_target(b.o, b.edge_index)
         critic2_summary_target = self.critic2_summarizer_target(b.o, b.edge_index)
 
-        actor_summary_1_T, actor_summary_2_Tplus1 = actor_summary[:, :-1, :, :].reshape(bs*num_time,self.env.nregion,-1), actor_summary[:, 1:, :, :].reshape(bs*num_time,self.env.nregion,-1)
-        critic1_summary_1_T, critic1_summary_2_Tplus1 = critic1_summary[:, :-1, :, :].reshape(bs*num_time,self.env.nregion,-1), critic1_summary_target[:, 1:, :, :].reshape(bs*num_time,self.env.nregion,-1)
-        critic2_summary_1_T, critic2_summary_2_Tplus1 = critic2_summary[:, :-1, :, :].reshape(bs*num_time,self.env.nregion,-1), critic2_summary_target[:, 1:, :, :].reshape(bs*num_time,self.env.nregion,-1)      
+        actor_summary_1_T, actor_summary_2_Tplus1 = actor_summary[:, -2, :, :], actor_summary[:, -1, :, :]
+        critic1_summary_1_T, critic1_summary_2_Tplus1 = critic1_summary[:, -2, :, :], critic1_summary_target[:, -1, :, :]
+        critic2_summary_1_T, critic2_summary_2_Tplus1 = critic2_summary[:, -2, :, :], critic2_summary_target[:, -1, :, :]      
 
         # Compute loss for critic
         q1 = self.critic1(critic1_summary_1_T, b.edge_index, a1)
