@@ -63,7 +63,10 @@ class RecurrentReplyData:
             self.o[self.episode_ptr, self.time_ptr+1] = no
 
             # reset pointers
-            self.episode_ptr = (self.episode_ptr + 1) % self.capacity
+            if self.episode_ptr < self.capacity - 1:
+                self.episode_ptr += 1
+            else:
+                self.episode_ptr = 500 + ((self.episode_ptr + 1) % self.capacity)
             self.time_ptr = 0
 
             # update trackers
@@ -95,7 +98,7 @@ class RecurrentReplyData:
         d_reshape = np.concatenate(d_reshape, axis=0)
         m_reshape = np.concatenate(m_reshape, axis=0)
 
-        choices = np.random.choice(range(o_reshape.shape[0]), size=self.batch_size)
+        choices = random.sample(range(o_reshape.shape[0]), self.batch_size)
 
         o = o_reshape[choices]
         a = a_reshape[choices]
@@ -460,7 +463,7 @@ class RSAC(nn.Module):
             )
 
     def reinitialize_hidden(self):
-        self.hidden = None
+        self.hidden = torch.zeros((1, self.env.nregion, self.recurrent_hidden_size)).float()
 
     def parse_obs(self, obs):
         state = self.obs_parser.parse_obs(obs)

@@ -330,6 +330,7 @@ if not args.test:
 
     for i_episode in epochs:
         obs = env.reset()  # initialize environment
+        model.reinitialize_hidden()
         # Save original demand for reference
         demand_ori = nestdictsum(env.demand)
         if i_episode == train_episodes - 1:
