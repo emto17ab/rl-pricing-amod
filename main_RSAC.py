@@ -298,7 +298,7 @@ if not args.test:
     model = RSAC(
         env=env,
         recurrent_input_size=1,
-        recurrent_hidden_size=16,
+        recurrent_hidden_size=4,
         other_input_size=8,
         hidden_size=args.hidden_size,
         sample_steps=1,
@@ -380,12 +380,12 @@ if not args.test:
                 _ = model.env_baseline.pop(0)
                 model.env_baseline.append(args.rew_scale * rl_reward)
 
-            if i_episode > 10:
-                # Sample from memory and update model. Start to sample when the buffer size is at least the lower bound.
-                batch = model.replay_buffer.sample_batch()
-                grad_norms = model.update(batch)  
-            else:
-                grad_norms = {"actor_grad_norm":0, "critic1_grad_norm":0, "critic2_grad_norm":0}
+        if i_episode > 10:
+            # Sample from memory and update model. Start to sample when the buffer size is at least the lower bound.
+            batch = model.replay_buffer.sample_batch()
+            grad_norms = model.update(batch)  
+        else:
+            grad_norms = {"actor_grad_norm":0, "critic1_grad_norm":0, "critic2_grad_norm":0}
 
         # Keep metrics
         epoch_reward_list.append(episode_reward)
