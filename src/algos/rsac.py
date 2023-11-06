@@ -66,7 +66,7 @@ class RecurrentReplyData:
             if self.episode_ptr < self.capacity -1:
                 self.episode_ptr += 1
             else:
-                self.episode_ptr = 100 + ((self.episode_ptr + 1) % self.capacity)
+                self.episode_ptr = ((self.episode_ptr + 1) % self.capacity)
             self.time_ptr = 0
 
             # update trackers

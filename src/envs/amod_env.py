@@ -125,11 +125,11 @@ class AMoD:
                     #                             j][t]*self.tstep*price[n].item()
                     if p_ori != 0:
                         if isinstance(price[0], list):
-                            p = p_ori * (price[n][0] + price[j][1])
-                            d = max(demand_update(d, p, 2 * p_ori, p_ori), 0)    
+                            p_factor = price[n][0] + price[j][1]
+                            d = max(demand_update(d, p_factor, 2 * p_ori, p_ori), 0)    
                         else:
-                            p = p_ori * price[n] * 2
-                            d = max(demand_update(d, p, 2 * p_ori, p_ori), 0)
+                            p_factor = price[n] * 2
+                            d = max(demand_update(d, p_factor, 2 * p_ori, p_ori), 0)
                             # p = 10 + max(self.demandTime[n,j][t]*self.tstep-6,0)*price[n].item()
                             # d = max(demand_update(d, p, 2*max(p_ori,p), p_ori), 0)                        
                     self.demand[n, j][t] = d

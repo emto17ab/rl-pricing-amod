@@ -298,7 +298,7 @@ if not args.test:
     model = RSAC(
         env=env,
         recurrent_input_size=1,
-        recurrent_hidden_size=4,
+        recurrent_hidden_size=2,
         other_input_size=8,
         hidden_size=args.hidden_size,
         sample_steps=1,
@@ -306,7 +306,7 @@ if not args.test:
         q_lr=args.q_lr,
         alpha=args.alpha,
         batch_size=args.batch_size,
-        buffer_cap=args.buffer_cap,
+        buffer_cap=args.max_episodes,
         use_automatic_entropy_tuning=False,
         clip=args.clip,
         critic_version=args.critic_version,
