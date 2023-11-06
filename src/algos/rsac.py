@@ -16,7 +16,7 @@ import random
 RecurrentBatch = namedtuple('RecurrentBatch', 'o a r d m edge_index')
 class RecurrentReplyData:
 
-    def __init__(self, o_dim, a_dim, max_steps, sample_steps, device, capacity=2000, batch_size=32):
+    def __init__(self, o_dim, a_dim, max_steps, sample_steps, device, capacity=1000, batch_size=32):
         """
         max_steps: Number of time step in one episode
         capacity: Buffer capacity
