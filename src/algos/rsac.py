@@ -86,12 +86,21 @@ class RecurrentReplyData:
         d_reshape = []
         m_reshape = []
         current_buffer = min(self.num_episodes,self.capacity)
-        for i in range(0, self.max_steps - 1 - (self.sample_steps - 1), self.sample_steps):
+        # Previous episodes
+        for i in range(0, self.max_steps - 1 - (self.sample_steps - 1)):
             o_reshape.append(self.o[:current_buffer,i:i+self.sample_steps+1,:,:]) 
             a_reshape.append(self.a[:current_buffer,i:i+self.sample_steps,:])
             r_reshape.append(self.r[:current_buffer,i:i+self.sample_steps,:])
             d_reshape.append(self.d[:current_buffer,i:i+self.sample_steps,:])
             m_reshape.append(self.m[:current_buffer,i:i+self.sample_steps,:])
+        # Current epsiode
+        if self.time_ptr >= self.max_steps:
+            for i in range(0, self.time_ptr - (self.sample_steps - 1)):
+                o_reshape.append(self.o[current_buffer,i:i+self.sample_steps+1,:,:][np.newaxis,:,:,:]) 
+                a_reshape.append(self.a[current_buffer,i:i+self.sample_steps,:][np.newaxis,:,:])
+                r_reshape.append(self.r[current_buffer,i:i+self.sample_steps,:][np.newaxis,:,:])
+                d_reshape.append(self.d[current_buffer,i:i+self.sample_steps,:][np.newaxis,:,:])
+                m_reshape.append(self.m[current_buffer,i:i+self.sample_steps,:][np.newaxis,:,:])            
         o_reshape = np.concatenate(o_reshape, axis=0)
         a_reshape = np.concatenate(a_reshape, axis=0)
         r_reshape = np.concatenate(r_reshape, axis=0)
@@ -602,7 +611,8 @@ class RSAC(nn.Module):
         # for p in self.critic2.parameters():
         #     p.requires_grad = True
 
-        return {"actor_grad_norm":actor_grad_norm, "critic1_grad_norm":critic1_grad_norm, "critic2_grad_norm":critic2_grad_norm}
+        return {"actor_grad_norm":actor_grad_norm, "critic1_grad_norm":critic1_grad_norm, "critic2_grad_norm":critic2_grad_norm,\
+                "actor_loss":loss_pi.item(), "critic1_loss":loss_q1.item(), "critic2_loss":loss_q2.item()}
 
     def configure_optimizers(self):
         optimizers = dict()

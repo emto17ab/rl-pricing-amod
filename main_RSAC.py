@@ -381,12 +381,12 @@ if not args.test:
                 _ = model.env_baseline.pop(0)
                 model.env_baseline.append(args.rew_scale * rl_reward)
 
-        if i_episode > 10:
-            # Sample from memory and update model. Start to sample when the buffer size is at least the lower bound.
-            batch = model.replay_buffer.sample_batch()
-            grad_norms = model.update(batch)  
-        else:
-            grad_norms = {"actor_grad_norm":0, "critic1_grad_norm":0, "critic2_grad_norm":0}
+            if i_episode > 10:
+                # Sample from memory and update model. Start to sample when the buffer size is at least the lower bound.
+                batch = model.replay_buffer.sample_batch()
+                grad_norms = model.update(batch)  
+            else:
+                grad_norms = {"actor_grad_norm":0, "critic1_grad_norm":0, "critic2_grad_norm":0, "actor_loss":0, "critic1_loss":0, "critic2_loss":0}
 
         # Keep metrics
         epoch_reward_list.append(episode_reward)
@@ -398,7 +398,8 @@ if not args.test:
         price_history.append(actions)
 
         epochs.set_description(
-            f"Episode {i_episode+1} | Reward: {episode_reward:.2f} | Grad Norms: Actor={grad_norms['actor_grad_norm']:.2f}, Critic1={grad_norms['critic1_grad_norm']:.2f}, Critic2={grad_norms['critic2_grad_norm']:.2f}"
+            f"Episode {i_episode+1} | Reward: {episode_reward:.2f} | Grad Norms: Actor={grad_norms['actor_grad_norm']:.2f}, Critic1={grad_norms['critic1_grad_norm']:.2f}, Critic2={grad_norms['critic2_grad_norm']:.2f}\
+              | Actor loss: {grad_norms['actor_loss']:.2f} | Critic1 loss: {grad_norms['critic1_loss']:.2f} | Critic2 loss: {grad_norms['critic2_loss']:.2f}"
         )
         # Checkpoint best performing model
         if episode_reward >= best_reward:
