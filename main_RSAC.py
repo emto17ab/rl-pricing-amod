@@ -4,7 +4,7 @@ from tqdm import trange
 import numpy as np
 import torch
 from src.envs.amod_env import Scenario, AMoD
-from src.algos.sac import SAC
+from src.algos.rsac import RSAC
 from src.algos.reb_flow_solver import solveRebFlow
 from src.misc.utils import dictsum, nestdictsum
 import json, pickle
@@ -34,93 +34,42 @@ class GNNParser:
         # 1) current availability scaled by factor, 
         # 2) Estimated availability (T timestamp) scaled by factor, 
         # 3) Estimated revenue (T timestamp) scaled by factor
-        # x = (
-        #     torch.cat(
-        #         (
-        #             torch.tensor(
-        #                 [obs[0][n][self.env.time + 1] *
-        #                     self.s for n in self.env.region]
-        #             )
-        #             .view(1, 1, self.env.nregion)
-        #             .float(),
-        #             torch.tensor(
-        #                 [
-        #                     [
-        #                         (obs[0][n][self.env.time + 1] +
-        #                          self.env.dacc[n][t])
-        #                         * self.s
-        #                         for n in self.env.region
-        #                     ]
-        #                     for t in range(
-        #                         self.env.time + 1, self.env.time + self.T + 1
-        #                     )
-        #                 ]
-        #             )
-        #             .view(1, self.T, self.env.nregion)
-        #             .float(),
-        #             torch.tensor(
-        #                 [
-        #                     [
-        #                         sum(
-        #                             [
-        #                                 (self.env.scenario.demand_input[i, j][t])
-        #                                 * (self.env.price[i, j][t])
-        #                                 * self.s
-        #                                 for j in self.env.region
-        #                             ]
-        #                         )
-        #                         for i in self.env.region
-        #                     ]
-        #                     for t in range(
-        #                         self.env.time + 1, self.env.time + self.T + 1
-        #                     )
-        #                 ]
-        #             )
-        #             .view(1, self.T, self.env.nregion)
-        #             .float(),
-        #         ),
-        #         dim=1,
-        #     )
-        #     .squeeze(0)
-        #     .view(1 + self.T + self.T, self.env.nregion)
-        #     .T
-        # )
-        x = (
-            torch.cat(
+        x = np.squeeze(
+            np.concatenate(
                 (
                     # Current availability
-                    torch.tensor(
+                    np.array(
                         [obs[0][n][self.env.time + 1] *
                             self.s for n in self.env.region]
                     )
-                    .view(1, 1, self.env.nregion)
-                    .float(),
+                    .reshape(1, 1, self.env.nregion)
+                    .astype(float),
                     # Estimated availability
-                    torch.tensor(
+                    np.array(
                         [
                             [
                                 (obs[0][n][self.env.time + 1] +
                                  self.env.dacc[n][t])
                                 * self.s
-                                for n in self.env.region
+                                 for n in self.env.region
                             ]
                             for t in range(
                                 self.env.time + 1, self.env.time + self.T + 1
                             )
                         ]
                     )
-                    .view(1, self.T, self.env.nregion)
-                    .float(),
+                    .reshape(1, self.T, self.env.nregion)
+                    .astype(float),
                     # Queue length
-                    torch.tensor(
+                    np.array(
                         [
                             len(self.env.queue[n]) * self.s for n in self.env.region
                         ]
                     )
-                    .view(1, 1, self.env.nregion)
-                    .float(),
+                    .reshape(1, 1, self.env.nregion)
+                    .astype(float),
                     # Current demand
-                    torch.tensor(
+                    np.array(
                             [
                                 sum(
                                     [
@@ -133,15 +82,12 @@ class GNNParser:
                                 for i in self.env.region
                             ]
                     )
-                    .view(1, 1, self.env.nregion)
-                    .float(),
+                    .reshape(1, 1, self.env.nregion)
+                    .astype(float),
                 ),
-                dim=1,
-            )
-            .squeeze(0)
-            .view(1 + self.T + 1 + 1, self.env.nregion)
-            .T
-        )       
+                axis=1,
+            ),0).reshape(1 + self.T + 1 + 1, self.env.nregion).T        
+        
         if self.json_file is not None:
             edge_index = torch.vstack(
                 (
@@ -257,8 +203,20 @@ parser.add_argument(
 parser.add_argument(
     "--batch_size",
     type=int,
-    default=100,
-    help="batch size for training (default: 100)",
+    default=32,
+    help="batch size for training (default: 128)",
+)
+parser.add_argument(
+    "--buffer_cap",
+    type=int,
+    default=1000,
+    help="Buffer capacity (default: 1000)",
+)
+parser.add_argument(
+    "--replay_ratio",
+    type=int,
+    default=4,
+    help="Number of actions for each gradient update (default: 4)",
 )
 parser.add_argument(
     "--alpha",
@@ -318,6 +276,7 @@ args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 device = torch.device("cuda" if args.cuda else "cpu")
 city = args.city
+env_baseline = []
 
 
 if not args.test:
@@ -336,18 +295,23 @@ if not args.test:
         env, T=6, json_file=f"data/scenario_{city}.json"
     )  # Timehorizon T=6 (K in paper)
 
-    model = SAC(
+    model = RSAC(
         env=env,
-        input_size=9,
+        recurrent_input_size=1,
+        recurrent_hidden_size=2,
+        other_input_size=8,
         hidden_size=args.hidden_size,
+        sample_steps=1,
         p_lr=args.p_lr,
         q_lr=args.q_lr,
         alpha=args.alpha,
         batch_size=args.batch_size,
+        buffer_cap=args.max_episodes,
         use_automatic_entropy_tuning=False,
         clip=args.clip,
         critic_version=args.critic_version,
-        mode=args.mode
+        mode=args.mode,
+        env_baseline=env_baseline,
     ).to(device)
 
     train_episodes = args.max_episodes  # set max number of training episodes
@@ -367,6 +331,7 @@ if not args.test:
 
     for i_episode in epochs:
         obs = env.reset()  # initialize environment
+        model.reinitialize_hidden()
         # Save original demand for reference
         demand_ori = nestdictsum(env.demand)
         if i_episode == train_episodes - 1:
@@ -386,58 +351,21 @@ if not args.test:
             if step > 0:
                 obs1 = copy.deepcopy(o)
 
-            if env.mode == 0:
-                # obs, paxreward, done, info, _, _ = env.match_step_simple()
-                obs, paxreward, done, info, _, _ = env.pax_step(
-                                CPLEXPATH=args.cplexpath, directory=args.directory, PATH="scenario_san_francisco4"
-                            )
+            obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
 
-                o = parser.parse_obs(obs=obs)
-                episode_reward += paxreward
-                if step > 0:
-                    # store transition in memroy
-                    rl_reward = paxreward + rebreward
-                    model.replay_buffer.store(
-                        obs1, action_rl, args.rew_scale * rl_reward, o
-                    )
+            o = parser.parse_obs(obs=obs)
 
-                action_rl = model.select_action(o)
-
-                # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
-                desiredAcc = {
-                    env.region[i]: int(
-                        action_rl[i] * dictsum(env.acc, env.time + 1))
-                    for i in range(len(env.region))
-                }
-                # solve minimum rebalancing distance problem (Step 3 in paper)
-                rebAction = solveRebFlow(
-                    env,
-                    "scenario_san_francisco4",
-                    desiredAcc,
-                    args.cplexpath,
-                    args.directory, 
+            episode_reward += paxreward
+            rl_reward = paxreward
+            if step > 0:
+                # store transition in memroy
+                model.replay_buffer.store(
+                    obs1.x, action_rl, args.rew_scale * rl_reward, o.x, done, o.edge_index
                 )
-                # Take rebalancing action in environment
-                new_obs, rebreward, done, info, _, _ = env.reb_step(rebAction)
-                episode_reward += rebreward
-            elif env.mode == 1:
-                obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
 
-                o = parser.parse_obs(obs=obs)
+            action_rl = model.select_action(o)  
 
-                episode_reward += paxreward
-                if step > 0:
-                    # store transition in memroy
-                    rl_reward = paxreward
-                    model.replay_buffer.store(
-                        obs1, action_rl, args.rew_scale * rl_reward, o
-                    )
-
-                action_rl = model.select_action(o)  
-
-                env.matching_update()
-            else:
-                raise ValueError("Only mode 0 and 1 is allowed")                    
+            env.matching_update()                
 
             # track performance over episode
             episode_served_demand += info["served_demand"]
@@ -446,13 +374,19 @@ if not args.test:
             actions.append(action_rl)
 
             step += 1
-            if i_episode > 10:
-                # sample from memory and update model
-                batch = model.replay_buffer.sample_batch(
-                    args.batch_size, norm=False)
-                grad_norms = model.update(data=batch)  
+            # update baseline
+            if len(model.env_baseline) <= 1000:
+                model.env_baseline.append(args.rew_scale * rl_reward)
             else:
-                grad_norms = {"actor_grad_norm":0, "critic1_grad_norm":0, "critic2_grad_norm":0}
+                _ = model.env_baseline.pop(0)
+                model.env_baseline.append(args.rew_scale * rl_reward)
+
+            if i_episode > 10:
+                # Sample from memory and update model. Start to sample when the buffer size is at least the lower bound.
+                batch = model.replay_buffer.sample_batch()
+                grad_norms = model.update(batch)  
+            else:
+                grad_norms = {"actor_grad_norm":0, "critic1_grad_norm":0, "critic2_grad_norm":0, "actor_loss":0, "critic1_loss":0, "critic2_loss":0}
 
         # Keep metrics
         epoch_reward_list.append(episode_reward)
@@ -464,7 +398,8 @@ if not args.test:
         price_history.append(actions)
 
         epochs.set_description(
-            f"Episode {i_episode+1} | Reward: {episode_reward:.2f} | Grad Norms: Actor={grad_norms['actor_grad_norm']:.2f}, Critic1={grad_norms['critic1_grad_norm']:.2f}, Critic2={grad_norms['critic2_grad_norm']:.2f}"
+            f"Episode {i_episode+1} | Reward: {episode_reward:.2f} | Grad Norms: Actor={grad_norms['actor_grad_norm']:.2f}, Critic1={grad_norms['critic1_grad_norm']:.2f}, Critic2={grad_norms['critic2_grad_norm']:.2f}\
+              | Actor loss: {grad_norms['actor_loss']:.2f} | Critic1 loss: {grad_norms['critic1_loss']:.2f} | Critic2 loss: {grad_norms['critic2_loss']:.2f}"
         )
         # Checkpoint best performing model
         if episode_reward >= best_reward:
@@ -472,14 +407,7 @@ if not args.test:
                 path=f"ckpt/{args.checkpoint_path}_sample.pth")
             best_reward = episode_reward
         model.save_checkpoint(path=f"ckpt/{args.checkpoint_path}_running.pth")
-        # if i_episode % 10 == 0:
-        #     test_reward, test_served_demand, test_rebalancing_cost = model.test_agent(
-        #         1, env, args.cplexpath, args.directory, parser=parser
-        #     )
-        #     if test_reward >= best_reward_test:
-        #         best_reward_test = test_reward
-        #         model.save_checkpoint(
-        #             path=f"ckpt/{args.checkpoint_path}_test.pth")
+
     # Save metrics file
     metricPath = f"{args.directory}/train_logs/"
     if not os.path.exists(metricPath):
@@ -503,14 +431,16 @@ else:
     env = AMoD(scenario, beta=beta[city])
     parser = GNNParser(env, T=6, json_file=f"data/scenario_{city}.json")
 
-    model = SAC(
+    model = RSAC(
         env=env,
         input_size=8,
         hidden_size=256,
+        sample_steps=1,
         p_lr=1e-3,
         q_lr=1e-3,
         alpha=0.3,
-        batch_size=100,
+        batch_size=args.batch_size,
+        buffer_cap=args.buffer_cap,
         use_automatic_entropy_tuning=False,
         critic_version=args.critic_version,
         mode=args.mode
