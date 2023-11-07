@@ -331,6 +331,7 @@ class SAC(nn.Module):
         self.use_automatic_entropy_tuning = use_automatic_entropy_tuning
         self.min_q_version = min_q_version
         self.clip = clip
+        self.lag= 0
 
         # conservative Q learning parameters
         self.num_random = 10
@@ -473,6 +474,8 @@ class SAC(nn.Module):
         return loss_pi
 
     def update(self, data):
+        self.lag += 1
+
         loss_q1, loss_q2 = self.compute_loss_q(data)
 
         self.optimizers["c1_optimizer"].zero_grad()
@@ -486,17 +489,20 @@ class SAC(nn.Module):
         self.optimizers["c2_optimizer"].step()
 
         # Update target networks by polyak averaging.
-        with torch.no_grad():
-            for p, p_targ in zip(
-                self.critic1.parameters(), self.critic1_target.parameters()
-            ):
-                p_targ.data.mul_(self.polyak)
-                p_targ.data.add_((1 - self.polyak) * p.data)
-            for p, p_targ in zip(
-                self.critic2.parameters(), self.critic2_target.parameters()
-            ):
-                p_targ.data.mul_(self.polyak)
-                p_targ.data.add_((1 - self.polyak) * p.data)
+        if self.lag == 10:
+            with torch.no_grad():
+                for p, p_targ in zip(
+                    self.critic1.parameters(), self.critic1_target.parameters()
+                ):
+                    p_targ.data.mul_(self.polyak)
+                    p_targ.data.add_((1 - self.polyak) * p.data)
+                for p, p_targ in zip(
+                    self.critic2.parameters(), self.critic2_target.parameters()
+                ):
+                    p_targ.data.mul_(self.polyak)
+                    p_targ.data.add_((1 - self.polyak) * p.data)
+                    
+            self.lag = 0
 
         # Freeze Q-networks so you don't waste computational effort
         # computing gradients for them during the policy learning step.
