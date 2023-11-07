@@ -118,16 +118,20 @@ class AMoD:
             for j in self.G[n]:
                 d = self.demand[n, j][t]
                 p = self.price[n, j][t]
-                if (price is not None) and (sum(price) != 0):
+                if (price is not None) and (np.sum(price) != 0):
                     # TODO: Different demand model, scaling, and price
                     p_ori = p
                     # p = 4 + 1.5*self.demandTime[n,
                     #                             j][t]*self.tstep*price[n].item()
                     if p_ori != 0:
-                        p = p_ori * price[n].item() * 2
-                        d = max(demand_update(d, p, 2 * p_ori, p_ori), 0)
-                    # p = 10 + max(self.demandTime[n,j][t]*self.tstep-6,0)*price[n].item()
-                    # d = max(demand_update(d, p, 2*max(p_ori,p), p_ori), 0)
+                        if isinstance(price[0], list):
+                            p = p_ori * (price[n][0] + price[j][1])
+                            d = max(demand_update(d, p, 2 * p_ori, p_ori), 0)    
+                        else:
+                            p = p_ori * price[n] * 2
+                            d = max(demand_update(d, p, 2 * p_ori, p_ori), 0)
+                            # p = 10 + max(self.demandTime[n,j][t]*self.tstep-6,0)*price[n].item()
+                            # d = max(demand_update(d, p, 2*max(p_ori,p), p_ori), 0)                        
                     self.demand[n, j][t] = d
                 newp, self.arrivals = generate_passenger(
                     (n, j, t, d, p), self.arrivals)
