@@ -207,6 +207,12 @@ parser.add_argument(
     help="batch size for training (default: 128)",
 )
 parser.add_argument(
+    "--lookback",
+    type=int,
+    default=1,
+    help="lookback timestamps (default: 128)",
+)
+parser.add_argument(
     "--buffer_cap",
     type=int,
     default=1000,
@@ -301,7 +307,7 @@ if not args.test:
         recurrent_hidden_size=2,
         other_input_size=8,
         hidden_size=args.hidden_size,
-        sample_steps=1,
+        sample_steps=args.lookback,
         p_lr=args.p_lr,
         q_lr=args.q_lr,
         alpha=args.alpha,
@@ -412,11 +418,11 @@ if not args.test:
     metricPath = f"{args.directory}/train_logs/"
     if not os.path.exists(metricPath):
         os.makedirs(metricPath)
-    np.save(f"{args.directory}/train_logs/{city}_rewards_waiting_mode{args.mode}_{train_episodes}.npy", np.array([epoch_reward_list,epoch_waiting_list,epoch_servedrate_list,epoch_demand_list]))
-    np.save(f"{args.directory}/train_logs/{city}_price_mode{args.mode}_{train_episodes}.npy", np.array(price_history))
+    np.save(f"{args.directory}/train_logs/{city}_rewards_waiting_mode{args.mode}_{train_episodes}_t{args.lookback}.npy", np.array([epoch_reward_list,epoch_waiting_list,epoch_servedrate_list,epoch_demand_list]))
+    np.save(f"{args.directory}/train_logs/{city}_price_mode{args.mode}_{train_episodes}_t{args.lookback}.npy", np.array(price_history))
     export["avail_distri"] = env.acc
     export["demand_scaled"] = env.demand
-    with open(f"{args.directory}/train_logs/{city}_export_mode{args.mode}_{train_episodes}.pickle", 'wb') as f:
+    with open(f"{args.directory}/train_logs/{city}_export_mode{args.mode}_{train_episodes}_t{args.lookback}.pickle", 'wb') as f:
         pickle.dump(export, f) 
 else:
     scenario = Scenario(
