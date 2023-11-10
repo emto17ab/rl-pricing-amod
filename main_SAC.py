@@ -206,7 +206,7 @@ parser.add_argument(
 parser.add_argument(
     '--mode', 
     type=int, 
-    default=1,
+    default=2,
     help='rebalancing mode. (0:manul, 1:pricing, 2:both. default 1)',
 )
 
@@ -436,8 +436,39 @@ if not args.test:
                 action_rl = model.select_action(o)  
 
                 env.matching_update()
+            elif env.mode == 2:
+                obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+
+                o = parser.parse_obs(obs=obs)
+                episode_reward += paxreward
+                if step > 0:
+                    # store transition in memroy
+                    rl_reward = paxreward + rebreward
+                    model.replay_buffer.store(
+                        obs1, action_rl, args.rew_scale * rl_reward, o
+                    )
+
+                action_rl = model.select_action(o)
+
+                # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
+                desiredAcc = {
+                    env.region[i]: int(
+                        action_rl[i][2] * dictsum(env.acc, env.time + 1))
+                    for i in range(len(env.region))
+                }
+                # solve minimum rebalancing distance problem (Step 3 in paper)
+                rebAction = solveRebFlow(
+                    env,
+                    "scenario_san_francisco4",
+                    desiredAcc,
+                    args.cplexpath,
+                    args.directory, 
+                )
+                # Take rebalancing action in environment
+                new_obs, rebreward, done, info, _, _ = env.reb_step(rebAction)
+                episode_reward += rebreward                
             else:
-                raise ValueError("Only mode 0 and 1 is allowed")                    
+                raise ValueError("Only mode 0, 1, and 2 are allowed")                    
 
             # track performance over episode
             episode_served_demand += info["served_demand"]
@@ -452,7 +483,7 @@ if not args.test:
                     args.batch_size, norm=False)
                 grad_norms = model.update(data=batch)  
             else:
-                grad_norms = {"actor_grad_norm":0, "critic1_grad_norm":0, "critic2_grad_norm":0}
+                grad_norms = {"actor_grad_norm":0, "critic1_grad_norm":0, "critic2_grad_norm":0, "actor_loss":0, "critic1_loss":0, "critic2_loss":0}
 
         # Keep metrics
         epoch_reward_list.append(episode_reward)
@@ -464,7 +495,8 @@ if not args.test:
         price_history.append(actions)
 
         epochs.set_description(
-            f"Episode {i_episode+1} | Reward: {episode_reward:.2f} | Grad Norms: Actor={grad_norms['actor_grad_norm']:.2f}, Critic1={grad_norms['critic1_grad_norm']:.2f}, Critic2={grad_norms['critic2_grad_norm']:.2f}"
+            f"Episode {i_episode+1} | Reward: {episode_reward:.2f} | Grad Norms: Actor={grad_norms['actor_grad_norm']:.2f}, Critic1={grad_norms['critic1_grad_norm']:.2f}, Critic2={grad_norms['critic2_grad_norm']:.2f}\
+              | Loss: Actor =={grad_norms['actor_loss']:.2f}, Critic1={grad_norms['critic1_loss']:.2f}, Critic2={grad_norms['critic2_loss']:.2f}"
         )
         # Checkpoint best performing model
         if episode_reward >= best_reward:

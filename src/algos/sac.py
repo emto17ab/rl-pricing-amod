@@ -110,7 +110,7 @@ class GNNActor(nn.Module):
         elif mode == 1:
             self.lin3 = nn.Linear(hidden_size, 4)
         else:
-            pass
+            self.lin3 = nn.Linear(hidden_size, 5)
 
     def forward(self, state, edge_index, deterministic=False):
         out = F.relu(self.conv1(state, edge_index))
@@ -134,10 +134,18 @@ class GNNActor(nn.Module):
                 action_o = m_o.rsample()
                 action_d = m_d.rsample()
                 log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_d.log_prob(action_d).sum(dim=-1)
-                action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1)),-1)
-                
+                action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1)),-1)                
             else:
-                pass                
+                # Price
+                m_o = Beta(concentration[:,:,0], concentration[:,:,1])
+                m_d = Beta(concentration[:,:,2], concentration[:,:,3])
+                action_o = m_o.rsample()
+                action_d = m_d.rsample()
+                # Rebalancing desired distribution
+                m_reb = Dirichlet(concentration[:,:,-1] + 1e-20)
+                action_reb = m_reb.rsample()              
+                log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_d.log_prob(action_d).sum(dim=-1) + m_reb.log_prob(action_reb)
+                action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1),action_reb.squeeze(0).unsqueeze(-1)),-1)          
         return action, log_prob
 
 
@@ -229,11 +237,12 @@ class GNNCritic4(nn.Module):
     Architecture 4: GNN, Concatenation, FC, Readout
     """
 
-    def __init__(self, in_channels, hidden_size=32, act_dim=6):
+    def __init__(self, in_channels, hidden_size=32, act_dim=6, mode=1):
         super().__init__()
         self.act_dim = act_dim
+        self.mode = mode
         self.conv1 = GCNConv(in_channels, in_channels)
-        self.lin1 = nn.Linear(in_channels + 2, hidden_size)
+        self.lin1 = nn.Linear(in_channels + self.mode + 1, hidden_size)
         self.lin2 = nn.Linear(hidden_size, hidden_size)
         self.lin3 = nn.Linear(hidden_size, 1)
         self.in_channels = in_channels
@@ -361,20 +370,20 @@ class SAC(nn.Module):
         if critic_version == 5:
             GNNCritic = GNNCritic5
         self.critic1 = GNNCritic(
-            self.input_size, self.hidden_size, act_dim=self.act_dim
+            self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode
         )
         self.critic2 = GNNCritic(
-            self.input_size, self.hidden_size, act_dim=self.act_dim
+            self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode
         )
         assert self.critic1.parameters() != self.critic2.parameters()
    
 
         self.critic1_target = GNNCritic(
-            self.input_size, self.hidden_size, act_dim=self.act_dim
+            self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode
         )
         self.critic1_target.load_state_dict(self.critic1.state_dict())
         self.critic2_target = GNNCritic(
-            self.input_size, self.hidden_size, act_dim=self.act_dim
+            self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode
         )
         self.critic2_target.load_state_dict(self.critic2.state_dict())
 
@@ -430,7 +439,7 @@ class SAC(nn.Module):
             data.x_t,
             data.edge_index_t,
             data.reward,
-            data.action.reshape(-1, self.nodes, 2),
+            data.action.reshape(-1, self.nodes, self.mode+1).squeeze(-1),
         )
 
         q1 = self.critic1(state_batch, edge_index, action_batch)
@@ -524,7 +533,8 @@ class SAC(nn.Module):
         for p in self.critic2.parameters():
             p.requires_grad = True
 
-        return {"actor_grad_norm":actor_grad_norm, "critic1_grad_norm":critic1_grad_norm, "critic2_grad_norm":critic2_grad_norm}
+        return {"actor_grad_norm":actor_grad_norm, "critic1_grad_norm":critic1_grad_norm, "critic2_grad_norm":critic2_grad_norm,\
+                "actor_loss":loss_pi.item(), "critic1_loss":loss_q1.item(), "critic2_loss":loss_q2.item()}
 
     def configure_optimizers(self):
         optimizers = dict()
