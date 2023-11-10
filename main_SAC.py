@@ -261,6 +261,12 @@ parser.add_argument(
     help="batch size for training (default: 100)",
 )
 parser.add_argument(
+    "--jitter",
+    type=int,
+    default=1,
+    help="jitter for demand 0 (default: 1)",
+)
+parser.add_argument(
     "--alpha",
     type=float,
     default=0.3,
@@ -330,7 +336,7 @@ if not args.test:
         tf=args.max_steps,
     )
 
-    env = AMoD(scenario, args.mode, beta=beta[city])
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter)
 
     parser = GNNParser(
         env, T=6, json_file=f"data/scenario_{city}.json"
