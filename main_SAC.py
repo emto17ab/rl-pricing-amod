@@ -496,7 +496,7 @@ if not args.test:
 
         epochs.set_description(
             f"Episode {i_episode+1} | Reward: {episode_reward:.2f} | Grad Norms: Actor={grad_norms['actor_grad_norm']:.2f}, Critic1={grad_norms['critic1_grad_norm']:.2f}, Critic2={grad_norms['critic2_grad_norm']:.2f}\
-              | Loss: Actor =={grad_norms['actor_loss']:.2f}, Critic1={grad_norms['critic1_loss']:.2f}, Critic2={grad_norms['critic2_loss']:.2f}"
+              | Loss: Actor ={grad_norms['actor_loss']:.2f}, Critic1={grad_norms['critic1_loss']:.2f}, Critic2={grad_norms['critic2_loss']:.2f}"
         )
         # Checkpoint best performing model
         if episode_reward >= best_reward:

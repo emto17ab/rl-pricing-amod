@@ -24,7 +24,7 @@ class RecurrentReplyData:
         
         # placeholders
         self.o = np.zeros((capacity, max_steps, *o_dim))
-        self.a = np.zeros((capacity, max_steps-1, a_dim))
+        self.a = np.zeros((capacity, max_steps-1, *a_dim))
         self.r = np.zeros((capacity, max_steps-1, 1))
         self.d = np.zeros((capacity, max_steps-1, 1))
         self.m = np.zeros((capacity, max_steps-1, 1))
@@ -50,7 +50,10 @@ class RecurrentReplyData:
     def store(self, o, a, r, no, d, edge_index: torch.tensor):
 
         self.o[self.episode_ptr, self.time_ptr] = o
-        self.a[self.episode_ptr, self.time_ptr] = a
+        if isinstance(a[0], list):
+            self.a[self.episode_ptr, self.time_ptr] = a
+        else:
+            self.a[self.episode_ptr, self.time_ptr] = np.array(a).unsqueeze(-1)
         self.r[self.episode_ptr, self.time_ptr] = r
         self.d[self.episode_ptr, self.time_ptr] = d
         self.m[self.episode_ptr, self.time_ptr] = 1    
@@ -168,7 +171,7 @@ class GNNActor(nn.Module):
         if self.mode == 0:
             self.lin3 = nn.Linear(hidden_size, 1)
         elif self.mode == 1:
-            self.lin3 = nn.Linear(hidden_size, 2)
+            self.lin3 = nn.Linear(hidden_size, 4)
 
     def forward(self, state, edge_index, deterministic=False):
         out = F.relu(self.conv1(state, edge_index))
@@ -187,12 +190,15 @@ class GNNActor(nn.Module):
                 action = m.rsample()
                 log_prob = m.log_prob(action)
             elif self.mode == 1:
-                m = Beta(concentration[:,:,0], concentration[:,:,1])
-                action = m.rsample()
-                log_prob = m.log_prob(action).sum(dim=1)
+                m_o = Beta(concentration[:,:,0], concentration[:,:,1])
+                m_d = Beta(concentration[:,:,2], concentration[:,:,3])
+                action_o = m_o.rsample()
+                action_d = m_d.rsample()
+                log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_d.log_prob(action_d).sum(dim=-1)
+                action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1)),-1)     
             else:
                 pass                
-        return action.unsqueeze(-1), log_prob
+        return action, log_prob
 
 
 #########################################
@@ -283,11 +289,12 @@ class GNNCritic4(nn.Module):
     Architecture 4: GNN, Concatenation, FC, Readout
     """
 
-    def __init__(self, in_channels, hidden_size=32, act_dim=6):
+    def __init__(self, in_channels, hidden_size=32, act_dim=6, mode=1):
         super().__init__()
         self.act_dim = act_dim
+        self.mode = mode
         self.conv1 = GCNConv(in_channels, in_channels)
-        self.lin1 = nn.Linear(in_channels + 1, hidden_size)
+        self.lin1 = nn.Linear(in_channels + self.mode + 1, hidden_size)
         self.lin2 = nn.Linear(hidden_size, hidden_size)
         self.lin3 = nn.Linear(hidden_size, 1)
         self.in_channels = in_channels
@@ -410,7 +417,7 @@ class RSAC(nn.Module):
         self.step = 0
         self.nodes = env.nregion
 
-        self.replay_buffer = RecurrentReplyData((env.nregion, self.input_size), self.act_dim, env.tf, sample_steps, device, capacity=buffer_cap, batch_size=self.BATCH_SIZE)
+        self.replay_buffer = RecurrentReplyData((env.nregion, self.input_size), (self.act_dim,self.mode+1), env.tf, sample_steps, device, capacity=buffer_cap, batch_size=self.BATCH_SIZE)
 
         # trackers
         self.hidden = None
@@ -439,10 +446,10 @@ class RSAC(nn.Module):
             GNNCritic = GNNCritic5
         
         self.critic1 = GNNCritic(
-            self.recurrent_hidden_size+self.other_input_size, self.hidden_size, act_dim=self.act_dim
+            self.recurrent_hidden_size+self.other_input_size, self.hidden_size, act_dim=self.act_dim, mode=mode
         )
         self.critic2 = GNNCritic(
-            self.recurrent_hidden_size+self.other_input_size, self.hidden_size, act_dim=self.act_dim
+            self.recurrent_hidden_size+self.other_input_size, self.hidden_size, act_dim=self.act_dim, mode=mode
         )
         assert self.critic1.parameters() != self.critic2.parameters()   
 
@@ -485,7 +492,7 @@ class RSAC(nn.Module):
             summary, self.hidden = self.actor_summarizer(x, data.edge_index, self.hidden, return_hidden=True)
             a, _ = self.actor(summary, data.edge_index, deterministic)
         a = a.squeeze(-1)
-        a = a.detach().cpu().numpy()[0]
+        a = a.detach().cpu().numpy().tolist()
         return list(a)
 
     def update(self, b: RecurrentBatch):
@@ -493,7 +500,7 @@ class RSAC(nn.Module):
         bs, num_time = b.r.shape[0], b.r.shape[1]
 
         # Action and reward
-        a1 = b.a[:,-1,:].unsqueeze(-1)
+        a1 = b.a[:,-1,:]
         r = b.r[:,-1,:].squeeze(-1)
 
         # Summary
