@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 from torch import nn
+from torch.optim.lr_scheduler import StepLR
 import torch.nn.functional as F
 from torch.distributions import Dirichlet, Beta
 from torch_geometric.data import Data, Batch
@@ -491,11 +492,13 @@ class SAC(nn.Module):
         loss_q1.backward()
         critic1_grad_norm = nn.utils.clip_grad_norm_(self.critic1.parameters(), self.clip)
         self.optimizers["c1_optimizer"].step()
+        self.optimizers["c1_scheduler"].step()
 
         self.optimizers["c2_optimizer"].zero_grad()
         loss_q2.backward()
         critic2_grad_norm = nn.utils.clip_grad_norm_(self.critic2.parameters(), self.clip)
         self.optimizers["c2_optimizer"].step()
+        self.optimizers["c2_scheduler"].step()
 
         # Update target networks by polyak averaging.
         if self.lag == 10:
@@ -526,6 +529,7 @@ class SAC(nn.Module):
         loss_pi.backward(retain_graph=False)
         actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), 10)
         self.optimizers["a_optimizer"].step()
+        self.optimizers["a_scheduler"].step()
 
         # Unfreeze Q-networks
         for p in self.critic1.parameters():
@@ -545,6 +549,10 @@ class SAC(nn.Module):
         optimizers["a_optimizer"] = torch.optim.Adam(actor_params, lr=self.p_lr)
         optimizers["c1_optimizer"] = torch.optim.Adam(critic1_params, lr=self.q_lr)
         optimizers["c2_optimizer"] = torch.optim.Adam(critic2_params, lr=self.q_lr)
+
+        optimizers["a_scheduler"] = StepLR(optimizers["a_optimizer"], step_size=1000, gamma=0.9)
+        optimizers["c1_scheduler"] = StepLR(optimizers["c1_optimizer"], step_size=1000, gamma=0.9)
+        optimizers["c2_scheduler"] = StepLR(optimizers["c2_optimizer"], step_size=1000, gamma=0.9)
 
         return optimizers
 
