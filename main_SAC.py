@@ -332,7 +332,8 @@ if not args.test:
     epoch_reward_list = []
     epoch_waiting_list = []
     epoch_servedrate_list = []
-    epoch_value_list = []
+    epoch_value1_list = []
+    epoch_value2_list = []
     
     price_history = []
 
@@ -454,10 +455,11 @@ if not args.test:
                     args.batch_size, norm=False)
                 grad_norms = model.update(data=batch)  
             else:
-                grad_norms = {"actor_grad_norm":0, "critic1_grad_norm":0, "critic2_grad_norm":0, "actor_loss":0, "critic1_loss":0, "critic2_loss":0, "Q_value":0}
+                grad_norms = {"actor_grad_norm":0, "critic1_grad_norm":0, "critic2_grad_norm":0, "actor_loss":0, "critic1_loss":0, "critic2_loss":0, "Q1_value":0, "Q2_value":0}
             
             # Keep track of loss
-            epoch_value_list.append(grad_norms["Q_value"])
+            epoch_value1_list.append(grad_norms["Q1_value"])
+            epoch_value2_list.append(grad_norms["Q2_value"])
 
         # Keep metrics
         epoch_reward_list.append(episode_reward)
@@ -492,7 +494,7 @@ if not args.test:
         os.makedirs(metricPath)
     np.save(f"{args.directory}/train_logs/{city}_rewards_waiting_mode{args.mode}_{train_episodes}.npy", np.array([epoch_reward_list,epoch_waiting_list,epoch_servedrate_list,epoch_demand_list]))
     np.save(f"{args.directory}/train_logs/{city}_price_mode{args.mode}_{train_episodes}.npy", np.array(price_history))
-    np.save(f"{args.directory}/train_logs/{city}_q_mode{args.mode}_{train_episodes}.npy", np.array(epoch_value_list))
+    np.save(f"{args.directory}/train_logs/{city}_q_mode{args.mode}_{train_episodes}.npy", np.array([epoch_value1_list,epoch_value2_list]))
     
     export["avail_distri"] = env.acc
     export["demand_scaled"] = env.demand

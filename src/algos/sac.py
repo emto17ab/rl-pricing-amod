@@ -458,7 +458,7 @@ class SAC(nn.Module):
         loss_q1 = F.mse_loss(q1, backup)
         loss_q2 = F.mse_loss(q2, backup)
 
-        return loss_q1, loss_q2
+        return loss_q1, loss_q2, q1, q2
 
     def compute_loss_pi(self, data):
         state_batch, edge_index = (
@@ -482,12 +482,12 @@ class SAC(nn.Module):
 
         loss_pi = (self.alpha * logp_a - q_a).mean()
 
-        return loss_pi, q_a
+        return loss_pi
 
     def update(self, data):
         self.lag += 1
 
-        loss_q1, loss_q2 = self.compute_loss_q(data)
+        loss_q1, loss_q2, q1, q2 = self.compute_loss_q(data)
 
         self.optimizers["c1_optimizer"].zero_grad()
         loss_q1.backward()
@@ -524,7 +524,7 @@ class SAC(nn.Module):
 
         # one gradient descent step for policy network
         self.optimizers["a_optimizer"].zero_grad()
-        loss_pi, q_a = self.compute_loss_pi(data)
+        loss_pi = self.compute_loss_pi(data)
         loss_pi.backward(retain_graph=False)
         actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), 10)
         self.optimizers["a_optimizer"].step()
@@ -536,7 +536,7 @@ class SAC(nn.Module):
             p.requires_grad = True
 
         return {"actor_grad_norm":actor_grad_norm, "critic1_grad_norm":critic1_grad_norm, "critic2_grad_norm":critic2_grad_norm,\
-                "actor_loss":loss_pi.item(), "critic1_loss":loss_q1.item(), "critic2_loss":loss_q2.item(), "Q_value":torch.mean(q_a).item()}
+                "actor_loss":loss_pi.item(), "critic1_loss":loss_q1.item(), "critic2_loss":loss_q2.item(), "Q1_value":torch.mean(q1).item(), "Q2_value":torch.mean(q2).item()}
 
     def configure_optimizers(self):
         optimizers = dict()
