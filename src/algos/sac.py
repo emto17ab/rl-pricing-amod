@@ -129,6 +129,7 @@ class GNNActor(nn.Module):
                 m = Dirichlet(concentration + 1e-20)
                 action = m.rsample()
                 log_prob = m.log_prob(action)
+                action = action.squeeze(0).unsqueeze(-1)
             elif self.mode == 1:
                 m_o = Beta(concentration[:,:,0], concentration[:,:,1])
                 m_d = Beta(concentration[:,:,2], concentration[:,:,3])
@@ -440,7 +441,7 @@ class SAC(nn.Module):
             data.x_t,
             data.edge_index_t,
             data.reward,
-            data.action.reshape(-1, self.nodes, self.mode+1).squeeze(-1),
+            data.action.reshape(-1, self.nodes, self.mode+1),
         )
 
         q1 = self.critic1(state_batch, edge_index, action_batch)

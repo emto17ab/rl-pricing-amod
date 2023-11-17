@@ -90,6 +90,7 @@ class GNNParser:
                                 sum(
                                     [
                                         (self.env.price[i, j][self.env.time])
+                                        * self.s
                                         for j in self.env.region
                                     ]
                                 )
@@ -169,7 +170,7 @@ parser.add_argument(
 parser.add_argument(
     '--mode', 
     type=int, 
-    default=2,
+    default=0,
     help='rebalancing mode. (0:manul, 1:pricing, 2:both. default 1)',
 )
 
@@ -357,10 +358,10 @@ if not args.test:
                 obs1 = copy.deepcopy(o)
 
             if env.mode == 0:
-                # obs, paxreward, done, info, _, _ = env.match_step_simple()
-                obs, paxreward, done, info, _, _ = env.pax_step(
-                                CPLEXPATH=args.cplexpath, directory=args.directory, PATH="scenario_san_francisco4"
-                            )
+                obs, paxreward, done, info, _, _ = env.match_step_simple()
+                # obs, paxreward, done, info, _, _ = env.pax_step(
+                #                 CPLEXPATH=args.cplexpath, directory=args.directory, PATH="scenario_san_francisco4"
+                #             )
 
                 o = parser.parse_obs(obs=obs)
                 episode_reward += paxreward
