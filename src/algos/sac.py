@@ -481,7 +481,7 @@ class SAC(nn.Module):
 
         loss_pi = (self.alpha * logp_a - q_a).mean()
 
-        return loss_pi
+        return loss_pi, q_a
 
     def update(self, data):
         self.lag += 1
@@ -492,13 +492,11 @@ class SAC(nn.Module):
         loss_q1.backward()
         critic1_grad_norm = nn.utils.clip_grad_norm_(self.critic1.parameters(), self.clip)
         self.optimizers["c1_optimizer"].step()
-        self.optimizers["c1_scheduler"].step()
 
         self.optimizers["c2_optimizer"].zero_grad()
         loss_q2.backward()
         critic2_grad_norm = nn.utils.clip_grad_norm_(self.critic2.parameters(), self.clip)
         self.optimizers["c2_optimizer"].step()
-        self.optimizers["c2_scheduler"].step()
 
         # Update target networks by polyak averaging.
         if self.lag == 10:
@@ -525,11 +523,10 @@ class SAC(nn.Module):
 
         # one gradient descent step for policy network
         self.optimizers["a_optimizer"].zero_grad()
-        loss_pi = self.compute_loss_pi(data)
+        loss_pi, q_a = self.compute_loss_pi(data)
         loss_pi.backward(retain_graph=False)
         actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), 10)
         self.optimizers["a_optimizer"].step()
-        self.optimizers["a_scheduler"].step()
 
         # Unfreeze Q-networks
         for p in self.critic1.parameters():
@@ -538,7 +535,7 @@ class SAC(nn.Module):
             p.requires_grad = True
 
         return {"actor_grad_norm":actor_grad_norm, "critic1_grad_norm":critic1_grad_norm, "critic2_grad_norm":critic2_grad_norm,\
-                "actor_loss":loss_pi.item(), "critic1_loss":loss_q1.item(), "critic2_loss":loss_q2.item()}
+                "actor_loss":loss_pi.item(), "critic1_loss":loss_q1.item(), "critic2_loss":loss_q2.item(), "Q_value":torch.mean(q_a).item()}
 
     def configure_optimizers(self):
         optimizers = dict()
@@ -550,9 +547,6 @@ class SAC(nn.Module):
         optimizers["c1_optimizer"] = torch.optim.Adam(critic1_params, lr=self.q_lr)
         optimizers["c2_optimizer"] = torch.optim.Adam(critic2_params, lr=self.q_lr)
 
-        optimizers["a_scheduler"] = StepLR(optimizers["a_optimizer"], step_size=1000, gamma=0.9)
-        optimizers["c1_scheduler"] = StepLR(optimizers["c1_optimizer"], step_size=1000, gamma=0.9)
-        optimizers["c2_scheduler"] = StepLR(optimizers["c2_optimizer"], step_size=1000, gamma=0.9)
 
         return optimizers
 

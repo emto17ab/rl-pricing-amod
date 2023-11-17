@@ -134,6 +134,7 @@ class AMoD:
                             # p = 10 + max(self.demandTime[n,j][t]*self.tstep-6,0)*price[n].item()
                             # d = max(demand_update(d, p, 2*max(p_ori,p), p_ori), 0)                        
                     self.demand[n, j][t] = d
+                    self.price[n, j][t] = p
                 newp, self.arrivals = generate_passenger(
                     (n, j, t, d, p), self.arrivals)
                 self.passenger[n][t].extend(newp)

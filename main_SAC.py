@@ -34,57 +34,6 @@ class GNNParser:
         # 1) current availability scaled by factor, 
         # 2) Estimated availability (T timestamp) scaled by factor, 
         # 3) Estimated revenue (T timestamp) scaled by factor
-        # x = (
-        #     torch.cat(
-        #         (
-        #             torch.tensor(
-        #                 [obs[0][n][self.env.time + 1] *
-        #                     self.s for n in self.env.region]
-        #             )
-        #             .view(1, 1, self.env.nregion)
-        #             .float(),
-        #             torch.tensor(
-        #                 [
-        #                     [
-        #                         (obs[0][n][self.env.time + 1] +
-        #                          self.env.dacc[n][t])
-        #                         * self.s
-        #                         for n in self.env.region
-        #                     ]
-        #                     for t in range(
-        #                         self.env.time + 1, self.env.time + self.T + 1
-        #                     )
-        #                 ]
-        #             )
-        #             .view(1, self.T, self.env.nregion)
-        #             .float(),
-        #             torch.tensor(
-        #                 [
-        #                     [
-        #                         sum(
-        #                             [
-        #                                 (self.env.scenario.demand_input[i, j][t])
-        #                                 * (self.env.price[i, j][t])
-        #                                 * self.s
-        #                                 for j in self.env.region
-        #                             ]
-        #                         )
-        #                         for i in self.env.region
-        #                     ]
-        #                     for t in range(
-        #                         self.env.time + 1, self.env.time + self.T + 1
-        #                     )
-        #                 ]
-        #             )
-        #             .view(1, self.T, self.env.nregion)
-        #             .float(),
-        #         ),
-        #         dim=1,
-        #     )
-        #     .squeeze(0)
-        #     .view(1 + self.T + self.T, self.env.nregion)
-        #     .T
-        # )
         x = (
             torch.cat(
                 (
@@ -135,11 +84,25 @@ class GNNParser:
                     )
                     .view(1, 1, self.env.nregion)
                     .float(),
+                    # Current price
+                    torch.tensor(
+                            [
+                                sum(
+                                    [
+                                        (self.env.price[i, j][self.env.time])
+                                        for j in self.env.region
+                                    ]
+                                )
+                                for i in self.env.region
+                            ]
+                    )
+                    .view(1, 1, self.env.nregion)
+                    .float(),                    
                 ),
                 dim=1,
             )
             .squeeze(0)
-            .view(1 + self.T + 1 + 1, self.env.nregion)
+            .view(1 + self.T + 1 + 1 + 1, self.env.nregion)
             .T
         )       
         if self.json_file is not None:
@@ -344,7 +307,7 @@ if not args.test:
 
     model = SAC(
         env=env,
-        input_size=9,
+        input_size=10,
         hidden_size=args.hidden_size,
         p_lr=args.p_lr,
         q_lr=args.q_lr,
@@ -368,9 +331,7 @@ if not args.test:
     epoch_reward_list = []
     epoch_waiting_list = []
     epoch_servedrate_list = []
-    actor_loss = []
-    critic1_loss = []
-    critic2_loss = []
+    epoch_value_list = []
     
     price_history = []
 
@@ -492,16 +453,14 @@ if not args.test:
                     args.batch_size, norm=False)
                 grad_norms = model.update(data=batch)  
             else:
-                grad_norms = {"actor_grad_norm":0, "critic1_grad_norm":0, "critic2_grad_norm":0, "actor_loss":0, "critic1_loss":0, "critic2_loss":0}
+                grad_norms = {"actor_grad_norm":0, "critic1_grad_norm":0, "critic2_grad_norm":0, "actor_loss":0, "critic1_loss":0, "critic2_loss":0, "Q_value":0}
             
             # Keep track of loss
-            actor_loss.append(grad_norms["actor_loss"])
-            critic1_loss.append(grad_norms["critic1_loss"])
-            critic2_loss.append(grad_norms["critic2_loss"])
+            epoch_value_list.append(grad_norms["Q_value"])
 
         # Keep metrics
         epoch_reward_list.append(episode_reward)
-        epoch_demand_list.append(env.arrivals/demand_ori)
+        epoch_demand_list.append(env.arrivals)
         epoch_waiting_list.append(episode_waiting/episode_served_demand)
         epoch_servedrate_list.append(episode_served_demand/env.arrivals)
 
@@ -532,7 +491,7 @@ if not args.test:
         os.makedirs(metricPath)
     np.save(f"{args.directory}/train_logs/{city}_rewards_waiting_mode{args.mode}_{train_episodes}.npy", np.array([epoch_reward_list,epoch_waiting_list,epoch_servedrate_list,epoch_demand_list]))
     np.save(f"{args.directory}/train_logs/{city}_price_mode{args.mode}_{train_episodes}.npy", np.array(price_history))
-    np.save(f"{args.directory}/train_logs/{city}_loss_mode{args.mode}_{train_episodes}.npy", np.array([actor_loss,critic1_loss,critic2_loss]))
+    np.save(f"{args.directory}/train_logs/{city}_q_mode{args.mode}_{train_episodes}.npy", np.array(epoch_value_list))
     
     export["avail_distri"] = env.acc
     export["demand_scaled"] = env.demand
