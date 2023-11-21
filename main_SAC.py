@@ -267,6 +267,12 @@ parser.add_argument(
     help="learning rate for Q networks (default: 4e-3)",
 )
 parser.add_argument(
+    "--q_lag",
+    type=int,
+    default=10,
+    help="update frequency of Q target networks (default: 10)",
+)
+parser.add_argument(
     "--city",
     type=str,
     default="san_francisco",
@@ -317,7 +323,8 @@ if not args.test:
         use_automatic_entropy_tuning=False,
         clip=args.clip,
         critic_version=args.critic_version,
-        mode=args.mode
+        mode=args.mode,
+        q_lag=args.q_lag
     ).to(device)
 
     train_episodes = args.max_episodes  # set max number of training episodes

@@ -320,6 +320,7 @@ class SAC(nn.Module):
         clip=200,
         critic_version=4,
         mode = 1,
+        q_lag = 10
     ):
         super(SAC, self).__init__()
         self.env = env
@@ -343,6 +344,7 @@ class SAC(nn.Module):
         self.min_q_version = min_q_version
         self.clip = clip
         self.lag= 0
+        self.q_lag = q_lag
 
         # conservative Q learning parameters
         self.num_random = 10
@@ -500,7 +502,7 @@ class SAC(nn.Module):
         self.optimizers["c2_optimizer"].step()
 
         # Update target networks by polyak averaging.
-        if self.lag == 10:
+        if self.lag == self.q_lag:
             with torch.no_grad():
                 for p, p_targ in zip(
                     self.critic1.parameters(), self.critic1_target.parameters()
