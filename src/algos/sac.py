@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 from torch import nn
+from torch import autograd
 from torch.optim.lr_scheduler import StepLR
 import torch.nn.functional as F
 from torch.distributions import Dirichlet, Beta
@@ -139,8 +140,8 @@ class GNNActor(nn.Module):
                 action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1)),-1)                
             else:
                 # Price
-                m_o = Beta(concentration[:,:,0], concentration[:,:,1])
-                m_d = Beta(concentration[:,:,2], concentration[:,:,3])
+                m_o = Beta(concentration[:,:,0] + 1e-20, concentration[:,:,1] + 1e-20)
+                m_d = Beta(concentration[:,:,2] + 1e-20, concentration[:,:,3] + 1e-20)
                 action_o = m_o.rsample()
                 action_d = m_d.rsample()
                 # Rebalancing desired distribution
@@ -525,10 +526,13 @@ class SAC(nn.Module):
             p.requires_grad = False
 
         # one gradient descent step for policy network
-        self.optimizers["a_optimizer"].zero_grad()
-        loss_pi = self.compute_loss_pi(data)
-        loss_pi.backward(retain_graph=False)
+        with autograd.detect_anomaly():
+            self.optimizers["a_optimizer"].zero_grad()
+            loss_pi = self.compute_loss_pi(data)
+            loss_pi.backward(retain_graph=False)
         actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), 10)
+        if torch.isnan(actor_grad_norm).any():
+            print("Nan graidient after clip!")
         self.optimizers["a_optimizer"].step()
 
         # Unfreeze Q-networks
