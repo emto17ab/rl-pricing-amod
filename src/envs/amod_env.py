@@ -197,10 +197,11 @@ class AMoD:
 
         # for acc, the time index would be t+1, but for demand, the time index would be t
         self.obs = (self.acc, self.time, self.dacc, self.demand)
-        if (self.mode == 0) | (self.mode == 2):
-            done = False  # if rebalancing needs to be carried out after
-        elif self.mode == 1:
-            done = (self.tf == t+1)
+        # if (self.mode == 0) | (self.mode == 2):
+        #     done = False  # if rebalancing needs to be carried out after
+        # elif self.mode == 1:
+        #     done = (self.tf == t+1)
+        done = (self.tf == t+1)
 
         ext_done = [done]*self.nregion
         return self.obs, max(0, self.reward), done, self.info, self.ext_reward, ext_done

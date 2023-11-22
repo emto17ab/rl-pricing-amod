@@ -84,9 +84,24 @@ class GNNParser:
                     )
                     .reshape(1, 1, self.env.nregion)
                     .astype(float),
+                # Current price
+                    np.array(
+                            [
+                                sum(
+                                    [
+                                        (self.env.price[i, j][self.env.time])
+                                        * self.s
+                                        for j in self.env.region
+                                    ]
+                                )
+                                for i in self.env.region
+                            ]
+                    )
+                    .reshape(1, 1, self.env.nregion)
+                    .astype(float),                
                 ),
                 axis=1,
-            ),0).reshape(1 + self.T + 1 + 1, self.env.nregion).T        
+            ),0).reshape(1 + self.T + 1 + 1 + 1, self.env.nregion).T        
         
         if self.json_file is not None:
             edge_index = torch.vstack(
@@ -152,7 +167,7 @@ parser.add_argument(
 parser.add_argument(
     '--mode', 
     type=int, 
-    default=1,
+    default=2,
     help='rebalancing mode. (0:manul, 1:pricing, 2:both. default 1)',
 )
 
@@ -267,6 +282,12 @@ parser.add_argument(
     help="learning rate for Q networks (default: 4e-3)",
 )
 parser.add_argument(
+    "--q_lag",
+    type=int,
+    default=10,
+    help="update frequency of Q target networks (default: 10)",
+)
+parser.add_argument(
     "--city",
     type=str,
     default="san_francisco",
@@ -309,7 +330,7 @@ if not args.test:
 
     model = RSAC(
         env=env,
-        recurrent_input_size=1,
+        recurrent_input_size=2,
         recurrent_hidden_size=2,
         other_input_size=8,
         hidden_size=args.hidden_size,
@@ -323,6 +344,7 @@ if not args.test:
         clip=args.clip,
         critic_version=args.critic_version,
         mode=args.mode,
+        q_lag=args.q_lag,
         env_baseline=env_baseline,
     ).to(device)
 
@@ -338,6 +360,8 @@ if not args.test:
     epoch_reward_list = []
     epoch_waiting_list = []
     epoch_servedrate_list = []
+    epoch_value1_list = []
+    epoch_value2_list = []
     
     price_history = []
 
@@ -363,21 +387,55 @@ if not args.test:
             if step > 0:
                 obs1 = copy.deepcopy(o)
 
-            obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+            if env.mode == 1:
+                obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
 
-            o = parser.parse_obs(obs=obs)
+                o = parser.parse_obs(obs=obs)
 
-            episode_reward += paxreward
-            rl_reward = paxreward
-            if step > 0:
-                # store transition in memroy
-                model.replay_buffer.store(
-                    obs1.x, action_rl, args.rew_scale * rl_reward, o.x, done, o.edge_index
+                episode_reward += paxreward
+                rl_reward = paxreward
+                if step > 0:
+                    # store transition in memroy
+                    model.replay_buffer.store(
+                        obs1.x, action_rl, args.rew_scale * rl_reward, o.x, done, o.edge_index
+                    )
+
+                action_rl = model.select_action(o)  
+
+                env.matching_update()
+            elif env.mode == 2:
+                obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+
+                o = parser.parse_obs(obs=obs)
+                episode_reward += paxreward
+                if step > 0:
+                    # store transition in memroy
+                    rl_reward = paxreward + rebreward
+                    model.replay_buffer.store(
+                        obs1.x, action_rl, args.rew_scale * rl_reward, o.x, done, o.edge_index
+                    )
+
+                action_rl = model.select_action(o)
+
+                # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
+                desiredAcc = {
+                    env.region[i]: int(
+                        action_rl[i][2] * dictsum(env.acc, env.time + 1))
+                    for i in range(len(env.region))
+                }
+                # solve minimum rebalancing distance problem (Step 3 in paper)
+                rebAction = solveRebFlow(
+                    env,
+                    "scenario_san_francisco4",
+                    desiredAcc,
+                    args.cplexpath,
+                    args.directory, 
                 )
-
-            action_rl = model.select_action(o)  
-
-            env.matching_update()                
+                # Take rebalancing action in environment
+                new_obs, rebreward, done, info, _, _ = env.reb_step(rebAction)
+                episode_reward += rebreward                
+            else:
+                raise ValueError("Only mode 0, 1, and 2 are allowed")                                
 
             # track performance over episode
             episode_served_demand += info["served_demand"]
@@ -386,19 +444,17 @@ if not args.test:
             actions.append(action_rl)
 
             step += 1
-            # update baseline
-            if len(model.env_baseline) <= 1000:
-                model.env_baseline.append(args.rew_scale * rl_reward)
-            else:
-                _ = model.env_baseline.pop(0)
-                model.env_baseline.append(args.rew_scale * rl_reward)
 
             if i_episode > 10:
                 # Sample from memory and update model. Start to sample when the buffer size is at least the lower bound.
                 batch = model.replay_buffer.sample_batch()
                 grad_norms = model.update(batch)  
             else:
-                grad_norms = {"actor_grad_norm":0, "critic1_grad_norm":0, "critic2_grad_norm":0, "actor_loss":0, "critic1_loss":0, "critic2_loss":0}
+                grad_norms = {"actor_grad_norm":0, "critic1_grad_norm":0, "critic2_grad_norm":0, "actor_loss":0, "critic1_loss":0, "critic2_loss":0, "Q1_value":0, "Q2_value":0}
+
+            # Keep track of value function
+            epoch_value1_list.append(grad_norms["Q1_value"])
+            epoch_value2_list.append(grad_norms["Q2_value"])
 
         # Keep metrics
         epoch_reward_list.append(episode_reward)
@@ -426,6 +482,8 @@ if not args.test:
         os.makedirs(metricPath)
     np.save(f"{args.directory}/train_logs/{city}_rewards_waiting_mode{args.mode}_{train_episodes}_t{args.lookback}.npy", np.array([epoch_reward_list,epoch_waiting_list,epoch_servedrate_list,epoch_demand_list]))
     np.save(f"{args.directory}/train_logs/{city}_price_mode{args.mode}_{train_episodes}_t{args.lookback}.npy", np.array(price_history))
+    np.save(f"{args.directory}/train_logs/{city}_q_mode{args.mode}_{train_episodes}.npy", np.array([epoch_value1_list,epoch_value2_list]))
+
     export["avail_distri"] = env.acc
     export["demand_scaled"] = env.demand
     with open(f"{args.directory}/train_logs/{city}_export_mode{args.mode}_{train_episodes}_t{args.lookback}.pickle", 'wb') as f:

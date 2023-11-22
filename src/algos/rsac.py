@@ -172,6 +172,8 @@ class GNNActor(nn.Module):
             self.lin3 = nn.Linear(hidden_size, 1)
         elif self.mode == 1:
             self.lin3 = nn.Linear(hidden_size, 4)
+        else:
+            self.lin3 = nn.Linear(hidden_size, 5)
 
     def forward(self, state, edge_index, deterministic=False):
         out = F.relu(self.conv1(state, edge_index))
@@ -197,7 +199,16 @@ class GNNActor(nn.Module):
                 log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_d.log_prob(action_d).sum(dim=-1)
                 action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1)),-1)     
             else:
-                pass                
+                # Price
+                m_o = Beta(concentration[:,:,0] + 1e-20, concentration[:,:,1] + 1e-20)
+                m_d = Beta(concentration[:,:,2] + 1e-20, concentration[:,:,3] + 1e-20)
+                action_o = m_o.rsample()
+                action_d = m_d.rsample()
+                # Rebalancing desired distribution
+                m_reb = Dirichlet(concentration[:,:,-1] + 1e-20)
+                action_reb = m_reb.rsample()              
+                log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_d.log_prob(action_d).sum(dim=-1) + m_reb.log_prob(action_reb)
+                action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1),action_reb.squeeze(0).unsqueeze(-1)),-1)              
         return action, log_prob
 
 
@@ -376,6 +387,7 @@ class RSAC(nn.Module):
         clip=200,
         critic_version=4,
         mode = 1,
+        q_lag=10,
         env_baseline = None
     ):
         super(RSAC, self).__init__()
@@ -403,6 +415,8 @@ class RSAC(nn.Module):
         self.use_automatic_entropy_tuning = use_automatic_entropy_tuning
         self.min_q_version = min_q_version
         self.clip = clip
+        self.q_lag = q_lag
+        self.lag = 0
 
         # conservative Q learning parameters
         self.num_random = 10
@@ -493,9 +507,10 @@ class RSAC(nn.Module):
             a, _ = self.actor(summary, data.edge_index, deterministic)
         a = a.squeeze(-1)
         a = a.detach().cpu().numpy().tolist()
-        return list(a)
+        return a
 
     def update(self, b: RecurrentBatch):
+        self.lag += 1
 
         bs, num_time = b.r.shape[0], b.r.shape[1]
 
@@ -549,28 +564,31 @@ class RSAC(nn.Module):
         self.optimizers["c2_summarizer_optimizer"].step()
 
         # Update target networks by polyak averaging.
-        with torch.no_grad():
-            for p, p_targ in zip(
-                self.critic1_summarizer.parameters(), self.critic1_summarizer_target.parameters()
-            ):
-                p_targ.data.mul_(self.polyak)
-                p_targ.data.add_((1 - self.polyak) * p.data)
-            for p, p_targ in zip(
-                self.critic2_summarizer.parameters(), self.critic2_summarizer_target.parameters()
-            ):
-                p_targ.data.mul_(self.polyak)
-                p_targ.data.add_((1 - self.polyak) * p.data)
+        if self.lag == self.q_lag:
+            with torch.no_grad():
+                for p, p_targ in zip(
+                    self.critic1_summarizer.parameters(), self.critic1_summarizer_target.parameters()
+                ):
+                    p_targ.data.mul_(self.polyak)
+                    p_targ.data.add_((1 - self.polyak) * p.data)
+                for p, p_targ in zip(
+                    self.critic2_summarizer.parameters(), self.critic2_summarizer_target.parameters()
+                ):
+                    p_targ.data.mul_(self.polyak)
+                    p_targ.data.add_((1 - self.polyak) * p.data)
 
-            for p, p_targ in zip(
-                self.critic1.parameters(), self.critic1_target.parameters()
-            ):
-                p_targ.data.mul_(self.polyak)
-                p_targ.data.add_((1 - self.polyak) * p.data)
-            for p, p_targ in zip(
-                self.critic2.parameters(), self.critic2_target.parameters()
-            ):
-                p_targ.data.mul_(self.polyak)
-                p_targ.data.add_((1 - self.polyak) * p.data)
+                for p, p_targ in zip(
+                    self.critic1.parameters(), self.critic1_target.parameters()
+                ):
+                    p_targ.data.mul_(self.polyak)
+                    p_targ.data.add_((1 - self.polyak) * p.data)
+                for p, p_targ in zip(
+                    self.critic2.parameters(), self.critic2_target.parameters()
+                ):
+                    p_targ.data.mul_(self.polyak)
+                    p_targ.data.add_((1 - self.polyak) * p.data)
+            
+            self.lag = 0
 
         # Freeze Q-networks so you don't waste computational effort
         # computing gradients for them during the policy learning step.
@@ -619,7 +637,7 @@ class RSAC(nn.Module):
         #     p.requires_grad = True
 
         return {"actor_grad_norm":actor_grad_norm, "critic1_grad_norm":critic1_grad_norm, "critic2_grad_norm":critic2_grad_norm,\
-                "actor_loss":loss_pi.item(), "critic1_loss":loss_q1.item(), "critic2_loss":loss_q2.item()}
+                "actor_loss":loss_pi.item(), "critic1_loss":loss_q1.item(), "critic2_loss":loss_q2.item(), "Q1_value":torch.mean(q1).item(), "Q2_value":torch.mean(q2).item()}
 
     def configure_optimizers(self):
         optimizers = dict()
