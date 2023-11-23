@@ -482,7 +482,7 @@ if not args.test:
         os.makedirs(metricPath)
     np.save(f"{args.directory}/train_logs/{city}_rewards_waiting_mode{args.mode}_{train_episodes}_t{args.lookback}.npy", np.array([epoch_reward_list,epoch_waiting_list,epoch_servedrate_list,epoch_demand_list]))
     np.save(f"{args.directory}/train_logs/{city}_price_mode{args.mode}_{train_episodes}_t{args.lookback}.npy", np.array(price_history))
-    np.save(f"{args.directory}/train_logs/{city}_q_mode{args.mode}_{train_episodes}.npy", np.array([epoch_value1_list,epoch_value2_list]))
+    np.save(f"{args.directory}/train_logs/{city}_q_mode{args.mode}_{train_episodes}_t{args.lookback}.npy", np.array([epoch_value1_list,epoch_value2_list]))
 
     export["avail_distri"] = env.acc
     export["demand_scaled"] = env.demand

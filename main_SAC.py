@@ -339,6 +339,7 @@ if not args.test:
     epoch_reward_list = []
     epoch_waiting_list = []
     epoch_servedrate_list = []
+    epoch_rebalancing_cost = []
     epoch_value1_list = []
     epoch_value2_list = []
     
@@ -473,6 +474,7 @@ if not args.test:
         epoch_demand_list.append(env.arrivals)
         epoch_waiting_list.append(episode_waiting/episode_served_demand)
         epoch_servedrate_list.append(episode_served_demand/env.arrivals)
+        epoch_rebalancing_cost.append(episode_rebalancing_cost)
 
         # Keep price (only needed for pricing training)
         price_history.append(actions)
@@ -484,22 +486,22 @@ if not args.test:
         # Checkpoint best performing model
         if episode_reward >= best_reward:
             model.save_checkpoint(
-                path=f"ckpt/{args.checkpoint_path}_sample.pth")
+                path=f"ckpt/{args.city}_mode{args.mode}_{train_episodes}_sample.pth")
             best_reward = episode_reward
-        model.save_checkpoint(path=f"ckpt/{args.checkpoint_path}_running.pth")
-        # if i_episode % 10 == 0:
-        #     test_reward, test_served_demand, test_rebalancing_cost = model.test_agent(
-        #         1, env, args.cplexpath, args.directory, parser=parser
-        #     )
-        #     if test_reward >= best_reward_test:
-        #         best_reward_test = test_reward
-        #         model.save_checkpoint(
-        #             path=f"ckpt/{args.checkpoint_path}_test.pth")
+        model.save_checkpoint(path=f"ckpt/{args.city}_mode{args.mode}_{train_episodes}_running.pth")
+        if i_episode % 10 == 0:
+            test_reward, test_served_demand, test_rebalancing_cost = model.test_agent(
+                1, env, args.cplexpath, args.directory, parser=parser
+            )
+            if test_reward >= best_reward_test:
+                best_reward_test = test_reward
+                model.save_checkpoint(
+                    path=f"ckpt/{args.city}_mode{args.mode}_{train_episodes}_test.pth")
     # Save metrics file
     metricPath = f"{args.directory}/train_logs/"
     if not os.path.exists(metricPath):
         os.makedirs(metricPath)
-    np.save(f"{args.directory}/train_logs/{city}_rewards_waiting_mode{args.mode}_{train_episodes}.npy", np.array([epoch_reward_list,epoch_waiting_list,epoch_servedrate_list,epoch_demand_list]))
+    np.save(f"{args.directory}/train_logs/{city}_rewards_waiting_mode{args.mode}_{train_episodes}.npy", np.array([epoch_reward_list,epoch_waiting_list,epoch_servedrate_list,epoch_demand_list,epoch_rebalancing_cost]))
     np.save(f"{args.directory}/train_logs/{city}_price_mode{args.mode}_{train_episodes}.npy", np.array(price_history))
     np.save(f"{args.directory}/train_logs/{city}_q_mode{args.mode}_{train_episodes}.npy", np.array([epoch_value1_list,epoch_value2_list]))
     

@@ -123,7 +123,17 @@ class GNNActor(nn.Module):
         x = F.softplus(self.lin3(x))
         concentration = x.squeeze(-1)
         if deterministic:
-            action = (concentration) / (concentration.sum() + 1e-20)
+            if self.mode == 0:
+                action = (concentration) / (concentration.sum() + 1e-20)
+            elif self.mode == 1:
+                action_o = (concentration[:,:,0]-1)/(concentration[:,:,0] + concentration[:,:,1] -2 + 1e-20)
+                action_d = (concentration[:,:,2]-1)/(concentration[:,:,2] + concentration[:,:,3] -2 + 1e-20)
+                action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1)),-1)
+            else:
+                action_o = (concentration[:,:,0]-1)/(concentration[:,:,0] + concentration[:,:,1] -2 + 1e-20)
+                action_d = (concentration[:,:,2]-1)/(concentration[:,:,2] + concentration[:,:,3] -2 + 1e-20)
+                action_reb = (concentration[:,:,4]) / (concentration[:,:,4].sum() + 1e-20)
+                action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1),action_reb.squeeze(0).unsqueeze(-1)),-1)
             log_prob = None
         else:
             if self.mode == 0:
@@ -132,8 +142,8 @@ class GNNActor(nn.Module):
                 log_prob = m.log_prob(action)
                 action = action.squeeze(0).unsqueeze(-1)
             elif self.mode == 1:
-                m_o = Beta(concentration[:,:,0], concentration[:,:,1])
-                m_d = Beta(concentration[:,:,2], concentration[:,:,3])
+                m_o = Beta(concentration[:,:,0] + 1e-20, concentration[:,:,1] + 1e-20)
+                m_d = Beta(concentration[:,:,2] + 1e-20, concentration[:,:,3] + 1e-20)
                 action_o = m_o.rsample()
                 action_d = m_d.rsample()
                 log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_d.log_prob(action_d).sum(dim=-1)
@@ -567,31 +577,82 @@ class SAC(nn.Module):
             eps_served_demand = 0
             eps_rebalancing_cost = 0
             obs = env.reset()
+            action_rl = [0]*env.nregion
             actions = []
             done = False
             while not done:
-                obs, paxreward, done, info, _, _ = env.match_step_simple()
 
-                eps_reward += paxreward
+                if env.mode == 0:
+                    obs, paxreward, done, info, _, _ = env.match_step_simple()
+                    # obs, paxreward, done, info, _, _ = env.pax_step(
+                    #                 CPLEXPATH=args.cplexpath, directory=args.directory, PATH="scenario_san_francisco4"
+                    #             )
 
-                o = parser.parse_obs(obs)
+                    o = parser.parse_obs(obs=obs)
+                    eps_reward += paxreward
 
-                action_rl = self.select_action(o, deterministic=True)
-                actions.append(action_rl)
+                    action_rl = self.select_action(o, deterministic=True)
+                    actions.append(action_rl)
 
-                desiredAcc = {
-                    env.region[i]: int(action_rl[i] * dictsum(env.acc, env.time + 1))
-                    for i in range(len(env.region))
-                }
+                    # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
+                    desiredAcc = {
+                        env.region[i]: int(
+                            action_rl[0][i] * dictsum(env.acc, env.time + 1))
+                        for i in range(len(env.region))
+                    }
+                    # solve minimum rebalancing distance problem (Step 3 in paper)
+                    rebAction = solveRebFlow(
+                        env,
+                        "scenario_san_francisco4",
+                        desiredAcc,
+                        cplexpath,
+                        directory, 
+                    )
+                    # Take rebalancing action in environment
+                    _, rebreward, done, _, _, _ = env.reb_step(rebAction)
+                    eps_reward += rebreward
 
-                rebAction = solveRebFlow(
-                    env, "scenario_nyc4_test", desiredAcc, cplexpath
-                )
+                elif env.mode == 1:
+                    obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
 
-                _, rebreward, done, info, _, _ = env.reb_step(rebAction)
-                eps_reward += rebreward
+                    o = parser.parse_obs(obs=obs)
+
+                    eps_reward += paxreward
+
+                    action_rl = self.select_action(o)  
+
+                    env.matching_update()
+                elif env.mode == 2:
+                    obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+
+                    o = parser.parse_obs(obs=obs)
+                    eps_reward += paxreward
+
+                    action_rl = self.select_action(o)
+
+                    # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
+                    desiredAcc = {
+                        env.region[i]: int(
+                            action_rl[i][2] * dictsum(env.acc, env.time + 1))
+                        for i in range(len(env.region))
+                    }
+                    # solve minimum rebalancing distance problem (Step 3 in paper)
+                    rebAction = solveRebFlow(
+                        env,
+                        "scenario_san_francisco4",
+                        desiredAcc,
+                        cplexpath,
+                        directory, 
+                    )
+                    # Take rebalancing action in environment
+                    _, rebreward, done, info, _, _ = env.reb_step(rebAction)
+                    eps_reward += rebreward                
+                else:
+                    raise ValueError("Only mode 0, 1, and 2 are allowed")  
+                
                 eps_served_demand += info["served_demand"]
                 eps_rebalancing_cost += info["rebalancing_cost"]
+                
             episode_reward.append(eps_reward)
             episode_served_demand.append(eps_served_demand)
             episode_rebalancing_cost.append(eps_rebalancing_cost)
