@@ -109,7 +109,7 @@ class GNNParser:
 
 
 # Define calibrated simulation parameters
-demand_ratio = {'san_francisco': 2, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1.8,
+demand_ratio = {'san_francisco': 1, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1.8,
                 'nyc_man_south': 1.8, 'nyc_brooklyn': 9, 'porto': 4, 'rome': 1.8, 'shenzhen_baoan': 2.5,
                 'shenzhen_downtown_west': 2.5, 'shenzhen_downtown_east': 3, 'shenzhen_north': 3
                }
@@ -173,6 +173,12 @@ parser.add_argument(
     default="saved_files",
     help="defines directory where to save files",
 )
+parser.add_argument(
+    "--jitter",
+    type=int,
+    default=1,
+    help="jitter for demand 0 (default: 1)",
+)
 
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
@@ -189,7 +195,7 @@ scenario = Scenario(
     tf=args.max_steps,
 )
 
-env = AMoD(scenario, args.mode, beta=beta[city])
+env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter)
 
 parser = GNNParser(
     env, T=6, json_file=f"data/scenario_{city}.json"
@@ -286,7 +292,8 @@ for i_episode in range(10):
         f"Episode {i_episode+1} | Reward: {episode_reward:.2f} | ServedDemand: {episode_served_demand:.2f} | Episode served demand rate: {episode_served_demand/env.arrivals:.2f} | Waiting: {episode_waiting/episode_served_demand:.2f}"
     )
 
+print(f"Average arrival: {np.mean(epoch_demand_list)}")
 print(f"Average reward: {np.mean(epoch_reward_list)}")
-print(f"Avergaed served demand: {np.mean(epoch_demand_list)}")
+# print(f"Avergaed served demand: {np.mean(epoch_demand_list)}")
 print(f"Average waiting time: {np.mean(epoch_waiting_list)}")
 print(f"Avergae serve rate: {np.mean(epoch_servedrate_list)}")

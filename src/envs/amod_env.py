@@ -135,10 +135,14 @@ class AMoD:
                             # d = max(demand_update(d, p, 2*max(p_ori,p), p_ori), 0)                        
                     self.demand[n, j][t] = d
                     self.price[n, j][t] = p
-                elif price is None:
-                    if self.demand[n, j][t] == 0:
+                else:
+                    if self.demand[n, j][t] == 0 and self.price[n, j][t]!=0:
                         self.demand[n, j][t] == self.jitter
                         d = self.jitter
+                # elif np.sum(price) == 0:
+                #     p_ori = p
+                #     d = max(demand_update(d, p, 2 * p_ori, p_ori, self.jitter), 0)
+                #     self.demand[n, j][t] = d                    
                     
                 newp, self.arrivals = generate_passenger(
                     (n, j, t, d, p), self.arrivals)
