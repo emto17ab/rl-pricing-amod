@@ -519,20 +519,22 @@ else:
         tf=args.max_steps,
     )
 
-    env = AMoD(scenario, beta=beta[city])
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter)
     parser = GNNParser(env, T=6, json_file=f"data/scenario_{city}.json")
 
     model = SAC(
         env=env,
-        input_size=8,
-        hidden_size=256,
-        p_lr=1e-3,
-        q_lr=1e-3,
-        alpha=0.3,
-        batch_size=100,
+        input_size=10,
+        hidden_size=args.hidden_size,
+        p_lr=args.p_lr,
+        q_lr=args.q_lr,
+        alpha=args.alpha,
+        batch_size=args.batch_size,
         use_automatic_entropy_tuning=False,
+        clip=args.clip,
         critic_version=args.critic_version,
-        mode=args.mode
+        mode=args.mode,
+        q_lag=args.q_lag
     ).to(device)
 
     print("load model")
@@ -548,60 +550,142 @@ else:
     demands = []
     costs = []
 
+    demand_original_steps = []
+    demand_scaled_steps = []
+    actions_step = []
+    available_steps = []
+    rebalancing_cost_steps = []
+    price_original_steps = []
+    queue_steps = []
+
     for episode in range(10):
+        actions = []
+        rebalancing_cost = []
+        queue = []
+
         episode_reward = 0
         episode_served_demand = 0
         episode_rebalancing_cost = 0
         obs = env.reset()
-        done = False
-        k = 0
-        pax_reward = 0
-        while not done:
-            # take matching step (Step 1 in paper)
-            obs, paxreward, done, info, _, _ = env.pax_step(
-                CPLEXPATH=args.cplexpath,
-                PATH="scenario_san_francisco4_test",
-                directory=args.directory,
-            )
+        # Original demand and price
+        demand_original_steps.append(env.demand)
+        price_original_steps.append(env.price)
 
-            episode_reward += paxreward
-            pax_reward += paxreward
-            # use GNN-RL policy (Step 2 in paper)
-            o = parser.parse_obs(obs=obs)
-            action_rl = model.select_action(o, deterministic=True)
+        action_rl = [0]*env.nregion        
+        done = False
+        while not done:
 
             if env.mode == 0:
+                obs, paxreward, done, info, _, _ = env.match_step_simple()
+                # obs, paxreward, done, info, _, _ = env.pax_step(
+                #                 CPLEXPATH=args.cplexpath, directory=args.directory, PATH="scenario_san_francisco4"
+                #             )
+
+                o = parser.parse_obs(obs=obs)
+                episode_reward += paxreward
+
+                action_rl = model.select_action(o, deterministic=True)
+                actions.append(action_rl)
+
                 # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
                 desiredAcc = {
                     env.region[i]: int(
-                        action_rl[i] * dictsum(env.acc, env.time + 1))
+                        action_rl[0][i] * dictsum(env.acc, env.time + 1))
+                    for i in range(len(env.region))
+                }
+                # print(desiredAcc)
+                # print({env.region[i]: env.acc[env.region[i]][env.time+1] for i in range(len(env.region))})
+                # solve minimum rebalancing distance problem (Step 3 in paper)
+                rebAction = solveRebFlow(
+                    env,
+                    "scenario_san_francisco4",
+                    desiredAcc,
+                    args.cplexpath,
+                    args.directory, 
+                )
+                # Take rebalancing action in environment
+                _, rebreward, done, _, _, _ = env.reb_step(rebAction)
+                episode_reward += rebreward
+
+            elif env.mode == 1:
+                obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+
+                o = parser.parse_obs(obs=obs)
+
+                episode_reward += paxreward
+
+                action_rl = model.select_action(o)  
+
+                env.matching_update()
+            elif env.mode == 2:
+                obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+
+                o = parser.parse_obs(obs=obs)
+                episode_reward += paxreward
+
+                action_rl = model.select_action(o)
+
+                # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
+                desiredAcc = {
+                    env.region[i]: int(
+                        action_rl[i][2] * dictsum(env.acc, env.time + 1))
                     for i in range(len(env.region))
                 }
                 # solve minimum rebalancing distance problem (Step 3 in paper)
                 rebAction = solveRebFlow(
-                    env, "scenario_san_francisco4_test", desiredAcc, args.cplexpath, args.directory
+                    env,
+                    "scenario_san_francisco4",
+                    desiredAcc,
+                    args.cplexpath,
+                    args.directory, 
                 )
-
+                # Take rebalancing action in environment
                 _, rebreward, done, info, _, _ = env.reb_step(rebAction)
-
+                episode_reward += rebreward
                 episode_reward += rebreward
             elif env.mode == 1:
                 env.matching_update()
+                episode_reward += rebreward                
+            elif env.mode == 1:
+                env.matching_update()
             else:
-                pass
-            # track performance over episode
+                raise ValueError("Only mode 0, 1, and 2 are allowed")  
+            
             episode_served_demand += info["served_demand"]
             episode_rebalancing_cost += info["rebalancing_cost"]
-            k += 1
+            actions.append(action_rl)
+            rebalancing_cost.append(info["rebalancing_cost"])
+            queue.append([len(env.queue[i]) for i in env.queue.keys()])
         # Send current statistics to screen
         epochs.set_description(
             f"Episode {episode+1} | Reward: {episode_reward:.2f} | ServedDemand: {episode_served_demand:.2f} | Reb. Cost: {episode_rebalancing_cost}"
         )
         # Log KPIs
+        demand_scaled_steps.append(env.demand)
+        available_steps.append(env.acc)
+        actions_step.append(actions)
+        rebalancing_cost_steps.append(rebalancing_cost)
+        queue_steps.append(queue)
 
         rewards.append(episode_reward)
         demands.append(episode_served_demand)
         costs.append(episode_rebalancing_cost)
+
+    # Save metrics file
+    np.save(f"{args.directory}/{city}_actions_mode{args.mode}.npy", np.array(actions_step))
+    np.save(f"{args.directory}/{city}_queue_mode{args.mode}.npy", np.array(queue_steps))
+    if env.mode != 1: 
+        np.save(f"{args.directory}/{city}_cost_mode{args.mode}.npy", np.array(rebalancing_cost_steps))            
+    
+    with open(f"{args.directory}/{city}_demand_ori_mode{args.mode}.pickle", 'wb') as f:
+        pickle.dump(demand_original_steps, f)
+    with open(f"{args.directory}/{city}_price_ori_mode{args.mode}.pickle", 'wb') as f:
+        pickle.dump(price_original_steps, f)
+    if env.mode != 0:
+        with open(f"{args.directory}/{city}_demand_scaled_mode{args.mode}.pickle", 'wb') as f:
+            pickle.dump(demand_scaled_steps, f)    
+    with open(f"{args.directory}/{city}_acc_mode{args.mode}.pickle", 'wb') as f:
+        pickle.dump(available_steps, f)
 
     print("Rewards (mean, std):", np.mean(rewards), np.std(rewards))
     print("Served demand (mean, std):", np.mean(demands), np.std(demands))
