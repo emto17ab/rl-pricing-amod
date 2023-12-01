@@ -130,7 +130,7 @@ class GNNParser:
 
 
 # Define calibrated simulation parameters
-demand_ratio = {'san_francisco': 2, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1.8,
+demand_ratio = {'san_francisco': 1, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1.8,
                 'nyc_man_south': 1.8, 'nyc_brooklyn': 9, 'porto': 4, 'rome': 1.8, 'shenzhen_baoan': 2.5,
                 'shenzhen_downtown_west': 2.5, 'shenzhen_downtown_east': 3, 'shenzhen_north': 3
                }
@@ -486,9 +486,9 @@ if not args.test:
         # Checkpoint best performing model
         if episode_reward >= best_reward:
             model.save_checkpoint(
-                path=f"ckpt/{args.city}_mode{args.mode}_{train_episodes}_sample.pth")
+                path=f"ckpt/{args.city}_mode{args.mode}_{train_episodes}_ld_sample.pth")
             best_reward = episode_reward
-        model.save_checkpoint(path=f"ckpt/{args.city}_mode{args.mode}_{train_episodes}_running.pth")
+        model.save_checkpoint(path=f"ckpt/{args.city}_mode{args.mode}_{train_episodes}_ld_running.pth")
         if i_episode % 10 == 0:
             test_reward, test_served_demand, test_rebalancing_cost = model.test_agent(
                 1, env, args.cplexpath, args.directory, parser=parser
@@ -496,7 +496,7 @@ if not args.test:
             if test_reward >= best_reward_test:
                 best_reward_test = test_reward
                 model.save_checkpoint(
-                    path=f"ckpt/{args.city}_mode{args.mode}_{train_episodes}_test.pth")
+                    path=f"ckpt/{args.city}_mode{args.mode}_{train_episodes}_ld_test.pth")
     # Save metrics file
     metricPath = f"{args.directory}/train_logs/"
     if not os.path.exists(metricPath):
