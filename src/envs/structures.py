@@ -5,7 +5,7 @@ import scipy.stats as stats
 class Passenger:
     """Passenger class"""
 
-    def __init__(self, id, origin, destination, request_time, price, entered=False, assign_time=None, wait_time=0, choice=None, max_wait=5) -> None:
+    def __init__(self, id, origin, destination, request_time, price, entered=False, assign_time=None, wait_time=0, choice=None, max_wait=2) -> None:
         """
         price: price set for the trip
         choice: choice model for passenger

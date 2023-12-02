@@ -19,18 +19,18 @@ class Summarizer(nn.Module):
         if len(observations.shape) > 3:
             # batch training
             batch_size, timesteps, regions, _ = observations.size()
-            x_recurrent = observations[:,:,:,-1].unsqueeze(-1)
-            x_other = observations[:,:,:,:-1]
+            x_recurrent = observations[:,:,:,-2:].unsqueeze(-1)
+            x_other = observations[:,:,:,:-2]
             
-            x_recurrent = x_recurrent.view(batch_size*regions,timesteps,1)
+            x_recurrent = x_recurrent.view(batch_size*regions,timesteps,2)
             outputs,_ = self.rnn(x_recurrent)
             outputs = outputs.reshape(batch_size,timesteps,regions,-1)
             summary =  torch.cat([x_other, outputs],-1)
         else:
             # select action
-            nregions = observations.shape[0]
-            x_other = observations[:,:-1].unsqueeze(0)
-            x_recurrent = observations[:,-1].unsqueeze(-1).unsqueeze(-2)
+            regions = observations.shape[0]
+            x_other = observations[:,:-2].unsqueeze(0)
+            x_recurrent = observations[:,-2:].unsqueeze(-2)
             _, hidden = self.rnn(x_recurrent, hidden)
             summary =  torch.cat([x_other, hidden],-1)
 

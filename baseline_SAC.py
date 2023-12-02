@@ -167,6 +167,19 @@ parser.add_argument(
     default="san_francisco",
     help="city to train on",
 )
+parser.add_argument(
+    "--directory",
+    type=str,
+    default="saved_files",
+    help="defines directory where to save files",
+)
+parser.add_argument(
+    "--jitter",
+    type=int,
+    default=1,
+    help="jitter for demand 0 (default: 1)",
+)
+
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 device = torch.device("cuda" if args.cuda else "cpu")
@@ -182,7 +195,7 @@ scenario = Scenario(
     tf=args.max_steps,
 )
 
-env = AMoD(scenario, args.mode, beta=beta[city])
+env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter)
 
 parser = GNNParser(
     env, T=6, json_file=f"data/scenario_{city}.json"
@@ -205,7 +218,7 @@ price_history = []
 for i_episode in range(10):
     obs = env.reset()  # initialize environment
 
-    action = [0.5]*env.nregion
+    action = [0]*env.nregion
     episode_reward = 0
     episode_served_demand = 0
     episode_rebalancing_cost = 0
@@ -219,19 +232,18 @@ for i_episode in range(10):
         if step > 0:
             obs1 = copy.deepcopy(o)
 
-
-        obs, paxreward, done, info, _, _ = env.match_step_simple(action)
-        # obs, paxreward, done, info, _, _ = env.pax_step(
-        #                 CPLEXPATH=args.cplexpath, PATH="scenario_nyc4", directory=args.directory
-        #             )
-
-        o = parser.parse_obs(obs=obs)
-        episode_reward += paxreward
-        if step > 0:
-            # store transition in memroy
-            rl_reward = paxreward + rebreward
-
         if args.mode == 0:
+            obs, paxreward, done, info, _, _ = env.match_step_simple()
+            # obs, paxreward, done, info, _, _ = env.pax_step(
+            #                 CPLEXPATH=args.cplexpath, PATH="scenario_nyc4", directory=args.directory
+            #             )
+
+            o = parser.parse_obs(obs=obs)
+            episode_reward += paxreward
+            if step > 0:
+                # store transition in memroy
+                rl_reward = paxreward + rebreward
+
             # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
             ed = 1/env.nregion
             desiredAcc = {
@@ -250,6 +262,13 @@ for i_episode in range(10):
             # Take rebalancing action in environment
             new_obs, rebreward, done, info, _, _ = env.reb_step(rebAction)
         elif args.mode == 1:
+            obs, paxreward, done, info, _, _ = env.match_step_simple(action)
+
+            o = parser.parse_obs(obs=obs)
+            episode_reward += paxreward
+            if step > 0:
+                # store transition in memroy
+                rl_reward = paxreward + rebreward
             env.matching_update()
             rebreward = 0
         
@@ -273,7 +292,8 @@ for i_episode in range(10):
         f"Episode {i_episode+1} | Reward: {episode_reward:.2f} | ServedDemand: {episode_served_demand:.2f} | Episode served demand rate: {episode_served_demand/env.arrivals:.2f} | Waiting: {episode_waiting/episode_served_demand:.2f}"
     )
 
+print(f"Average arrival: {np.mean(epoch_demand_list)}")
 print(f"Average reward: {np.mean(epoch_reward_list)}")
-print(f"Avergaed served demand: {np.mean(epoch_demand_list)}")
+# print(f"Avergaed served demand: {np.mean(epoch_demand_list)}")
 print(f"Average waiting time: {np.mean(epoch_waiting_list)}")
 print(f"Avergae serve rate: {np.mean(epoch_servedrate_list)}")
