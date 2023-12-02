@@ -19,10 +19,11 @@ import json
 class AMoD:
     # initialization
     # updated to take scenario and beta (cost for rebalancing) as input
-    def __init__(self, scenario, mode, beta=0.2):
+    def __init__(self, scenario, mode, beta=0.2, jitter=0):
         # I changed it to deep copy so that the scenario input is not modified by env
         self.scenario = deepcopy(scenario)
         self.mode = mode  # Mode of rebalancing
+        self.jitter = jitter # Jitter for zero demand
         self.G = scenario.G  # Road Graph: node - regiocon'dn, edge - connection of regions, node attr: 'accInit', edge attr: 'time'
         self.demandTime = self.scenario.demandTime
         self.rebTime = self.scenario.rebTime
@@ -126,13 +127,23 @@ class AMoD:
                     if p_ori != 0:
                         if isinstance(price[0], list):
                             p = p_ori * (price[n][0] + price[j][1])
-                            d = max(demand_update(d, p, 2 * p_ori, p_ori), 0)    
+                            d = max(demand_update(d, p, 2 * p_ori, p_ori, self.jitter), 0)    
                         else:
                             p = p_ori * price[n] * 2
-                            d = max(demand_update(d, p, 2 * p_ori, p_ori), 0)
+                            d = max(demand_update(d, p, 2 * p_ori, p_ori, self.jitter), 0)
                             # p = 10 + max(self.demandTime[n,j][t]*self.tstep-6,0)*price[n].item()
                             # d = max(demand_update(d, p, 2*max(p_ori,p), p_ori), 0)                        
                     self.demand[n, j][t] = d
+                    self.price[n, j][t] = p
+                else:
+                    if self.demand[n, j][t] == 0 and self.price[n, j][t]!=0:
+                        self.demand[n, j][t] = self.jitter
+                        d = self.jitter
+                # elif np.sum(price) == 0:
+                #     p_ori = p
+                #     d = max(demand_update(d, p, 2 * p_ori, p_ori, self.jitter), 0)
+                #     self.demand[n, j][t] = d                    
+                    
                 newp, self.arrivals = generate_passenger(
                     (n, j, t, d, p), self.arrivals)
                 self.passenger[n][t].extend(newp)
@@ -190,10 +201,11 @@ class AMoD:
 
         # for acc, the time index would be t+1, but for demand, the time index would be t
         self.obs = (self.acc, self.time, self.dacc, self.demand)
-        if (self.mode == 0) | (self.mode == 2):
-            done = False  # if rebalancing needs to be carried out after
-        elif self.mode == 1:
-            done = (self.tf == t+1)
+        # if (self.mode == 0) | (self.mode == 2):
+        #     done = False  # if rebalancing needs to be carried out after
+        # elif self.mode == 1:
+        #     done = (self.tf == t+1)
+        done = (self.tf == t+1)
 
         ext_done = [done]*self.nregion
         return self.obs, max(0, self.reward), done, self.info, self.ext_reward, ext_done
