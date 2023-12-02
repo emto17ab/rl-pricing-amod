@@ -130,7 +130,7 @@ class GNNParser:
 
 
 # Define calibrated simulation parameters
-demand_ratio = {'san_francisco': 1, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1.8,
+demand_ratio = {'san_francisco': 2, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1.8,
                 'nyc_man_south': 1.8, 'nyc_brooklyn': 9, 'porto': 4, 'rome': 1.8, 'shenzhen_baoan': 2.5,
                 'shenzhen_downtown_west': 2.5, 'shenzhen_downtown_east': 3, 'shenzhen_north': 3
                }
@@ -549,6 +549,7 @@ else:
     rewards = []
     demands = []
     costs = []
+    arrivals = []
 
     demand_original_steps = []
     demand_scaled_steps = []
@@ -643,11 +644,6 @@ else:
                 _, rebreward, done, info, _, _ = env.reb_step(rebAction)
                 episode_reward += rebreward
                 episode_reward += rebreward
-            elif env.mode == 1:
-                env.matching_update()
-                episode_reward += rebreward                
-            elif env.mode == 1:
-                env.matching_update()
             else:
                 raise ValueError("Only mode 0, 1, and 2 are allowed")  
             
@@ -670,6 +666,7 @@ else:
         rewards.append(episode_reward)
         demands.append(episode_served_demand)
         costs.append(episode_rebalancing_cost)
+        arrivals.append(env.arrivals)
 
     # Save metrics file
     np.save(f"{args.directory}/{city}_actions_mode{args.mode}.npy", np.array(actions_step))
@@ -681,12 +678,13 @@ else:
         pickle.dump(demand_original_steps, f)
     with open(f"{args.directory}/{city}_price_ori_mode{args.mode}.pickle", 'wb') as f:
         pickle.dump(price_original_steps, f)
-    if env.mode != 0:
-        with open(f"{args.directory}/{city}_demand_scaled_mode{args.mode}.pickle", 'wb') as f:
-            pickle.dump(demand_scaled_steps, f)    
+
+    with open(f"{args.directory}/{city}_demand_scaled_mode{args.mode}.pickle", 'wb') as f:
+        pickle.dump(demand_scaled_steps, f)    
     with open(f"{args.directory}/{city}_acc_mode{args.mode}.pickle", 'wb') as f:
         pickle.dump(available_steps, f)
 
     print("Rewards (mean, std):", np.mean(rewards), np.std(rewards))
     print("Served demand (mean, std):", np.mean(demands), np.std(demands))
     print("Rebalancing cost (mean, std):", np.mean(costs), np.std(costs))
+    print("Arrivals (mean, std):", np.mean(arrivals), np.std(arrivals))
