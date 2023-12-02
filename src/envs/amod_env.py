@@ -137,7 +137,7 @@ class AMoD:
                     self.price[n, j][t] = p
                 else:
                     if self.demand[n, j][t] == 0 and self.price[n, j][t]!=0:
-                        self.demand[n, j][t] == self.jitter
+                        self.demand[n, j][t] = self.jitter
                         d = self.jitter
                 # elif np.sum(price) == 0:
                 #     p_ori = p
