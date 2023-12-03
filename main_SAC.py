@@ -231,6 +231,12 @@ parser.add_argument(
     help="jitter for demand 0 (default: 1)",
 )
 parser.add_argument(
+    "--maxt",
+    type=int,
+    default=2,
+    help="maximum passenger waiting time (default: 6mins)",
+)
+parser.add_argument(
     "--alpha",
     type=float,
     default=0.3,
@@ -306,7 +312,7 @@ if not args.test:
         tf=args.max_steps,
     )
 
-    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter)
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt)
 
     parser = GNNParser(
         env, T=6, json_file=f"data/scenario_{city}.json"
@@ -519,7 +525,7 @@ else:
         tf=args.max_steps,
     )
 
-    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter)
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt)
     parser = GNNParser(env, T=6, json_file=f"data/scenario_{city}.json")
 
     model = SAC(

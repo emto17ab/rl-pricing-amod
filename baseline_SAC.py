@@ -179,6 +179,12 @@ parser.add_argument(
     default=1,
     help="jitter for demand 0 (default: 1)",
 )
+parser.add_argument(
+    "--maxt",
+    type=int,
+    default=2,
+    help="maximum passenger waiting time (default: 6mins)",
+)
 
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
@@ -195,7 +201,7 @@ scenario = Scenario(
     tf=args.max_steps,
 )
 
-env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter)
+env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt)
 
 parser = GNNParser(
     env, T=6, json_file=f"data/scenario_{city}.json"

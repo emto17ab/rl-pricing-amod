@@ -72,7 +72,7 @@ def choice_passenger_accept(price, mtype=None):
             return True
 
 
-def generate_passenger(demand, arrivals=None):
+def generate_passenger(demand, max_wait=2, arrivals=None):
     """
     Generate passenger according to the demand
 
@@ -85,9 +85,9 @@ def generate_passenger(demand, arrivals=None):
     ori, des, t, d, p = demand
     for i in range(d):
         if arrivals is None:
-            newp.append(Passenger(i, ori, des, t, p))
+            newp.append(Passenger(i, ori, des, t, p, max_wait=max_wait))
         else:
-            newp.append(Passenger(arrivals+1, ori, des, t, p))
+            newp.append(Passenger(arrivals+1, ori, des, t, p, max_wait=max_wait))
             arrivals += 1
 
     return newp, arrivals

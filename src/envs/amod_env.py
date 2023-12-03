@@ -19,11 +19,12 @@ import json
 class AMoD:
     # initialization
     # updated to take scenario and beta (cost for rebalancing) as input
-    def __init__(self, scenario, mode, beta=0.2, jitter=0):
+    def __init__(self, scenario, mode, beta=0.2, jitter=0, max_wait=2):
         # I changed it to deep copy so that the scenario input is not modified by env
         self.scenario = deepcopy(scenario)
         self.mode = mode  # Mode of rebalancing
         self.jitter = jitter # Jitter for zero demand
+        self.max_wait = max_wait # Maximum passenger waiting time
         self.G = scenario.G  # Road Graph: node - regiocon'dn, edge - connection of regions, node attr: 'accInit', edge attr: 'time'
         self.demandTime = self.scenario.demandTime
         self.rebTime = self.scenario.rebTime
@@ -126,7 +127,7 @@ class AMoD:
                     #                             j][t]*self.tstep*price[n].item()
                     if p_ori != 0:
                         if isinstance(price[0], list):
-                            p = p_ori * (price[n][0] + price[j][1])
+                            p = 2 * p_ori * (price[n][0] * price[j][1])
                             d = max(demand_update(d, p, 2 * p_ori, p_ori, self.jitter), 0)    
                         else:
                             p = p_ori * price[n] * 2
@@ -145,7 +146,7 @@ class AMoD:
                 #     self.demand[n, j][t] = d                    
                     
                 newp, self.arrivals = generate_passenger(
-                    (n, j, t, d, p), self.arrivals)
+                    (n, j, t, d, p), self.max_wait, self.arrivals)
                 self.passenger[n][t].extend(newp)
                 # shuffle passenger list at station so that the passengers are not served in destination order
                 random.Random(42).shuffle(self.passenger[n][t])
