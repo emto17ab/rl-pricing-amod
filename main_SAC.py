@@ -649,7 +649,6 @@ else:
                 # Take rebalancing action in environment
                 _, rebreward, done, info, _, _ = env.reb_step(rebAction)
                 episode_reward += rebreward
-                episode_reward += rebreward
             else:
                 raise ValueError("Only mode 0, 1, and 2 are allowed")  
             
