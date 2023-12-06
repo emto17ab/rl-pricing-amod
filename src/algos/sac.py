@@ -110,9 +110,9 @@ class GNNActor(nn.Module):
         if mode == 0:
             self.lin3 = nn.Linear(hidden_size, 1)
         elif mode == 1:
-            self.lin3 = nn.Linear(hidden_size, 4)
+            self.lin3 = nn.Linear(hidden_size, 2)
         else:
-            self.lin3 = nn.Linear(hidden_size, 5)
+            self.lin3 = nn.Linear(hidden_size, 3)
 
     def forward(self, state, edge_index, deterministic=False):
         out = F.relu(self.conv1(state, edge_index))
@@ -126,14 +126,19 @@ class GNNActor(nn.Module):
             if self.mode == 0:
                 action = (concentration) / (concentration.sum() + 1e-20)
             elif self.mode == 1:
+                # action_o = (concentration[:,:,0]-1)/(concentration[:,:,0] + concentration[:,:,1] -2 + 1e-20)
+                # action_d = (concentration[:,:,2]-1)/(concentration[:,:,2] + concentration[:,:,3] -2 + 1e-20)
+                # action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1)),-1)
                 action_o = (concentration[:,:,0]-1)/(concentration[:,:,0] + concentration[:,:,1] -2 + 1e-20)
-                action_d = (concentration[:,:,2]-1)/(concentration[:,:,2] + concentration[:,:,3] -2 + 1e-20)
-                action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1)),-1)
+                action = action_o.squeeze(0).unsqueeze(-1)
             else:
+                # action_o = (concentration[:,:,0]-1)/(concentration[:,:,0] + concentration[:,:,1] -2 + 1e-20)
+                # action_d = (concentration[:,:,2]-1)/(concentration[:,:,2] + concentration[:,:,3] -2 + 1e-20)
+                # action_reb = (concentration[:,:,4]) / (concentration[:,:,4].sum() + 1e-20)
+                # action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1),action_reb.squeeze(0).unsqueeze(-1)),-1)
                 action_o = (concentration[:,:,0]-1)/(concentration[:,:,0] + concentration[:,:,1] -2 + 1e-20)
-                action_d = (concentration[:,:,2]-1)/(concentration[:,:,2] + concentration[:,:,3] -2 + 1e-20)
                 action_reb = (concentration[:,:,4]) / (concentration[:,:,4].sum() + 1e-20)
-                action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1),action_reb.squeeze(0).unsqueeze(-1)),-1)
+                action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_reb.squeeze(0).unsqueeze(-1)),-1)
             log_prob = None
         else:
             if self.mode == 0:
@@ -142,23 +147,34 @@ class GNNActor(nn.Module):
                 log_prob = m.log_prob(action)
                 action = action.squeeze(0).unsqueeze(-1)
             elif self.mode == 1:
+                # m_o = Beta(concentration[:,:,0] + 1e-20, concentration[:,:,1] + 1e-20)
+                # m_d = Beta(concentration[:,:,2] + 1e-20, concentration[:,:,3] + 1e-20)
+                # action_o = m_o.rsample()
+                # action_d = m_d.rsample()
+                # log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_d.log_prob(action_d).sum(dim=-1)
+                # action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1)),-1)
                 m_o = Beta(concentration[:,:,0] + 1e-20, concentration[:,:,1] + 1e-20)
-                m_d = Beta(concentration[:,:,2] + 1e-20, concentration[:,:,3] + 1e-20)
                 action_o = m_o.rsample()
-                action_d = m_d.rsample()
-                log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_d.log_prob(action_d).sum(dim=-1)
-                action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1)),-1)                
+                log_prob = m_o.log_prob(action_o).sum(dim=-1)
+                action = action_o.squeeze(0).unsqueeze(-1)             
             else:
                 # Price
+                # m_o = Beta(concentration[:,:,0] + 1e-20, concentration[:,:,1] + 1e-20)
+                # m_d = Beta(concentration[:,:,2] + 1e-20, concentration[:,:,3] + 1e-20)
+                # action_o = m_o.rsample()
+                # action_d = m_d.rsample()
+                # # Rebalancing desired distribution
+                # m_reb = Dirichlet(concentration[:,:,-1] + 1e-20)
+                # action_reb = m_reb.rsample()              
+                # log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_d.log_prob(action_d).sum(dim=-1) + m_reb.log_prob(action_reb)
+                # action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1),action_reb.squeeze(0).unsqueeze(-1)),-1)         
                 m_o = Beta(concentration[:,:,0] + 1e-20, concentration[:,:,1] + 1e-20)
-                m_d = Beta(concentration[:,:,2] + 1e-20, concentration[:,:,3] + 1e-20)
                 action_o = m_o.rsample()
-                action_d = m_d.rsample()
                 # Rebalancing desired distribution
                 m_reb = Dirichlet(concentration[:,:,-1] + 1e-20)
                 action_reb = m_reb.rsample()              
-                log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_d.log_prob(action_d).sum(dim=-1) + m_reb.log_prob(action_reb)
-                action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1),action_reb.squeeze(0).unsqueeze(-1)),-1)          
+                log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_reb.log_prob(action_reb)
+                action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_reb.squeeze(0).unsqueeze(-1)),-1)       
         return action, log_prob
 
 
@@ -255,7 +271,11 @@ class GNNCritic4(nn.Module):
         self.act_dim = act_dim
         self.mode = mode
         self.conv1 = GCNConv(in_channels, in_channels)
-        self.lin1 = nn.Linear(in_channels + self.mode + 1, hidden_size)
+        # self.lin1 = nn.Linear(in_channels + self.mode + 1, hidden_size)
+        if (mode == 0) | (mode == 1):
+            self.lin1 = nn.Linear(in_channels + 1, hidden_size)
+        else:
+            self.lin1 = nn.Linear(in_channels + 2, hidden_size)
         self.lin2 = nn.Linear(hidden_size, hidden_size)
         self.lin3 = nn.Linear(hidden_size, 1)
         self.in_channels = in_channels
@@ -454,7 +474,8 @@ class SAC(nn.Module):
             data.x_t,
             data.edge_index_t,
             data.reward,
-            data.action.reshape(-1, self.nodes, self.mode+1),
+            # data.action.reshape(-1, self.nodes, self.mode+1),
+            data.action.reshape(-1, self.nodes, max(self.mode,1)),
         )
 
         q1 = self.critic1(state_batch, edge_index, action_batch)
