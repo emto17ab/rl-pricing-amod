@@ -127,7 +127,12 @@ class AMoD:
                     #                             j][t]*self.tstep*price[n].item()
                     if p_ori != 0:
                         if isinstance(price[0], list):
-                            p = 2 * p_ori * (price[n][0] * price[j][1])
+                            if len(price[0]) == 3:
+                                # OD-based price
+                                p = p_ori * (price[n][0] + price[j][1])
+                            else:
+                                # origin-based price
+                                p = 2 * p_ori * price[n][0]
                             d = max(demand_update(d, p, 2 * p_ori, p_ori, self.jitter), 0)    
                         else:
                             p = p_ori * price[n] * 2
@@ -405,7 +410,7 @@ class AMoD:
 
 class Scenario:
     def __init__(self, N1=2, N2=4, tf=60, sd=None, ninit=5, tripAttr=None, demand_input=None, demand_ratio=None,
-                 trip_length_preference=0.25, grid_travel_time=1, fix_price=True, alpha=0.2, json_file=None, json_hr=9, json_tstep=2, varying_time=False, json_regions=None):
+                 trip_length_preference=0.25, grid_travel_time=1, fix_price=True, alpha=0.2, json_file=None, json_hr=9, json_tstep=3, varying_time=False, json_regions=None):
         # trip_length_preference: positive - more shorter trips, negative - more longer trips
         # grid_travel_time: travel time between grids
         # demand_input： list - total demand out of each region,
@@ -429,14 +434,16 @@ class Scenario:
             self.N2 = N2
             self.G = nx.complete_graph(N1*N2)
             self.G = self.G.to_directed()
-            self.demandTime = dict()  # traveling time between nodes
-            self.rebTime = dict()
+            self.demandTime = defaultdict(dict)  # traveling time between nodes
+            self.rebTime = defaultdict(dict)
             self.edges = list(self.G.edges) + [(i, i) for i in self.G.nodes]
+            self.tstep = json_tstep
             for i, j in self.edges:
-                self.demandTime[i, j] = defaultdict(
-                    lambda: (abs(i//N1-j//N1) + abs(i % N1-j % N1))*grid_travel_time)
-                self.rebTime[i, j] = defaultdict(
-                    lambda: (abs(i//N1-j//N1) + abs(i % N1-j % N1))*grid_travel_time)
+                for t in range(tf*2):
+                    self.demandTime[i, j][t] = (
+                        (abs(i//N1-j//N1) + abs(i % N1-j % N1))*grid_travel_time)
+                    self.rebTime[i, j][t] = (
+                        (abs(i//N1-j//N1) + abs(i % N1-j % N1))*grid_travel_time)
 
             for n in self.G.nodes:
                 # initial number of vehicles at station
@@ -445,11 +452,13 @@ class Scenario:
             self.demand_ratio = defaultdict(list)
 
             # demand mutiplier over time
-            if demand_ratio == None or type(demand_ratio) == list:
+            if demand_ratio == None or type(demand_ratio) == list or type(demand_ratio) == dict:
                 for i, j in self.edges:
                     if type(demand_ratio) == list:
                         self.demand_ratio[i, j] = list(np.interp(range(0, tf), np.arange(
                             0, tf+1, tf/(len(demand_ratio)-1)), demand_ratio))+[demand_ratio[-1]]*tf
+                    elif type(demand_ratio) == dict:
+                        self.demand_ratio[i, j] = list(np.interp(range(0, tf), np.arange(0, tf+1, tf/(len(demand_ratio[i]) - 1)), demand_ratio[i]))+[demand_ratio[i][-1]]*tf
                     else:
                         self.demand_ratio[i, j] = [1]*(tf+tf)
             else:

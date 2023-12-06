@@ -633,7 +633,7 @@ class SAC(nn.Module):
                     # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
                     desiredAcc = {
                         env.region[i]: int(
-                            action_rl[i][2] * dictsum(env.acc, env.time + 1))
+                            action_rl[i][-1] * dictsum(env.acc, env.time + 1))
                         for i in range(len(env.region))
                     }
                     # solve minimum rebalancing distance problem (Step 3 in paper)

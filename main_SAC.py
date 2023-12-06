@@ -130,7 +130,7 @@ class GNNParser:
 
 
 # Define calibrated simulation parameters
-demand_ratio = {'san_francisco': 2, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1.8,
+demand_ratio = {'san_francisco': 1, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1,
                 'nyc_man_south': 1.8, 'nyc_brooklyn': 9, 'porto': 4, 'rome': 1.8, 'shenzhen_baoan': 2.5,
                 'shenzhen_downtown_west': 2.5, 'shenzhen_downtown_east': 3, 'shenzhen_north': 3
                }
@@ -142,7 +142,7 @@ beta = {'san_francisco': 0.2, 'washington_dc': 0.5, 'chicago': 0.5, 'nyc_man_nor
                 'nyc_man_south': 0.5, 'nyc_brooklyn':0.5, 'porto': 0.1, 'rome': 0.1, 'shenzhen_baoan': 0.5,
                 'shenzhen_downtown_west': 0.5, 'shenzhen_downtown_east': 0.5, 'shenzhen_north': 0.5}
 
-test_tstep = {'san_francisco': 3, 'nyc_brooklyn': 4, 'shenzhen_downtown_west': 3}
+test_tstep = {'san_francisco': 3, 'nyc_brooklyn': 4, 'shenzhen_downtown_west': 3, 'nyc_man_middle': 3}
 
 parser = argparse.ArgumentParser(description="SAC-GNN")
 
@@ -275,7 +275,7 @@ parser.add_argument(
 parser.add_argument(
     "--q_lag",
     type=int,
-    default=10,
+    default=1,
     help="update frequency of Q target networks (default: 10)",
 )
 parser.add_argument(
@@ -312,11 +312,29 @@ if not args.test:
         tf=args.max_steps,
     )
 
+    # d = {
+    # (2, 3): 6,
+    # (2, 0): 4,
+    # (0, 3): 4,
+    # "default": 1,
+    # }
+    # r = {
+    # 0: [1, 1, 1, 2, 2, 3, 3, 1, 1, 1, 2, 2],
+    # 1: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    # 2: [1, 1, 1, 2, 2, 3, 4, 4, 2, 1, 1, 1],
+    # 3: [1, 1, 1, 2, 2, 2, 2, 2, 2, 1, 1, 1],
+    # }
+    # scenario = Scenario(tf=20, demand_input=d, demand_ratio=r, ninit=30, N1=2, N2=2)
+
     env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt)
 
     parser = GNNParser(
         env, T=6, json_file=f"data/scenario_{city}.json"
     )  # Timehorizon T=6 (K in paper)
+
+    # parser = GNNParser(
+    #     env, T=6
+    # )  # Timehorizon T=6 (K in paper)
 
     model = SAC(
         env=env,
@@ -439,7 +457,7 @@ if not args.test:
                 # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
                 desiredAcc = {
                     env.region[i]: int(
-                        action_rl[i][2] * dictsum(env.acc, env.time + 1))
+                        action_rl[i][-1] * dictsum(env.acc, env.time + 1))
                     for i in range(len(env.region))
                 }
                 # solve minimum rebalancing distance problem (Step 3 in paper)
@@ -525,8 +543,29 @@ else:
         tf=args.max_steps,
     )
 
+    # d = {
+    # (2, 3): 6,
+    # (2, 0): 4,
+    # (0, 3): 4,
+    # "default": 1,
+    # }
+    # r = {
+    # 0: [1, 1, 1, 2, 2, 3, 3, 1, 1, 1, 2, 2],
+    # 1: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    # 2: [1, 1, 1, 2, 2, 3, 4, 4, 2, 1, 1, 1],
+    # 3: [1, 1, 1, 2, 2, 2, 2, 2, 2, 1, 1, 1],
+    # }
+    # scenario = Scenario(tf=20, demand_input=d, demand_ratio=r, ninit=30, N1=2, N2=2)
+
     env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt)
-    parser = GNNParser(env, T=6, json_file=f"data/scenario_{city}.json")
+
+    parser = GNNParser(
+        env, T=6, json_file=f"data/scenario_{city}.json"
+    )  # Timehorizon T=6 (K in paper)
+
+    # parser = GNNParser(
+    #     env, T=6
+    # )  # Timehorizon T=6 (K in paper)
 
     model = SAC(
         env=env,
@@ -559,6 +598,7 @@ else:
 
     demand_original_steps = []
     demand_scaled_steps = []
+    reb_steps = []
     actions_step = []
     available_steps = []
     rebalancing_cost_steps = []
@@ -664,6 +704,7 @@ else:
         # Log KPIs
         demand_scaled_steps.append(env.demand)
         available_steps.append(env.acc)
+        reb_steps.append(env.rebFlow)
         actions_step.append(actions)
         rebalancing_cost_steps.append(rebalancing_cost)
         queue_steps.append(queue)
@@ -677,7 +718,9 @@ else:
     np.save(f"{args.directory}/{city}_actions_mode{args.mode}.npy", np.array(actions_step))
     np.save(f"{args.directory}/{city}_queue_mode{args.mode}.npy", np.array(queue_steps))
     if env.mode != 1: 
-        np.save(f"{args.directory}/{city}_cost_mode{args.mode}.npy", np.array(rebalancing_cost_steps))            
+        np.save(f"{args.directory}/{city}_cost_mode{args.mode}.npy", np.array(rebalancing_cost_steps))
+        with open(f"{args.directory}/{city}_reb_mode{args.mode}.pickle", 'wb') as f:
+            pickle.dump(reb_steps, f)                    
     
     with open(f"{args.directory}/{city}_demand_ori_mode{args.mode}.pickle", 'wb') as f:
         pickle.dump(demand_original_steps, f)
