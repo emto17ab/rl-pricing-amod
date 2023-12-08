@@ -128,7 +128,8 @@ class AMoD:
                     if p_ori != 0:
                         if isinstance(price[0], list):
                             # p = p_ori * (price[n][0] + price[j][1])
-                            p = 2 * p_ori * price[n][0]
+                            # p = 2 * p_ori * price[n][0]
+                            p = 2 * p_ori * price[n][j]
                             d = max(demand_update(d, p, 2 * p_ori, p_ori, self.jitter), 0)    
                         else:
                             p = p_ori * price[n] * 2
