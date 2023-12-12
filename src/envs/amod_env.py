@@ -4,6 +4,7 @@ Autonomous Mobility-on-Demand Environment
 This file contains the specifications for the AMoD system simulator.
 """
 from collections import defaultdict
+from sklearn.neighbors import KNeighborsRegressor
 import numpy as np
 import random
 import subprocess
@@ -500,11 +501,14 @@ class Scenario:
             self.json_start = json_hr * 60
             self.tf = tf
             self.edges = list(self.G.edges) + [(i, i) for i in self.G.nodes]
+            self.nregion = len(self.G)
 
             for i, j in self.demand_input:
                 self.demandTime[i, j] = defaultdict(int)
                 self.rebTime[i, j] = 1
 
+            matrix_demand = defaultdict(lambda: np.zeros((self.nregion,self.nregion)))
+            matrix_price_ori = defaultdict(lambda: np.zeros((self.nregion,self.nregion)))
             for item in data["demand"]:
                 t, o, d, v, tt, p = item["time_stamp"], item["origin"], item[
                     "destination"], item["demand"], item["travel_time"], item["price"]
@@ -522,6 +526,11 @@ class Scenario:
                 self.demandTime[o, d][(t-self.json_start) //
                                       json_tstep] += tt*v*demand_ratio/json_tstep
 
+                matrix_demand[(t-self.json_start) //
+                                      json_tstep][o,d] += v*demand_ratio
+                matrix_price_ori[(t-self.json_start) //
+                                      json_tstep][o,d] += p*v*demand_ratio
+
             for o, d in self.edges:
                 for t in range(0, tf*2):
                     if t in self.demand_input[o, d]:
@@ -529,11 +538,13 @@ class Scenario:
                         self.demandTime[o, d][t] /= self.demand_input[o, d][t]
                         self.demandTime[o, d][t] = max(
                             int(round(self.demandTime[o, d][t])), 1)
+                        matrix_price_ori[t][o,d] /= matrix_demand[t][o,d]
                     else:
                         self.demand_input[o, d][t] = 0
                         self.p[o, d][t] = 0
                         self.demandTime[o, d][t] = 0
 
+            matrix_reb = np.zeros((self.nregion,self.nregion))
             for item in data["rebTime"]:
                 hr, o, d, rt = item["time_stamp"], item["origin"], item["destination"], item["reb_time"]
                 if json_regions != None and (o not in json_regions or d not in json_regions):
@@ -549,7 +560,37 @@ class Scenario:
                         for t in range(0, tf+1):
                             self.rebTime[o, d][t] = max(
                                 int(round(rt/json_tstep)), 1)
+                            matrix_reb[o,d] = rt/json_tstep
+            
+            # KNN regression for each time step
+            knn = defaultdict(lambda: KNeighborsRegressor(n_neighbors=3))
+            for t in matrix_price_ori.keys():
+                reb = matrix_reb
+                price = matrix_price_ori[t]
+                X = []
+                y = []
+                for i in range(self.nregion):
+                    for j in range(self.nregion):
+                        if price[i,j] != 0:
+                            X.append(reb[i,j])
+                            y.append(price[i,j])
+                X_train = np.array(X).reshape(-1, 1)
+                y_train = np.array(y)
+                knn[t].fit(X_train, y_train)
 
+            # Test point
+            for o, d in self.edges:
+                for t in range(0, tf*2):
+                    if self.p[o,d][t]==0 and t in knn.keys():
+                        
+                        knn_regressor = knn[t]
+
+                        X_test = np.array([[matrix_reb[o,d]]])
+                        # Predict the value for the test point
+                        y_pred = knn_regressor.predict(X_test)[0]
+                        self.p[o,d][t] = y_pred
+
+            # Initial vehicle distribution
             for item in data["totalAcc"]:
                 hr, acc = item["hour"], item["acc"]
                 if hr == json_hr+int(round(json_tstep/2*tf/60)):
