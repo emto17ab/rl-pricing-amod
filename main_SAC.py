@@ -534,38 +534,38 @@ if not args.test:
     with open(f"{args.directory}/train_logs/{city}_export_mode{args.mode}_{train_episodes}.pickle", 'wb') as f:
         pickle.dump(export, f) 
 else:
-    # scenario = Scenario(
-    #     json_file=f"data/scenario_{city}.json",
-    #     demand_ratio=demand_ratio[city],
-    #     json_hr=json_hr[city],
-    #     sd=args.seed,
-    #     json_tstep=test_tstep[city],
-    #     tf=args.max_steps,
-    # )
+    scenario = Scenario(
+        json_file=f"data/scenario_{city}.json",
+        demand_ratio=demand_ratio[city],
+        json_hr=json_hr[city],
+        sd=args.seed,
+        json_tstep=test_tstep[city],
+        tf=args.max_steps,
+    )
 
-    d = {
-    (2, 3): 6,
-    (2, 0): 4,
-    (0, 3): 4,
-    "default": 1,
-    }
-    r = {
-    0: [1, 1, 1, 2, 2, 3, 3, 1, 1, 1, 2, 2],
-    1: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-    2: [1, 1, 1, 2, 2, 3, 4, 4, 2, 1, 1, 1],
-    3: [1, 1, 1, 2, 2, 2, 2, 2, 2, 1, 1, 1],
-    }
-    scenario = Scenario(tf=20, demand_input=d, demand_ratio=r, ninit=30, N1=2, N2=2)
+    # d = {
+    # (2, 3): 6,
+    # (2, 0): 4,
+    # (0, 3): 4,
+    # "default": 1,
+    # }
+    # r = {
+    # 0: [1, 1, 1, 2, 2, 3, 3, 1, 1, 1, 2, 2],
+    # 1: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    # 2: [1, 1, 1, 2, 2, 3, 4, 4, 2, 1, 1, 1],
+    # 3: [1, 1, 1, 2, 2, 2, 2, 2, 2, 1, 1, 1],
+    # }
+    # scenario = Scenario(tf=20, demand_input=d, demand_ratio=r, ninit=30, N1=2, N2=2)
 
     env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt)
 
-    # parser = GNNParser(
-    #     env, T=6, json_file=f"data/scenario_{city}.json"
-    # )  # Timehorizon T=6 (K in paper)
-
     parser = GNNParser(
-        env, T=6
+        env, T=6, json_file=f"data/scenario_{city}.json"
     )  # Timehorizon T=6 (K in paper)
+
+    # parser = GNNParser(
+    #     env, T=6
+    # )  # Timehorizon T=6 (K in paper)
 
     model = SAC(
         env=env,
@@ -675,7 +675,7 @@ else:
                 # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
                 desiredAcc = {
                     env.region[i]: int(
-                        action_rl[i][2] * dictsum(env.acc, env.time + 1))
+                        action_rl[i][-1] * dictsum(env.acc, env.time + 1))
                     for i in range(len(env.region))
                 }
                 # solve minimum rebalancing distance problem (Step 3 in paper)
@@ -717,6 +717,7 @@ else:
     # Save metrics file
     np.save(f"{args.directory}/{city}_actions_mode{args.mode}.npy", np.array(actions_step))
     np.save(f"{args.directory}/{city}_queue_mode{args.mode}.npy", np.array(queue_steps))
+    np.save(f"{args.directory}/{city}_served_mode{args.mode}.npy", np.array([demands,arrivals]))
     if env.mode != 1: 
         np.save(f"{args.directory}/{city}_cost_mode{args.mode}.npy", np.array(rebalancing_cost_steps))
         with open(f"{args.directory}/{city}_reb_mode{args.mode}.pickle", 'wb') as f:

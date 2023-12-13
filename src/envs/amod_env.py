@@ -129,8 +129,8 @@ class AMoD:
                     if p_ori != 0:
                         if isinstance(price[0], list):
                             # p = p_ori * (price[n][0] + price[j][1])
-                            # p = 2 * p_ori * price[n][0]
-                            p = 2 * p_ori * price[n][j]
+                            p = 2 * p_ori * price[n][0]
+                            # p = 2 * p_ori * price[n][j]
                             d = max(demand_update(d, p, 2 * p_ori, p_ori, self.jitter), 0)    
                         else:
                             p = p_ori * price[n] * 2
@@ -588,7 +588,7 @@ class Scenario:
                         X_test = np.array([[matrix_reb[o,d]]])
                         # Predict the value for the test point
                         y_pred = knn_regressor.predict(X_test)[0]
-                        self.p[o,d][t] = y_pred
+                        self.p[o,d][t] = float(y_pred)
 
             # Initial vehicle distribution
             for item in data["totalAcc"]:

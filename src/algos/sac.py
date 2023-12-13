@@ -164,8 +164,8 @@ class SAC(nn.Module):
 
         self.replay_buffer = ReplayData(device=device)
         # nnets
-        # self.actor = GNNActor(self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode)
-        self.actor = MLPActor(self.input_size,self.hidden_size, act_dim=self.act_dim)
+        self.actor = GNNActor(self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode)
+        # self.actor = MLPActor(self.input_size,self.hidden_size, act_dim=self.act_dim)
     
         if critic_version == 1:
             GNNCritic = GNNCritic1
@@ -174,8 +174,8 @@ class SAC(nn.Module):
         if critic_version == 3:
             GNNCritic = GNNCritic3
         if critic_version == 4:
-            # GNNCritic = GNNCritic4
-            GNNCritic = MLPCritic4
+            GNNCritic = GNNCritic4
+            # GNNCritic = MLPCritic4
         if critic_version == 5:
             GNNCritic = GNNCritic5
         self.critic1 = GNNCritic(
@@ -249,8 +249,8 @@ class SAC(nn.Module):
             data.edge_index_t,
             data.reward,
             # data.action.reshape(-1, self.nodes, self.mode+1),
-            # data.action.reshape(-1, self.nodes, max(self.mode,1)),
-            data.action.reshape(-1, self.nodes, self.nodes),
+            data.action.reshape(-1, self.nodes, max(self.mode,1)),
+            # data.action.reshape(-1, self.nodes, self.nodes),
         )
 
         q1 = self.critic1(state_batch, edge_index, action_batch)
