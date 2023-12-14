@@ -185,6 +185,12 @@ parser.add_argument(
     default=2,
     help="maximum passenger waiting time (default: 6mins)",
 )
+parser.add_argument(
+    "--impute",
+    type=bool,
+    default=False,
+    help="Whether impute the zero price (default: False)",
+)
 
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
@@ -199,6 +205,7 @@ scenario = Scenario(
     sd=args.seed,
     json_tstep=args.json_tstep,
     tf=args.max_steps,
+    impute=args.impute
 )
 
 env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt)
