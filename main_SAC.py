@@ -296,6 +296,13 @@ parser.add_argument(
     default=4,
     help="critic version (default: 4)",
 )
+parser.add_argument(
+    "--impute",
+    type=bool,
+    default=False,
+    help="Whether impute the zero price (default: False)",
+)
+
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 device = torch.device("cuda" if args.cuda else "cpu")
@@ -310,6 +317,7 @@ if not args.test:
         sd=args.seed,
         json_tstep=args.json_tstep,
         tf=args.max_steps,
+        impute=args.impute
     )
 
     # d = {
@@ -541,6 +549,7 @@ else:
         sd=args.seed,
         json_tstep=test_tstep[city],
         tf=args.max_steps,
+        impute=args.impute
     )
 
     # d = {

@@ -408,7 +408,7 @@ class AMoD:
 
 class Scenario:
     def __init__(self, N1=2, N2=4, tf=60, sd=None, ninit=5, tripAttr=None, demand_input=None, demand_ratio=None,
-                 trip_length_preference=0.25, grid_travel_time=1, fix_price=True, alpha=0.2, json_file=None, json_hr=9, json_tstep=3, varying_time=False, json_regions=None):
+                 trip_length_preference=0.25, grid_travel_time=1, fix_price=True, alpha=0.2, json_file=None, json_hr=9, json_tstep=3, varying_time=False, json_regions=None, impute=False):
         # trip_length_preference: positive - more shorter trips, negative - more longer trips
         # grid_travel_time: travel time between grids
         # demand_input： list - total demand out of each region,
@@ -563,32 +563,33 @@ class Scenario:
                             matrix_reb[o,d] = rt/json_tstep
             
             # KNN regression for each time step
-            knn = defaultdict(lambda: KNeighborsRegressor(n_neighbors=3))
-            for t in matrix_price_ori.keys():
-                reb = matrix_reb
-                price = matrix_price_ori[t]
-                X = []
-                y = []
-                for i in range(self.nregion):
-                    for j in range(self.nregion):
-                        if price[i,j] != 0:
-                            X.append(reb[i,j])
-                            y.append(price[i,j])
-                X_train = np.array(X).reshape(-1, 1)
-                y_train = np.array(y)
-                knn[t].fit(X_train, y_train)
+            if impute:
+                knn = defaultdict(lambda: KNeighborsRegressor(n_neighbors=3))
+                for t in matrix_price_ori.keys():
+                    reb = matrix_reb
+                    price = matrix_price_ori[t]
+                    X = []
+                    y = []
+                    for i in range(self.nregion):
+                        for j in range(self.nregion):
+                            if price[i,j] != 0:
+                                X.append(reb[i,j])
+                                y.append(price[i,j])
+                    X_train = np.array(X).reshape(-1, 1)
+                    y_train = np.array(y)
+                    knn[t].fit(X_train, y_train)
 
-            # Test point
-            for o, d in self.edges:
-                for t in range(0, tf*2):
-                    if self.p[o,d][t]==0 and t in knn.keys():
-                        
-                        knn_regressor = knn[t]
+                # Test point
+                for o, d in self.edges:
+                    for t in range(0, tf*2):
+                        if self.p[o,d][t]==0 and t in knn.keys():
+                            
+                            knn_regressor = knn[t]
 
-                        X_test = np.array([[matrix_reb[o,d]]])
-                        # Predict the value for the test point
-                        y_pred = knn_regressor.predict(X_test)[0]
-                        self.p[o,d][t] = float(y_pred)
+                            X_test = np.array([[matrix_reb[o,d]]])
+                            # Predict the value for the test point
+                            y_pred = knn_regressor.predict(X_test)[0]
+                            self.p[o,d][t] = float(y_pred)
 
             # Initial vehicle distribution
             for item in data["totalAcc"]:
