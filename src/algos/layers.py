@@ -53,15 +53,15 @@ class GNNActor(nn.Module):
                 # action_o = (concentration[:,:,0]-1)/(concentration[:,:,0] + concentration[:,:,1] -2 + 1e-20)
                 # action_d = (concentration[:,:,2]-1)/(concentration[:,:,2] + concentration[:,:,3] -2 + 1e-20)
                 # action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1)),-1)
-                action_o = (concentration[:,:,0]-1)/(concentration[:,:,0] + concentration[:,:,1] -2 + 1e-20)
+                action_o = (concentration[:,:,0]-1)/(concentration[:,:,0] + concentration[:,:,1] -2 + 1e-10)
                 action = action_o.squeeze(0).unsqueeze(-1)
             else:
                 # action_o = (concentration[:,:,0]-1)/(concentration[:,:,0] + concentration[:,:,1] -2 + 1e-20)
                 # action_d = (concentration[:,:,2]-1)/(concentration[:,:,2] + concentration[:,:,3] -2 + 1e-20)
                 # action_reb = (concentration[:,:,4]) / (concentration[:,:,4].sum() + 1e-20)
                 # action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1),action_reb.squeeze(0).unsqueeze(-1)),-1)
-                action_o = (concentration[:,:,0]-1)/(concentration[:,:,0] + concentration[:,:,1] -2 + 1e-20)
-                action_reb = (concentration[:,:,4]) / (concentration[:,:,4].sum() + 1e-20)
+                action_o = (concentration[:,:,0]-1)/(concentration[:,:,0] + concentration[:,:,1] -2 + 1e-10)
+                action_reb = (concentration[:,:,4]) / (concentration[:,:,4].sum() + 1e-10)
                 action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_reb.squeeze(0).unsqueeze(-1)),-1)
             log_prob = None
         else:
@@ -77,7 +77,7 @@ class GNNActor(nn.Module):
                 # action_d = m_d.rsample()
                 # log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_d.log_prob(action_d).sum(dim=-1)
                 # action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1)),-1)
-                m_o = Beta(concentration[:,:,0] + 1e-20, concentration[:,:,1] + 1e-20)
+                m_o = Beta(concentration[:,:,0] + 1e-10, concentration[:,:,1] + 1e-10)
                 action_o = m_o.rsample()
                 log_prob = m_o.log_prob(action_o).sum(dim=-1)
                 action = action_o.squeeze(0).unsqueeze(-1)             
@@ -92,10 +92,10 @@ class GNNActor(nn.Module):
                 # action_reb = m_reb.rsample()              
                 # log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_d.log_prob(action_d).sum(dim=-1) + m_reb.log_prob(action_reb)
                 # action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1),action_reb.squeeze(0).unsqueeze(-1)),-1)         
-                m_o = Beta(concentration[:,:,0] + 1e-20, concentration[:,:,1] + 1e-20)
+                m_o = Beta(concentration[:,:,0] + 1e-10, concentration[:,:,1] + 1e-10)
                 action_o = m_o.rsample()
                 # Rebalancing desired distribution
-                m_reb = Dirichlet(concentration[:,:,-1] + 1e-20)
+                m_reb = Dirichlet(concentration[:,:,-1] + 1e-10)
                 action_reb = m_reb.rsample()              
                 log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_reb.log_prob(action_reb)
                 action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_reb.squeeze(0).unsqueeze(-1)),-1)       
@@ -104,26 +104,28 @@ class GNNActor(nn.Module):
 
 class GNNActor1(nn.Module):
     """
-    Actor \pi(a_t | s_t) parametrizing the concentration parameters of a Beta Policy.
+    Actor \pi(a_t | s_t) parametrizing the concentration parameters of a Beta Policy. OD-based action.
     """
 
     def __init__(self, in_channels, hidden_size=128, act_dim=10, mode=1):
         super().__init__()
         self.in_channels = in_channels
         self.nregion = act_dim
+        self.hidden - hidden_size
         self.conv1 = GCNConv(in_channels, in_channels)
         self.lin1 = nn.Linear(in_channels, hidden_size)
-        self.lin2 = nn.Linear(hidden_size, 2*self.nregion)
+        self.lin2 = nn.Linear(hidden_size*self.nregion, 2*self.nregion*self.nregion)
 
     def forward(self, state, edge_index, deterministic=False):
         out = F.relu(self.conv1(state, edge_index))
         x = out + state
         x = x.reshape(-1, self.nregion, self.in_channels)
         x = F.leaky_relu(self.lin1(x))
+        x = x.reshape(-1,self.hidden*self.nregion)
         x = F.softplus(self.lin2(x))
         concentration = x.squeeze(-1)
         if deterministic:
-            action = (concentration[:,:,:self.nregion]-1)/(concentration[:,:,:self.nregion] + concentration[:,:,self.nregion:] -2 + 1e-20)
+            action = (concentration[:,:self.nregion*self.nregion]-1)/(concentration[:,:self.nregion*self.nregion] + concentration[:,self.nregion*self.nregion:] -2 + 1e-10)
         else:
             # m_o = Beta(concentration[:,:,0] + 1e-20, concentration[:,:,1] + 1e-20)
             # m_d = Beta(concentration[:,:,2] + 1e-20, concentration[:,:,3] + 1e-20)
@@ -131,14 +133,15 @@ class GNNActor1(nn.Module):
             # action_d = m_d.rsample()
             # log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_d.log_prob(action_d).sum(dim=-1)
             # action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1)),-1)
-            m = Beta(concentration[:,:,:self.nregion] + 1e-20, concentration[:,:,self.nregion:] + 1e-20)
+            m = Beta(concentration[:,:self.nregion*self.nregion] + 1e-10, concentration[:,self.nregion*self.nregion:] + 1e-10)
             action = m.rsample().squeeze(0)
-            log_prob = m.log_prob(action).sum(dim=-1).sum(dim=-1)          
+            log_prob = m.log_prob(action).sum(dim=-1)
+            action = action.reshape(-1,self.nregion,self.nregion).squeeze(0)         
         return action, log_prob
     
 class MLPActor(nn.Module):
     """
-    Actor \pi(a_t | s_t) parametrizing the concentration parameters of a Beta Policy.
+    Actor \pi(a_t | s_t) parametrizing the concentration parameters of a Beta Policy. OD-based actoin.
     """
 
     def __init__(self, in_channels, hidden_size=128, act_dim=10, mode=1):
@@ -159,16 +162,42 @@ class MLPActor(nn.Module):
         x = F.softplus(self.lin4(x))
         concentration = x.squeeze(-1)
         if deterministic:
-            action = (concentration[:,:self.nregion*self.nregion]-1)/(concentration[:,:self.nregoin*self.nregion] + concentration[:,self.nregion*self.nregion:] -2 + 1e-20)
+            action = (concentration[:,:self.nregion*self.nregion]-1)/(concentration[:,:self.nregion*self.nregion] + concentration[:,self.nregion*self.nregion:] -2 + 1e-10)
             action = action.reshape(-1,self.nregion,self.nregion)
         else:
-            # m_o = Beta(concentration[:,:,0] + 1e-20, concentration[:,:,1] + 1e-20)
-            # m_d = Beta(concentration[:,:,2] + 1e-20, concentration[:,:,3] + 1e-20)
-            # action_o = m_o.rsample()
-            # action_d = m_d.rsample()
-            # log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_d.log_prob(action_d).sum(dim=-1)
-            # action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1)),-1)
-            m = Beta(concentration[:,:self.nregion*self.nregion] + 1e-20, concentration[:,self.nregion*self.nregion:] + 1e-20)
+            m = Beta(concentration[:,:self.nregion*self.nregion] + 1e-10, concentration[:,self.nregion*self.nregion:] + 1e-10)
+            action = m.rsample().squeeze(0)
+            log_prob = m.log_prob(action).sum(dim=-1)   
+            action = action.reshape(-1,self.nregion,self.nregion).squeeze(0)       
+        return action, log_prob
+    
+class MLPActor1(nn.Module):
+    """
+    Actor \pi(a_t | s_t) parametrizing the concentration parameters of a Beta Policy. Origin-based action.
+    """
+
+    def __init__(self, in_channels, hidden_size=128, act_dim=10, mode=1):
+        super().__init__()
+        self.in_channels = in_channels
+        self.nregion = act_dim
+        self.lin1 = nn.Linear(in_channels*self.nregion, hidden_size)
+        self.lin2 = nn.Linear(hidden_size, hidden_size)
+        self.lin3 = nn.Linear(hidden_size, hidden_size)
+        self.lin4 = nn.Linear(hidden_size, 2*self.nregion)
+
+    def forward(self, state, edge_index, deterministic=False):
+
+        x = state.reshape(-1, self.nregion * self.in_channels)
+        x = F.leaky_relu(self.lin1(x))
+        x = F.leaky_relu(self.lin2(x))
+        x = F.leaky_relu(self.lin3(x))
+        x = F.softplus(self.lin4(x))
+        concentration = x.squeeze(-1)
+        if deterministic:
+            action = (concentration[:,:self.nregion]-1)/(concentration[:,:self.nregion] + concentration[:,self.nregion:] -2 + 1e-10)
+            action = action.reshape(-1,self.nregion,1)
+        else:
+            m = Beta(concentration[:,:self.nregion] + 1e-10, concentration[:,self.nregion:] + 1e-10)
             action = m.rsample().squeeze(0)
             log_prob = m.log_prob(action).sum(dim=-1)   
             action = action.reshape(-1,self.nregion,self.nregion).squeeze(0)       
