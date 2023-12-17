@@ -371,6 +371,31 @@ class GNNCritic6(nn.Module):
         return x
     
 
+class GNNCritic4_1(nn.Module):
+    """
+    Architecture 4: GNN, Concatenation, FC, Readout
+    """
+
+    def __init__(self, in_channels, hidden_size=32, act_dim=6, mode=1):
+        super().__init__()
+        self.nregion = act_dim
+        self.conv1 = GCNConv(in_channels, in_channels)
+        self.lin1 = nn.Linear(in_channels + self.nregion, hidden_size)
+        self.lin2 = nn.Linear(hidden_size, hidden_size)
+        self.lin3 = nn.Linear(hidden_size, 1)
+        self.in_channels = in_channels
+
+    def forward(self, state, edge_index, action):
+        out = F.relu(self.conv1(state, edge_index))
+        x = out + state
+        x = x.reshape(-1, self.nregion, self.in_channels)  # (B,N,21)
+        concat = torch.cat([x, action], dim=-1)  # (B,N,22)
+        x = F.relu(self.lin1(concat))
+        x = F.relu(self.lin2(x))  # (B, N, H)
+        x = torch.sum(x, dim=1)  # (B, H)
+        x = self.lin3(x).squeeze(-1)  # (B)
+        return x
+    
 class MLPCritic4(nn.Module):
     """
     Architecture 4: OD-based action with MLP
