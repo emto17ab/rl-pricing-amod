@@ -111,7 +111,7 @@ class GNNActor1(nn.Module):
         super().__init__()
         self.in_channels = in_channels
         self.nregion = act_dim
-        self.hidden - hidden_size
+        self.hidden = hidden_size
         self.conv1 = GCNConv(in_channels, in_channels)
         self.lin1 = nn.Linear(in_channels, hidden_size)
         self.lin2 = nn.Linear(hidden_size*self.nregion, 2*self.nregion*self.nregion)
@@ -200,7 +200,7 @@ class MLPActor1(nn.Module):
             m = Beta(concentration[:,:self.nregion] + 1e-10, concentration[:,self.nregion:] + 1e-10)
             action = m.rsample().squeeze(0)
             log_prob = m.log_prob(action).sum(dim=-1)   
-            action = action.reshape(-1,self.nregion,self.nregion).squeeze(0)       
+            action = action.reshape(-1,self.nregion,1).squeeze(0)       
         return action, log_prob
 
 #########################################
@@ -373,7 +373,7 @@ class GNNCritic6(nn.Module):
 
 class GNNCritic4_1(nn.Module):
     """
-    Architecture 4: GNN, Concatenation, FC, Readout
+    Architecture 4: OD-based action with GNN
     """
 
     def __init__(self, in_channels, hidden_size=32, act_dim=6, mode=1):
@@ -405,6 +405,30 @@ class MLPCritic4(nn.Module):
         super().__init__()
         self.nregion = act_dim
         self.lin1 = nn.Linear(in_channels + self.nregion, hidden_size)
+        self.lin2 = nn.Linear(hidden_size, hidden_size)
+        self.lin3 = nn.Linear(hidden_size, hidden_size)
+        self.lin4 = nn.Linear(hidden_size, 1)
+        self.in_channels = in_channels
+
+    def forward(self, state, edge_index, action):
+        state = state.reshape(-1, self.nregion, self.in_channels)
+        concat = torch.cat([state, action], dim=-1)  # (B,N,22)
+        x = F.relu(self.lin1(concat))
+        x = F.relu(self.lin2(x))  # (B, N, H)
+        x = F.relu(self.lin3(x))  # (B, N, H)
+        x = torch.sum(x, dim=1)  # (B, H)
+        x = self.lin4(x).squeeze(-1)  # (B)
+        return x
+    
+class MLPCritic4_1(nn.Module):
+    """
+    Architecture 4: Origin-based action with MLP
+    """
+
+    def __init__(self, in_channels, hidden_size=128, act_dim=10, mode=1):
+        super().__init__()
+        self.nregion = act_dim
+        self.lin1 = nn.Linear(in_channels + 1, hidden_size)
         self.lin2 = nn.Linear(hidden_size, hidden_size)
         self.lin3 = nn.Linear(hidden_size, hidden_size)
         self.lin4 = nn.Linear(hidden_size, 1)

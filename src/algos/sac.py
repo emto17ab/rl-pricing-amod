@@ -10,7 +10,7 @@ from torch_geometric.nn import GCNConv
 from torch_geometric.utils import grid
 from src.algos.reb_flow_solver import solveRebFlow
 from src.misc.utils import dictsum
-from src.algos.layers import GNNActor, GNNActor1, MLPActor, GNNCritic1, GNNCritic2, GNNCritic3, GNNCritic4, GNNCritic5, GNNCritic6, MLPCritic4
+from src.algos.layers import GNNActor, GNNActor1, MLPActor, MLPActor1, GNNCritic1, GNNCritic2, GNNCritic3, GNNCritic4, GNNCritic5, GNNCritic6, MLPCritic4, MLPCritic4_1
 import random
 import json
 
@@ -164,8 +164,9 @@ class SAC(nn.Module):
 
         self.replay_buffer = ReplayData(device=device)
         # nnets
-        self.actor = GNNActor(self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode)
+        # self.actor = GNNActor(self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode)
         # self.actor = MLPActor(self.input_size,self.hidden_size, act_dim=self.act_dim)
+        self.actor = MLPActor1(self.input_size,self.hidden_size, act_dim=self.act_dim)
     
         if critic_version == 1:
             GNNCritic = GNNCritic1
@@ -174,8 +175,9 @@ class SAC(nn.Module):
         if critic_version == 3:
             GNNCritic = GNNCritic3
         if critic_version == 4:
-            GNNCritic = GNNCritic4
+            # GNNCritic = GNNCritic4
             # GNNCritic = MLPCritic4
+            GNNCritic = MLPCritic4_1
         if critic_version == 5:
             GNNCritic = GNNCritic5
         self.critic1 = GNNCritic(
