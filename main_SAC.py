@@ -297,10 +297,22 @@ parser.add_argument(
     help="critic version (default: 4)",
 )
 parser.add_argument(
+    "--price_version",
+    type=str,
+    default="GNN-origin",
+    help="price network version",
+)
+parser.add_argument(
     "--impute",
     type=bool,
     default=False,
     help="Whether impute the zero price (default: False)",
+)
+parser.add_argument(
+    "--supply_ratio",
+    type=float,
+    default=1.0,
+    help="supply scaling factor (default: 1)",
 )
 
 args = parser.parse_args()
@@ -317,7 +329,8 @@ if not args.test:
         sd=args.seed,
         json_tstep=args.json_tstep,
         tf=args.max_steps,
-        impute=args.impute
+        impute=args.impute,
+        supply_ratio=args.supply_ratio,
     )
 
     # d = {
@@ -355,6 +368,7 @@ if not args.test:
         use_automatic_entropy_tuning=False,
         clip=args.clip,
         critic_version=args.critic_version,
+        price_version = args.price_version,
         mode=args.mode,
         q_lag=args.q_lag
     ).to(device)

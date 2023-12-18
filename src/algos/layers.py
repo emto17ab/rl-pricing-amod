@@ -50,16 +50,9 @@ class GNNActor(nn.Module):
             if self.mode == 0:
                 action = (concentration) / (concentration.sum() + 1e-20)
             elif self.mode == 1:
-                # action_o = (concentration[:,:,0]-1)/(concentration[:,:,0] + concentration[:,:,1] -2 + 1e-20)
-                # action_d = (concentration[:,:,2]-1)/(concentration[:,:,2] + concentration[:,:,3] -2 + 1e-20)
-                # action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1)),-1)
                 action_o = (concentration[:,:,0]-1)/(concentration[:,:,0] + concentration[:,:,1] -2 + 1e-10)
                 action = action_o.squeeze(0).unsqueeze(-1)
             else:
-                # action_o = (concentration[:,:,0]-1)/(concentration[:,:,0] + concentration[:,:,1] -2 + 1e-20)
-                # action_d = (concentration[:,:,2]-1)/(concentration[:,:,2] + concentration[:,:,3] -2 + 1e-20)
-                # action_reb = (concentration[:,:,4]) / (concentration[:,:,4].sum() + 1e-20)
-                # action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1),action_reb.squeeze(0).unsqueeze(-1)),-1)
                 action_o = (concentration[:,:,0]-1)/(concentration[:,:,0] + concentration[:,:,1] -2 + 1e-10)
                 action_reb = (concentration[:,:,4]) / (concentration[:,:,4].sum() + 1e-10)
                 action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_reb.squeeze(0).unsqueeze(-1)),-1)
@@ -71,27 +64,11 @@ class GNNActor(nn.Module):
                 log_prob = m.log_prob(action)
                 action = action.squeeze(0).unsqueeze(-1)
             elif self.mode == 1:
-                # m_o = Beta(concentration[:,:,0] + 1e-20, concentration[:,:,1] + 1e-20)
-                # m_d = Beta(concentration[:,:,2] + 1e-20, concentration[:,:,3] + 1e-20)
-                # action_o = m_o.rsample()
-                # action_d = m_d.rsample()
-                # log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_d.log_prob(action_d).sum(dim=-1)
-                # action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1)),-1)
                 m_o = Beta(concentration[:,:,0] + 1e-10, concentration[:,:,1] + 1e-10)
                 action_o = m_o.rsample()
                 log_prob = m_o.log_prob(action_o).sum(dim=-1)
                 action = action_o.squeeze(0).unsqueeze(-1)             
-            else:
-                # Price
-                # m_o = Beta(concentration[:,:,0] + 1e-20, concentration[:,:,1] + 1e-20)
-                # m_d = Beta(concentration[:,:,2] + 1e-20, concentration[:,:,3] + 1e-20)
-                # action_o = m_o.rsample()
-                # action_d = m_d.rsample()
-                # # Rebalancing desired distribution
-                # m_reb = Dirichlet(concentration[:,:,-1] + 1e-20)
-                # action_reb = m_reb.rsample()              
-                # log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_d.log_prob(action_d).sum(dim=-1) + m_reb.log_prob(action_reb)
-                # action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1),action_reb.squeeze(0).unsqueeze(-1)),-1)         
+            else:        
                 m_o = Beta(concentration[:,:,0] + 1e-10, concentration[:,:,1] + 1e-10)
                 action_o = m_o.rsample()
                 # Rebalancing desired distribution
@@ -127,12 +104,6 @@ class GNNActor1(nn.Module):
         if deterministic:
             action = (concentration[:,:self.nregion*self.nregion]-1)/(concentration[:,:self.nregion*self.nregion] + concentration[:,self.nregion*self.nregion:] -2 + 1e-10)
         else:
-            # m_o = Beta(concentration[:,:,0] + 1e-20, concentration[:,:,1] + 1e-20)
-            # m_d = Beta(concentration[:,:,2] + 1e-20, concentration[:,:,3] + 1e-20)
-            # action_o = m_o.rsample()
-            # action_d = m_d.rsample()
-            # log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_d.log_prob(action_d).sum(dim=-1)
-            # action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1)),-1)
             m = Beta(concentration[:,:self.nregion*self.nregion] + 1e-10, concentration[:,self.nregion*self.nregion:] + 1e-10)
             action = m.rsample().squeeze(0)
             log_prob = m.log_prob(action).sum(dim=-1)

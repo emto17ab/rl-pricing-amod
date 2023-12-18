@@ -10,7 +10,7 @@ from torch_geometric.nn import GCNConv
 from torch_geometric.utils import grid
 from src.algos.reb_flow_solver import solveRebFlow
 from src.misc.utils import dictsum
-from src.algos.layers import GNNActor, GNNActor1, MLPActor, MLPActor1, GNNCritic1, GNNCritic2, GNNCritic3, GNNCritic4, GNNCritic5, GNNCritic6, MLPCritic4, MLPCritic4_1
+from src.algos.layers import GNNActor, GNNActor1, MLPActor, MLPActor1, GNNCritic1, GNNCritic2, GNNCritic3, GNNCritic4, GNNCritic4_1, GNNCritic5, GNNCritic6, MLPCritic4, MLPCritic4_1
 import random
 import json
 
@@ -122,6 +122,7 @@ class SAC(nn.Module):
         min_q_version=3,
         clip=200,
         critic_version=4,
+        price_version = "GNN-origin",
         mode = 1,
         q_lag = 10
     ):
@@ -134,6 +135,7 @@ class SAC(nn.Module):
         self.path = None
         self.act_dim = env.nregion
         self.mode = mode
+        self.price = price_version
 
         # SAC parameters
         self.alpha = alpha
@@ -164,9 +166,16 @@ class SAC(nn.Module):
 
         self.replay_buffer = ReplayData(device=device)
         # nnets
-        # self.actor = GNNActor(self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode)
-        # self.actor = MLPActor(self.input_size,self.hidden_size, act_dim=self.act_dim)
-        self.actor = MLPActor1(self.input_size,self.hidden_size, act_dim=self.act_dim)
+        if price_version == 'GNN-origin':
+            self.actor = GNNActor(self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode)
+        elif price_version == 'GNN-od':
+            self.actor = GNNActor1(self.input_size,self.hidden_size, act_dim=self.act_dim)
+        elif price_version == 'MLP-od':
+            self.actor = MLPActor(self.input_size,self.hidden_size, act_dim=self.act_dim)
+        elif price_version == 'MLP-origin':
+            self.actor = MLPActor1(self.input_size,self.hidden_size, act_dim=self.act_dim)
+        else:
+            raise ValueError("Price version only allowed among 'GNN-origin', 'GNN-od', 'MLP-origin', and 'MLP-od'.")
     
         if critic_version == 1:
             GNNCritic = GNNCritic1
@@ -175,9 +184,14 @@ class SAC(nn.Module):
         if critic_version == 3:
             GNNCritic = GNNCritic3
         if critic_version == 4:
-            # GNNCritic = GNNCritic4
-            # GNNCritic = MLPCritic4
-            GNNCritic = MLPCritic4_1
+            if price_version == 'GNN-origin':
+                GNNCritic = GNNCritic4
+            elif price_version == 'GNN-od':
+                GNNCritic = GNNCritic4_1
+            elif price_version == 'MLP-od':
+                GNNCritic = MLPCritic4
+            elif price_version == 'MLP-origin':
+                GNNCritic = MLPCritic4_1
         if critic_version == 5:
             GNNCritic = GNNCritic5
         self.critic1 = GNNCritic(
@@ -251,8 +265,7 @@ class SAC(nn.Module):
             data.edge_index_t,
             data.reward,
             # data.action.reshape(-1, self.nodes, self.mode+1),
-            data.action.reshape(-1, self.nodes, max(self.mode,1)),
-            # data.action.reshape(-1, self.nodes, self.nodes),
+            data.action.reshape(-1, self.nodes, max(self.mode,1)) if self.price.split('-')[1]=='origin' else  data.action.reshape(-1, self.nodes, self.nodes),
         )
 
         q1 = self.critic1(state_batch, edge_index, action_batch)
@@ -334,13 +347,10 @@ class SAC(nn.Module):
             p.requires_grad = False
 
         # one gradient descent step for policy network
-        with autograd.detect_anomaly():
-            self.optimizers["a_optimizer"].zero_grad()
-            loss_pi = self.compute_loss_pi(data)
-            loss_pi.backward(retain_graph=False)
+        self.optimizers["a_optimizer"].zero_grad()
+        loss_pi = self.compute_loss_pi(data)
+        loss_pi.backward(retain_graph=False)
         actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), 10)
-        if torch.isnan(actor_grad_norm).any():
-            print("Nan graidient after clip!")
         self.optimizers["a_optimizer"].step()
 
         # Unfreeze Q-networks
