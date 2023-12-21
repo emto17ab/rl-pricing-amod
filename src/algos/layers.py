@@ -54,7 +54,7 @@ class GNNActor(nn.Module):
                 action = action_o.squeeze(0).unsqueeze(-1)
             else:
                 action_o = (concentration[:,:,0]-1)/(concentration[:,:,0] + concentration[:,:,1] -2 + 1e-10)
-                action_reb = (concentration[:,:,4]) / (concentration[:,:,4].sum() + 1e-10)
+                action_reb = (concentration[:,:,2]) / (concentration[:,:,2].sum() + 1e-10)
                 action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_reb.squeeze(0).unsqueeze(-1)),-1)
             log_prob = None
         else:
@@ -151,10 +151,16 @@ class MLPActor1(nn.Module):
         super().__init__()
         self.in_channels = in_channels
         self.nregion = act_dim
+        self.mode = mode
         self.lin1 = nn.Linear(in_channels*self.nregion, hidden_size)
         self.lin2 = nn.Linear(hidden_size, hidden_size)
         self.lin3 = nn.Linear(hidden_size, hidden_size)
-        self.lin4 = nn.Linear(hidden_size, 2*self.nregion)
+        if self.mode == 0:
+            self.lin4 = nn.Linear(hidden_size, self.nregion)
+        elif self.mode == 1:
+            self.lin4 = nn.Linear(hidden_size, 2*self.nregion)
+        else:
+            self.lin4 = nn.Linear(hidden_size, 3*self.nregion)
 
     def forward(self, state, edge_index, deterministic=False):
 
@@ -165,13 +171,36 @@ class MLPActor1(nn.Module):
         x = F.softplus(self.lin4(x))
         concentration = x.squeeze(-1)
         if deterministic:
-            action = (concentration[:,:self.nregion]-1)/(concentration[:,:self.nregion] + concentration[:,self.nregion:] -2 + 1e-10)
-            action = action.reshape(-1,self.nregion,1)
+            if self.mode == 0:
+                action = (concentration) / (concentration.sum() + 1e-20)
+                action = action.reshape(-1,self.nregion,1)
+            elif self.mode == 1:
+                action = (concentration[:,:self.nregion]-1)/(concentration[:,:self.nregion] + concentration[:,self.nregion:] -2 + 1e-10)
+                action = action.reshape(-1,self.nregion,1)
+            else:
+                action_o = (concentration[:,:self.nregion]-1)/(concentration[:,:self.nregion] + concentration[:,self.nregion:2*self.nregion] -2 + 1e-10)
+                action_reb = (concentration[:,2*self.nregion:]) / (concentration[:,2*self.nregion:].sum() + 1e-10)
+                action = torch.cat((action_o.reshape(-1,self.nregion,1), action_reb.reshape(-1,self.nregion,1)),-1)
+            log_prob = None
         else:
-            m = Beta(concentration[:,:self.nregion] + 1e-10, concentration[:,self.nregion:] + 1e-10)
-            action = m.rsample().squeeze(0)
-            log_prob = m.log_prob(action).sum(dim=-1)   
-            action = action.reshape(-1,self.nregion,1).squeeze(0)       
+            if self.mode == 0:
+                m = Dirichlet(concentration + 1e-20)
+                action = m.rsample()
+                log_prob = m.log_prob(action)
+                action = action.reshape(-1,self.nregion,1).squeeze(0)
+            elif self.mode == 1:
+                m = Beta(concentration[:,:self.nregion] + 1e-10, concentration[:,self.nregion:] + 1e-10)
+                action = m.rsample().squeeze(0)
+                log_prob = m.log_prob(action).sum(dim=-1)   
+                action = action.reshape(-1,self.nregion,1).squeeze(0)                
+            else:        
+                m_o = Beta(concentration[:,:self.nregion] + 1e-10, concentration[:,self.nregion:2*self.nregion] + 1e-10)
+                action_o = m_o.rsample().squeeze(0)
+                # Rebalancing desired distribution
+                m_reb = Dirichlet(concentration[:,2*self.nregion:] + 1e-10)
+                action_reb = m_reb.rsample().squeeze(0)              
+                log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_reb.log_prob(action_reb)
+                action = torch.cat((action_o.reshape(-1,self.nregion,1).squeeze(0), action_reb.reshape(-1,self.nregion,1).squeeze(0)),-1)       
         return action, log_prob
 
 #########################################
@@ -399,7 +428,12 @@ class MLPCritic4_1(nn.Module):
     def __init__(self, in_channels, hidden_size=128, act_dim=10, mode=1):
         super().__init__()
         self.nregion = act_dim
-        self.lin1 = nn.Linear(in_channels + 1, hidden_size)
+        if (mode == 0) | (mode == 1):
+            self.lin1 = nn.Linear(self.nregion*(in_channels + 1), hidden_size)
+            self.nfeatures = in_channels + 1
+        else:
+            self.lin1 = nn.Linear(self.nregion*(in_channels + 2), hidden_size)
+            self.nfeatures = in_channels + 2
         self.lin2 = nn.Linear(hidden_size, hidden_size)
         self.lin3 = nn.Linear(hidden_size, hidden_size)
         self.lin4 = nn.Linear(hidden_size, 1)
@@ -408,9 +442,9 @@ class MLPCritic4_1(nn.Module):
     def forward(self, state, edge_index, action):
         state = state.reshape(-1, self.nregion, self.in_channels)
         concat = torch.cat([state, action], dim=-1)  # (B,N,22)
-        x = F.relu(self.lin1(concat))
+        x = concat.reshape(-1, self.nregion * self.nfeatures)
+        x = F.relu(self.lin1(x))
         x = F.relu(self.lin2(x))  # (B, N, H)
         x = F.relu(self.lin3(x))  # (B, N, H)
-        x = torch.sum(x, dim=1)  # (B, H)
         x = self.lin4(x).squeeze(-1)  # (B)
         return x

@@ -153,9 +153,9 @@ parser.add_argument(
 parser.add_argument(
     "--demand_ratio",
     type=float,
-    default=0.5,
+    default=1,
     metavar="S",
-    help="demand_ratio (default: 0.5)",
+    help="demand_ratio (default: 1)",
 )
 parser.add_argument(
     "--json_hr", type=int, default=7, metavar="S", help="json_hr (default: 7)"
@@ -170,7 +170,7 @@ parser.add_argument(
 parser.add_argument(
     '--mode', 
     type=int, 
-    default=1,
+    default=2,
     help='rebalancing mode. (0:manul, 1:pricing, 2:both. default 1)',
 )
 
@@ -299,7 +299,7 @@ parser.add_argument(
 parser.add_argument(
     "--price_version",
     type=str,
-    default="GNN-origin",
+    default="MLP-origin",
     help="price network version",
 )
 parser.add_argument(
@@ -602,6 +602,7 @@ else:
         use_automatic_entropy_tuning=False,
         clip=args.clip,
         critic_version=args.critic_version,
+        price_version = args.price_version,
         mode=args.mode,
         q_lag=args.q_lag
     ).to(device)

@@ -169,11 +169,11 @@ class SAC(nn.Module):
         if price_version == 'GNN-origin':
             self.actor = GNNActor(self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode)
         elif price_version == 'GNN-od':
-            self.actor = GNNActor1(self.input_size,self.hidden_size, act_dim=self.act_dim)
+            self.actor = GNNActor1(self.input_size,self.hidden_size, act_dim=self.act_dim, mode=mode)
         elif price_version == 'MLP-od':
-            self.actor = MLPActor(self.input_size,self.hidden_size, act_dim=self.act_dim)
+            self.actor = MLPActor(self.input_size,self.hidden_size, act_dim=self.act_dim, mode=mode)
         elif price_version == 'MLP-origin':
-            self.actor = MLPActor1(self.input_size,self.hidden_size, act_dim=self.act_dim)
+            self.actor = MLPActor1(self.input_size,self.hidden_size, act_dim=self.act_dim, mode=mode)
         else:
             raise ValueError("Price version only allowed among 'GNN-origin', 'GNN-od', 'MLP-origin', and 'MLP-od'.")
     
