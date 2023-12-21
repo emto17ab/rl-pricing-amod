@@ -299,7 +299,7 @@ parser.add_argument(
 parser.add_argument(
     "--price_version",
     type=str,
-    default="MLP-origin",
+    default="GNN-origin",
     help="price network version",
 )
 parser.add_argument(
@@ -686,7 +686,7 @@ else:
 
                 episode_reward += paxreward
 
-                action_rl = model.select_action(o)  
+                action_rl = model.select_action(o, deterministic=True)  
 
                 env.matching_update()
             elif env.mode == 2:
@@ -695,7 +695,7 @@ else:
                 o = parser.parse_obs(obs=obs)
                 episode_reward += paxreward
 
-                action_rl = model.select_action(o)
+                action_rl = model.select_action(o, deterministic=True)
 
                 # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
                 desiredAcc = {
