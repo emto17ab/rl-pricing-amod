@@ -109,7 +109,7 @@ class GNNParser:
 
 
 # Define calibrated simulation parameters
-demand_ratio = {'san_francisco': 1, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1,
+demand_ratio = {'san_francisco': 1, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1.8,
                 'nyc_man_south': 1.8, 'nyc_brooklyn': 9, 'porto': 4, 'rome': 1.8, 'shenzhen_baoan': 2.5,
                 'shenzhen_downtown_west': 2.5, 'shenzhen_downtown_east': 3, 'shenzhen_north': 3
                }
@@ -191,6 +191,19 @@ parser.add_argument(
     default=False,
     help="Whether impute the zero price (default: False)",
 )
+parser.add_argument(
+    "--supply_ratio",
+    type=float,
+    default=1.0,
+    help="supply scaling factor (default: 1)",
+)
+parser.add_argument(
+    "--demand_ratio",
+    type=float,
+    default=0.5,
+    metavar="S",
+    help="demand_ratio (default: 0.5)",
+)
 
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
@@ -200,12 +213,13 @@ city = args.city
 
 scenario = Scenario(
     json_file=f"data/scenario_{city}.json",
-    demand_ratio=demand_ratio[city],
+    demand_ratio=args.demand_ratio,
     json_hr=json_hr[city],
     sd=args.seed,
     json_tstep=args.json_tstep,
     tf=args.max_steps,
-    impute=args.impute
+    impute=args.impute,
+    supply_ratio=args.supply_ratio,
 )
 
 env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt)

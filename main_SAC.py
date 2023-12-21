@@ -130,7 +130,7 @@ class GNNParser:
 
 
 # Define calibrated simulation parameters
-demand_ratio = {'san_francisco': 1, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1,
+demand_ratio = {'san_francisco': 1, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1.8,
                 'nyc_man_south': 1.8, 'nyc_brooklyn': 9, 'porto': 4, 'rome': 1.8, 'shenzhen_baoan': 2.5,
                 'shenzhen_downtown_west': 2.5, 'shenzhen_downtown_east': 3, 'shenzhen_north': 3
                }
@@ -152,7 +152,7 @@ parser.add_argument(
 )
 parser.add_argument(
     "--demand_ratio",
-    type=int,
+    type=float,
     default=0.5,
     metavar="S",
     help="demand_ratio (default: 0.5)",
@@ -324,7 +324,7 @@ city = args.city
 if not args.test:
     scenario = Scenario(
         json_file=f"data/scenario_{city}.json",
-        demand_ratio=demand_ratio[city],
+        demand_ratio=args.demand_ratio,
         json_hr=json_hr[city],
         sd=args.seed,
         json_tstep=args.json_tstep,
@@ -558,12 +558,13 @@ if not args.test:
 else:
     scenario = Scenario(
         json_file=f"data/scenario_{city}.json",
-        demand_ratio=demand_ratio[city],
+        demand_ratio=args.demand_ratio,
         json_hr=json_hr[city],
         sd=args.seed,
         json_tstep=test_tstep[city],
         tf=args.max_steps,
-        impute=args.impute
+        impute=args.impute,
+        supply_ratio=args.supply_ratio
     )
 
     # d = {
