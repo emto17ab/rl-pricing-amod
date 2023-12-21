@@ -404,7 +404,7 @@ class MLPCritic4(nn.Module):
     def __init__(self, in_channels, hidden_size=128, act_dim=10, mode=1):
         super().__init__()
         self.nregion = act_dim
-        self.lin1 = nn.Linear(in_channels + self.nregion, hidden_size)
+        self.lin1 = nn.Linear(self.nregion*(in_channels + self.nregion), hidden_size)
         self.lin2 = nn.Linear(hidden_size, hidden_size)
         self.lin3 = nn.Linear(hidden_size, hidden_size)
         self.lin4 = nn.Linear(hidden_size, 1)
@@ -413,7 +413,8 @@ class MLPCritic4(nn.Module):
     def forward(self, state, edge_index, action):
         state = state.reshape(-1, self.nregion, self.in_channels)
         concat = torch.cat([state, action], dim=-1)  # (B,N,22)
-        x = F.relu(self.lin1(concat))
+        x = concat.reshape(-1, self.nregion*(self.in_channels + self.nregion))
+        x = F.relu(self.lin1(x))
         x = F.relu(self.lin2(x))  # (B, N, H)
         x = F.relu(self.lin3(x))  # (B, N, H)
         x = torch.sum(x, dim=1)  # (B, H)
