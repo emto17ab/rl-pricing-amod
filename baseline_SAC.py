@@ -200,7 +200,7 @@ parser.add_argument(
 parser.add_argument(
     "--demand_ratio",
     type=float,
-    default=0.5,
+    default=1.0,
     metavar="S",
     help="demand_ratio (default: 0.5)",
 )

@@ -417,7 +417,6 @@ class MLPCritic4(nn.Module):
         x = F.relu(self.lin1(x))
         x = F.relu(self.lin2(x))  # (B, N, H)
         x = F.relu(self.lin3(x))  # (B, N, H)
-        x = torch.sum(x, dim=1)  # (B, H)
         x = self.lin4(x).squeeze(-1)  # (B)
         return x
     
