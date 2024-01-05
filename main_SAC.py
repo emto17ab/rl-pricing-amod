@@ -304,8 +304,8 @@ parser.add_argument(
 )
 parser.add_argument(
     "--impute",
-    type=bool,
-    default=False,
+    type=int,
+    default=0,
     help="Whether impute the zero price (default: False)",
 )
 parser.add_argument(
@@ -324,7 +324,7 @@ city = args.city
 if not args.test:
     scenario = Scenario(
         json_file=f"data/scenario_{city}.json",
-        demand_ratio=args.demand_ratio,
+        demand_ratio=demand_ratio[city],
         json_hr=json_hr[city],
         sd=args.seed,
         json_tstep=args.json_tstep,
@@ -558,7 +558,7 @@ if not args.test:
 else:
     scenario = Scenario(
         json_file=f"data/scenario_{city}.json",
-        demand_ratio=args.demand_ratio,
+        demand_ratio=demand_ratio[city],
         json_hr=json_hr[city],
         sd=args.seed,
         json_tstep=test_tstep[city],

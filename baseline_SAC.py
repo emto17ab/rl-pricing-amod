@@ -213,7 +213,7 @@ city = args.city
 
 scenario = Scenario(
     json_file=f"data/scenario_{city}.json",
-    demand_ratio=args.demand_ratio,
+    demand_ratio=demand_ratio[city],
     json_hr=json_hr[city],
     sd=args.seed,
     json_tstep=args.json_tstep,
