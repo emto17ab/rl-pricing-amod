@@ -588,7 +588,7 @@ class SAC(nn.Module):
 
         return optimizers
 
-    def test_agent(self, test_episodes, env, cplexpath, directory, parser):
+    def test_agent(self, test_episodes, env, cplexpath, directory):
         epochs = range(test_episodes)  # epoch iterator
         episode_reward = []
         episode_served_demand = []
@@ -599,7 +599,6 @@ class SAC(nn.Module):
             eps_rebalancing_cost = 0
             obs = env.reset()
             action_rl = [0]*env.nregion
-            actions = []
             done = False
             while not done:
 
@@ -609,11 +608,10 @@ class SAC(nn.Module):
                     #                 CPLEXPATH=args.cplexpath, directory=args.directory, PATH="scenario_san_francisco4"
                     #             )
 
-                    o = parser.parse_obs(obs=obs)
+                    o = self.parse_obs(obs=obs)
                     eps_reward += paxreward
 
                     action_rl = self.select_action(o, deterministic=True)
-                    actions.append(action_rl)
 
                     # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
                     desiredAcc = {
@@ -636,7 +634,7 @@ class SAC(nn.Module):
                 elif env.mode == 1:
                     obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
 
-                    o = parser.parse_obs(obs=obs)
+                    o = self.parse_obs(obs=obs)
 
                     eps_reward += paxreward
 
@@ -646,7 +644,7 @@ class SAC(nn.Module):
                 elif env.mode == 2:
                     obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
 
-                    o = parser.parse_obs(obs=obs)
+                    o = self.parse_obs(obs=obs)
                     eps_reward += paxreward
 
                     action_rl = self.select_action(o)

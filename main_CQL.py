@@ -10,7 +10,8 @@ from src.misc.utils import dictsum, nestdictsum
 import random
 import json, pickle
 from torch_geometric.data import Data, Batch
-import copy, os
+import copy
+import logging
 
 
 def return_to_go(rewards):
@@ -394,7 +395,7 @@ parser.add_argument(
 parser.add_argument(
     "--city",
     type=str,
-    default="san_francisco",
+    default="nyc_brooklyn",
     help="city to train on",
 )
 parser.add_argument(
@@ -445,6 +446,7 @@ args.cuda = not args.no_cuda and torch.cuda.is_available()
 device = torch.device("cuda" if args.cuda else "cpu")
 city = args.city
 
+logging.basicConfig(format='%(asctime)s - %(message)s', level=logging.INFO)
 
 if args.collection:
     scenario = Scenario(
@@ -693,8 +695,9 @@ elif not args.test:
 
 
     for step in range(training_steps):
-        if step % 50 == 0:
-            print(f"Step {step}")
+        if step % 20 == 0:
+            test_reward, test_served_demand, test_reb_cost = model.test_agent(10, env, args.cplexpath, args.directory)
+            logging.info(f"Training step {step} | Reward: {test_reward} | Served Demand: {test_served_demand} | Rebalancing Cost: {test_reb_cost}")
 
         batch = Dataset.sample_batch(args.batch_size)
         model.update(data=batch, conservative=True,
@@ -707,11 +710,12 @@ else:
         demand_ratio=demand_ratio[city],
         json_hr=json_hr[city],
         sd=args.seed,
-        json_tstep=test_tstep[city],
+        json_tstep=args.json_tstep,
         tf=args.max_steps,
         impute=args.impute,
-        supply_ratio=args.supply_ratio
+        supply_ratio=args.supply_ratio,
     )
+
 
     env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt)
 
@@ -733,9 +737,9 @@ else:
     ).to(device)
 
     print("load model")
-    model.load_checkpoint(path=f"ckpt/{args.checkpoint_path}.pth")
+    model.load_checkpoint(path=f"ckpt/buffer/{args.checkpoint_path}.pth")
 
-    test_episodes = args.max_episodes  # set max number of training episodes
+    test_episodes = args.max_episodes  # set max number of testing episodes
     T = args.max_steps  # set episode length
     epochs = trange(test_episodes)  # epoch iterator
     # Initialize lists for logging
@@ -746,14 +750,14 @@ else:
     costs = []
     arrivals = []
 
-    demand_original_steps = []
-    demand_scaled_steps = []
-    reb_steps = []
-    actions_step = []
-    available_steps = []
-    rebalancing_cost_steps = []
-    price_original_steps = []
-    queue_steps = []
+    # demand_original_steps = []
+    # demand_scaled_steps = []
+    # reb_steps = []
+    # actions_step = []
+    # available_steps = []
+    # rebalancing_cost_steps = []
+    # price_original_steps = []
+    # queue_steps = []
 
     for episode in range(10):
         actions = []
@@ -765,8 +769,8 @@ else:
         episode_rebalancing_cost = 0
         obs = env.reset()
         # Original demand and price
-        demand_original_steps.append(env.demand)
-        price_original_steps.append(env.price)
+        # demand_original_steps.append(env.demand)
+        # price_original_steps.append(env.price)
 
         action_rl = [0]*env.nregion        
         done = False
@@ -778,7 +782,7 @@ else:
                 #                 CPLEXPATH=args.cplexpath, directory=args.directory, PATH="scenario_san_francisco4"
                 #             )
 
-                o = parser.parse_obs(obs=obs)
+                o = model.parse_obs(obs=obs)
                 episode_reward += paxreward
 
                 action_rl = model.select_action(o, deterministic=True)
@@ -807,7 +811,7 @@ else:
             elif env.mode == 1:
                 obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
 
-                o = parser.parse_obs(obs=obs)
+                o = model.parse_obs(obs=obs)
 
                 episode_reward += paxreward
 
@@ -817,7 +821,7 @@ else:
             elif env.mode == 2:
                 obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
 
-                o = parser.parse_obs(obs=obs)
+                o = model.parse_obs(obs=obs)
                 episode_reward += paxreward
 
                 action_rl = model.select_action(o, deterministic=True)
@@ -852,12 +856,12 @@ else:
             f"Episode {episode+1} | Reward: {episode_reward:.2f} | ServedDemand: {episode_served_demand:.2f} | Reb. Cost: {episode_rebalancing_cost}"
         )
         # Log KPIs
-        demand_scaled_steps.append(env.demand)
-        available_steps.append(env.acc)
-        reb_steps.append(env.rebFlow)
-        actions_step.append(actions)
-        rebalancing_cost_steps.append(rebalancing_cost)
-        queue_steps.append(queue)
+        # demand_scaled_steps.append(env.demand)
+        # available_steps.append(env.acc)
+        # reb_steps.append(env.rebFlow)
+        # actions_step.append(actions)
+        # rebalancing_cost_steps.append(rebalancing_cost)
+        # queue_steps.append(queue)
 
         rewards.append(episode_reward)
         demands.append(episode_served_demand)
@@ -865,23 +869,23 @@ else:
         arrivals.append(env.arrivals)
 
     # Save metrics file
-    np.save(f"{args.directory}/{city}_actions_mode{args.mode}.npy", np.array(actions_step))
-    np.save(f"{args.directory}/{city}_queue_mode{args.mode}.npy", np.array(queue_steps))
-    np.save(f"{args.directory}/{city}_served_mode{args.mode}.npy", np.array([demands,arrivals]))
-    if env.mode != 1: 
-        np.save(f"{args.directory}/{city}_cost_mode{args.mode}.npy", np.array(rebalancing_cost_steps))
-        with open(f"{args.directory}/{city}_reb_mode{args.mode}.pickle", 'wb') as f:
-            pickle.dump(reb_steps, f)                    
+    # np.save(f"{args.directory}/{city}_actions_mode{args.mode}.npy", np.array(actions_step))
+    # np.save(f"{args.directory}/{city}_queue_mode{args.mode}.npy", np.array(queue_steps))
+    # np.save(f"{args.directory}/{city}_served_mode{args.mode}.npy", np.array([demands,arrivals]))
+    # if env.mode != 1: 
+    #     np.save(f"{args.directory}/{city}_cost_mode{args.mode}.npy", np.array(rebalancing_cost_steps))
+    #     with open(f"{args.directory}/{city}_reb_mode{args.mode}.pickle", 'wb') as f:
+    #         pickle.dump(reb_steps, f)                    
     
-    with open(f"{args.directory}/{city}_demand_ori_mode{args.mode}.pickle", 'wb') as f:
-        pickle.dump(demand_original_steps, f)
-    with open(f"{args.directory}/{city}_price_ori_mode{args.mode}.pickle", 'wb') as f:
-        pickle.dump(price_original_steps, f)
+    # with open(f"{args.directory}/{city}_demand_ori_mode{args.mode}.pickle", 'wb') as f:
+    #     pickle.dump(demand_original_steps, f)
+    # with open(f"{args.directory}/{city}_price_ori_mode{args.mode}.pickle", 'wb') as f:
+    #     pickle.dump(price_original_steps, f)
 
-    with open(f"{args.directory}/{city}_demand_scaled_mode{args.mode}.pickle", 'wb') as f:
-        pickle.dump(demand_scaled_steps, f)    
-    with open(f"{args.directory}/{city}_acc_mode{args.mode}.pickle", 'wb') as f:
-        pickle.dump(available_steps, f)
+    # with open(f"{args.directory}/{city}_demand_scaled_mode{args.mode}.pickle", 'wb') as f:
+    #     pickle.dump(demand_scaled_steps, f)    
+    # with open(f"{args.directory}/{city}_acc_mode{args.mode}.pickle", 'wb') as f:
+    #     pickle.dump(available_steps, f)
 
     print("Rewards (mean, std):", np.mean(rewards), np.std(rewards))
     print("Served demand (mean, std):", np.mean(demands), np.std(demands))
