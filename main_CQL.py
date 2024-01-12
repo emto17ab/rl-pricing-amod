@@ -693,7 +693,7 @@ elif not args.test:
     best_reward = -np.inf  # set best reward
     model.train()  # set model in train mode
 
-
+    logging.info("Training start")
     for step in range(training_steps):
         if step % 20 == 0:
             test_reward, test_served_demand, test_reb_cost = model.test_agent(10, env, args.cplexpath, args.directory)

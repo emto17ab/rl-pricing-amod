@@ -534,7 +534,7 @@ if not args.test:
             model.save_checkpoint(
                 path=f"ckpt/{args.checkpoint_path}_sample.pth")
             best_reward = episode_reward
-        model.save_checkpoint(path=f"ckpt/{args.checkpoint_path}_running.pth")
+        # model.save_checkpoint(path=f"ckpt/{args.checkpoint_path}_running.pth")
         if i_episode % 10 == 0:
             test_reward, test_served_demand, test_rebalancing_cost = model.test_agent(
                 1, env, args.cplexpath, args.directory, parser=parser
@@ -543,6 +543,8 @@ if not args.test:
                 best_reward_test = test_reward
                 model.save_checkpoint(
                     path=f"ckpt/{args.checkpoint_path}_test.pth")
+        if i_episode>0 and i_episode<2000 and i_episode % 200 == 0:
+            model.save_checkpoint(path=f"ckpt/{args.checkpoint_path}_running_{i_episode}.pth")          
     # Save metrics file
     metricPath = f"{args.directory}/train_logs/"
     if not os.path.exists(metricPath):
