@@ -6,7 +6,6 @@ This file contains the specifications for the AMoD system simulator.
 from collections import defaultdict
 from sklearn.neighbors import KNeighborsRegressor
 import numpy as np
-import random
 import subprocess
 import os
 import networkx as nx
@@ -15,6 +14,7 @@ from src.misc.helper_functions import demand_update
 from src.envs.structures import generate_passenger
 from copy import deepcopy
 import json
+import random
 
 
 class AMoD:

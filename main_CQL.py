@@ -696,7 +696,7 @@ elif not args.test:
     logging.info("Training start")
     for step in range(training_steps):
         if step % 20 == 0:
-            test_reward, test_served_demand, test_reb_cost = model.test_agent(10, env, args.cplexpath, args.directory)
+            test_reward, test_served_demand, test_reb_cost = model.test_agent(5, env, args.cplexpath, args.directory)
             logging.info(f"Training step {step} | Reward: {test_reward} | Served Demand: {test_served_demand} | Rebalancing Cost: {test_reb_cost}")
 
         batch = Dataset.sample_batch(args.batch_size)
@@ -737,7 +737,7 @@ else:
     ).to(device)
 
     print("load model")
-    model.load_checkpoint(path=f"ckpt/buffer/{args.checkpoint_path}.pth")
+    model.load_checkpoint(path=f"ckpt/{args.checkpoint_path}.pth")
 
     test_episodes = args.max_episodes  # set max number of testing episodes
     T = args.max_steps  # set episode length
