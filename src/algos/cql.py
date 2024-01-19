@@ -162,7 +162,7 @@ class SAC(nn.Module):
         q_lr=1e-3,
         use_automatic_entropy_tuning=False,
         lagrange_thresh=-1,
-        min_q_weight=10,
+        min_q_weight=1,
         deterministic_backup=True,
         eps=np.finfo(np.float32).eps.item(),
         device=torch.device("cpu"),
@@ -480,6 +480,11 @@ class SAC(nn.Module):
             min_qf1_loss = min_qf1_loss - q1.mean() * self.min_q_weight
             min_qf2_loss = min_qf2_loss - q2.mean() * self.min_q_weight
 
+            # log metrics
+            log = {"Bellman loss Q1":loss_q1.item(),"Regularizor loss Q1":(min_qf1_loss/self.min_q_weight).item(),
+                   "Bellman loss Q2":loss_q2.item(),"Regularizor loss Q2":(min_qf2_loss/self.min_q_weight).item(),
+                   "Q1":torch.mean(q1).item(),"Q2":torch.mean(q2).item(),}
+
             if self.with_lagrange:
                 alpha_prime = torch.clamp(
                     torch.exp(self.log_alpha_prime()), min=0.0, max=1000000.0
@@ -497,7 +502,7 @@ class SAC(nn.Module):
             loss_q1 = loss_q1 + min_qf1_loss
             loss_q2 = loss_q2 + min_qf2_loss        
 
-        return loss_q1, loss_q2, q1, q2
+        return loss_q1, loss_q2, q1, q2, log
 
     def compute_loss_pi(self, data):
         state_batch, edge_index = (
@@ -526,7 +531,7 @@ class SAC(nn.Module):
     def update(self, data, conservative=False, enable_calql=False):
         self.lag += 1
 
-        loss_q1, loss_q2, _, _ = self.compute_loss_q(data, conservative, enable_calql)
+        loss_q1, loss_q2, _, _, log = self.compute_loss_q(data, conservative, enable_calql)
 
         self.optimizers["c1_optimizer"].zero_grad()
         loss_q1.backward(retain_graph=True)
@@ -573,6 +578,8 @@ class SAC(nn.Module):
                     p_targ.data.add_((1 - self.polyak) * p.data)
                     
             self.lag = 0
+        
+        return log
 
 
     def configure_optimizers(self):

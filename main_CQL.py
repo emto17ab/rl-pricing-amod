@@ -316,8 +316,8 @@ parser.add_argument(
 )
 parser.add_argument(
     "--no-cuda", 
-    type=bool, 
-    default=True,
+    type=int, 
+    default=1,
     help="disables CUDA training",
 )
 parser.add_argument(
@@ -353,8 +353,8 @@ parser.add_argument(
 parser.add_argument(
     "--checkpoint_path",
     type=str,
-    default="SAC",
-    help="name of checkpoint file to save/load (default: SAC)",
+    default="CQL",
+    help="name of checkpoint file to save/load (default: CQL)",
 )
 parser.add_argument(
     "--clip",
@@ -371,7 +371,7 @@ parser.add_argument(
 parser.add_argument(
     "--memory_path",
     type=str,
-    default="Replaymemory_shenzhen_downtown_west_M",
+    default="nyc_brooklyn",
     help="name of the offline dataset file",
 )
 parser.add_argument(
@@ -431,7 +431,7 @@ parser.add_argument(
 parser.add_argument(
     "--enable_calql",
     type=bool,
-    default=True,
+    default=False,
     help="enable the Cal-CQL (default: False)",
 )
 parser.add_argument(
@@ -653,6 +653,7 @@ elif not args.test:
         batch_size=args.batch_size,
         use_automatic_entropy_tuning=False,
         lagrange_thresh=args.lagrange_thresh,
+        min_q_weight=args.min_q_weight,
         device=device,
         json_file=f'data/scenario_{city}.json',
         min_q_version=3,
@@ -685,8 +686,6 @@ elif not args.test:
         sc=args.sc,
     )
 
-    log = {"train_reward": [], "train_served_demand": [], "train_reb_cost": []}
-
     train_episodes = args.max_episodes  # set max number of training episodes
     T = args.max_steps  # set episode length
     training_steps = train_episodes * 20
@@ -695,13 +694,18 @@ elif not args.test:
 
     logging.info("Training start")
     for step in range(training_steps):
-        if step % 20 == 0:
-            test_reward, test_served_demand, test_reb_cost = model.test_agent(5, env, args.cplexpath, args.directory)
-            logging.info(f"Training step {step} | Reward: {test_reward} | Served Demand: {test_served_demand} | Rebalancing Cost: {test_reb_cost}")
 
         batch = Dataset.sample_batch(args.batch_size)
-        model.update(data=batch, conservative=True,
+        log = model.update(data=batch, conservative=True,
                      enable_calql=args.enable_calql)
+        
+        if step % 400 == 0:
+            test_reward, test_served_demand, test_reb_cost = model.test_agent(10, env, args.cplexpath, args.directory)
+            if test_reward > best_reward:
+                best_reward = test_reward
+                model.save_checkpoint(path=f"ckpt/offline/" + args.checkpoint_path + "_test.pth")
+            logging.info(f"Training step {step} | Reward: {test_reward} | Q1 loss1: {log['Bellman loss Q1']} | Q1 loss2: {log['Regularizor loss Q1']} | Q1:{log['Q1']} | Q2 loss1: {log['Bellman loss Q2']} | Q2 loss2: {log['Regularizor loss Q2']} | Q2:{log['Q2']}")
+        
         model.save_checkpoint(path=f"ckpt/offline/" + args.checkpoint_path + ".pth")
 
 else:
