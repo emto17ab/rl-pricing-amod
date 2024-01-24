@@ -102,6 +102,7 @@ class GNNActor1(nn.Module):
         concentration = x.squeeze(-1)
         if deterministic:
             action = (concentration[:,:,:self.nregion]-1)/(concentration[:,:,:self.nregion] + concentration[:,:,self.nregion:] -2 + 1e-10)
+            action = action.squeeze(0)
             log_prob = None
         else:
             m = Beta(concentration[:,:,:self.nregion] + 1e-10, concentration[:,:,self.nregion:] + 1e-10)

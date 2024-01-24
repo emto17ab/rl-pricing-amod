@@ -170,7 +170,7 @@ parser.add_argument(
 parser.add_argument(
     '--mode', 
     type=int, 
-    default=2,
+    default=1,
     help='rebalancing mode. (0:manul, 1:pricing, 2:both. default 1)',
 )
 
@@ -299,7 +299,7 @@ parser.add_argument(
 parser.add_argument(
     "--price_version",
     type=str,
-    default="GNN-origin",
+    default="GNN-od",
     help="price network version",
 )
 parser.add_argument(
@@ -459,7 +459,7 @@ if not args.test:
                         obs1, action_rl, args.rew_scale * rl_reward, o
                     )
 
-                action_rl = model.select_action(o,deterministic=True)  
+                action_rl = model.select_action(o)  
 
                 env.matching_update()
             elif env.mode == 2:
