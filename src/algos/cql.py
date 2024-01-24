@@ -615,7 +615,7 @@ class SAC(nn.Module):
                     #                 CPLEXPATH=args.cplexpath, directory=args.directory, PATH="scenario_san_francisco4"
                     #             )
 
-                    o = self.parse_obs(obs=obs)
+                    o = self.parse_obs(obs=obs).to(self.device)
                     eps_reward += paxreward
 
                     action_rl = self.select_action(o, deterministic=True)
@@ -641,7 +641,7 @@ class SAC(nn.Module):
                 elif env.mode == 1:
                     obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
 
-                    o = self.parse_obs(obs=obs)
+                    o = self.parse_obs(obs=obs).to(self.device)
 
                     eps_reward += paxreward
 
@@ -651,7 +651,7 @@ class SAC(nn.Module):
                 elif env.mode == 2:
                     obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
 
-                    o = self.parse_obs(obs=obs)
+                    o = self.parse_obs(obs=obs).to(self.device)
                     eps_reward += paxreward
 
                     action_rl = self.select_action(o, deterministic=True)

@@ -91,23 +91,22 @@ class GNNActor1(nn.Module):
         self.hidden = hidden_size
         self.conv1 = GCNConv(in_channels, in_channels)
         self.lin1 = nn.Linear(in_channels, hidden_size)
-        self.lin2 = nn.Linear(hidden_size*self.nregion, 2*self.nregion*self.nregion)
+        self.lin2 = nn.Linear(hidden_size, 2*self.nregion)
 
     def forward(self, state, edge_index, deterministic=False):
         out = F.relu(self.conv1(state, edge_index))
         x = out + state
         x = x.reshape(-1, self.nregion, self.in_channels)
         x = F.leaky_relu(self.lin1(x))
-        x = x.reshape(-1,self.hidden*self.nregion)
         x = F.softplus(self.lin2(x))
         concentration = x.squeeze(-1)
         if deterministic:
-            action = (concentration[:,:self.nregion*self.nregion]-1)/(concentration[:,:self.nregion*self.nregion] + concentration[:,self.nregion*self.nregion:] -2 + 1e-10)
+            action = (concentration[:,:,:self.nregion]-1)/(concentration[:,:,:self.nregion] + concentration[:,:,self.nregion:] -2 + 1e-10)
+            log_prob = None
         else:
-            m = Beta(concentration[:,:self.nregion*self.nregion] + 1e-10, concentration[:,self.nregion*self.nregion:] + 1e-10)
+            m = Beta(concentration[:,:,:self.nregion] + 1e-10, concentration[:,:,self.nregion:] + 1e-10)
             action = m.rsample().squeeze(0)
-            log_prob = m.log_prob(action).sum(dim=-1)
-            action = action.reshape(-1,self.nregion,self.nregion).squeeze(0)         
+            log_prob = m.log_prob(action).sum(dim=-1).sum(dim=-1)       
         return action, log_prob
     
 class MLPActor(nn.Module):

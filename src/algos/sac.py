@@ -427,7 +427,7 @@ class SAC(nn.Module):
 
                     eps_reward += paxreward
 
-                    action_rl = self.select_action(o)  
+                    action_rl = self.select_action(o,deterministic=True)  
 
                     env.matching_update()
                 elif env.mode == 2:
@@ -436,7 +436,7 @@ class SAC(nn.Module):
                     o = parser.parse_obs(obs=obs)
                     eps_reward += paxreward
 
-                    action_rl = self.select_action(o)
+                    action_rl = self.select_action(o,deterministic=True)
 
                     # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
                     desiredAcc = {

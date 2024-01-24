@@ -142,7 +142,7 @@ beta = {'san_francisco': 0.2, 'washington_dc': 0.5, 'chicago': 0.5, 'nyc_man_nor
                 'nyc_man_south': 0.5, 'nyc_brooklyn':0.5, 'porto': 0.1, 'rome': 0.1, 'shenzhen_baoan': 0.5,
                 'shenzhen_downtown_west': 0.5, 'shenzhen_downtown_east': 0.5, 'shenzhen_north': 0.5}
 
-test_tstep = {'san_francisco': 3, 'nyc_brooklyn': 4, 'shenzhen_downtown_west': 3, 'nyc_man_middle': 3}
+test_tstep = {'san_francisco': 3, 'nyc_brooklyn': 4, 'shenzhen_downtown_west': 3, 'nyc_man_middle': 3, 'nyc_man_south': 3}
 
 parser = argparse.ArgumentParser(description="SAC-GNN")
 
@@ -459,7 +459,7 @@ if not args.test:
                         obs1, action_rl, args.rew_scale * rl_reward, o
                     )
 
-                action_rl = model.select_action(o)  
+                action_rl = model.select_action(o,deterministic=True)  
 
                 env.matching_update()
             elif env.mode == 2:
@@ -534,7 +534,7 @@ if not args.test:
             model.save_checkpoint(
                 path=f"ckpt/{args.checkpoint_path}_sample.pth")
             best_reward = episode_reward
-        # model.save_checkpoint(path=f"ckpt/{args.checkpoint_path}_running.pth")
+        model.save_checkpoint(path=f"ckpt/{args.checkpoint_path}_running.pth")
         if i_episode % 10 == 0:
             test_reward, test_served_demand, test_rebalancing_cost = model.test_agent(
                 1, env, args.cplexpath, args.directory, parser=parser
@@ -543,8 +543,8 @@ if not args.test:
                 best_reward_test = test_reward
                 model.save_checkpoint(
                     path=f"ckpt/{args.checkpoint_path}_test.pth")
-        if i_episode>0 and i_episode<2000 and i_episode % 200 == 0:
-            model.save_checkpoint(path=f"ckpt/{args.checkpoint_path}_running_{i_episode}.pth")          
+        # if (i_episode>=30 and i_episode<=50 and i_episode % 10 == 0):
+        #     model.save_checkpoint(path=f"ckpt/{args.checkpoint_path}_running_{i_episode}.pth")          
     # Save metrics file
     metricPath = f"{args.directory}/train_logs/"
     if not os.path.exists(metricPath):
