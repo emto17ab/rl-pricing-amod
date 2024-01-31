@@ -166,10 +166,18 @@ class SAC(nn.Module):
 
         self.replay_buffer = ReplayData(device=device)
         # nnets
+        self.edges=None
         if price_version == 'GNN-origin':
             self.actor = GNNActor(self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode)
         elif price_version == 'GNN-od':
-            self.actor = GNNActor1(self.input_size,self.hidden_size, act_dim=self.act_dim, mode=mode)
+            self.edges = torch.zeros(len(env.region)**2,2).long()
+            k = 0
+            for i in env.region:
+                for j in env.region:
+                    self.edges[k,0] = i
+                    self.edges[k,1] = j
+                    k += 1
+            self.actor = GNNActor1(self.edges,self.input_size,self.hidden_size, act_dim=self.act_dim, mode=mode)
         elif price_version == 'MLP-od':
             self.actor = MLPActor(self.input_size,self.hidden_size, act_dim=self.act_dim, mode=mode)
         elif price_version == 'MLP-origin':
@@ -194,21 +202,22 @@ class SAC(nn.Module):
                 GNNCritic = MLPCritic4_1
         if critic_version == 5:
             GNNCritic = GNNCritic5
+
         self.critic1 = GNNCritic(
-            self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode
+            self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode, edges=self.edges
         )
         self.critic2 = GNNCritic(
-            self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode
+            self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode, edges=self.edges
         )
         assert self.critic1.parameters() != self.critic2.parameters()
    
 
         self.critic1_target = GNNCritic(
-            self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode
+            self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode, edges=self.edges
         )
         self.critic1_target.load_state_dict(self.critic1.state_dict())
         self.critic2_target = GNNCritic(
-            self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode
+            self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode, edges=self.edges
         )
         self.critic2_target.load_state_dict(self.critic2.state_dict())
 
