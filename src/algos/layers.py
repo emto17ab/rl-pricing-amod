@@ -134,7 +134,8 @@ class MLPActor(nn.Module):
         concentration = x.squeeze(-1)
         if deterministic:
             action = (concentration[:,:self.nregion*self.nregion]-1)/(concentration[:,:self.nregion*self.nregion] + concentration[:,self.nregion*self.nregion:] -2 + 1e-10)
-            action = action.reshape(-1,self.nregion,self.nregion)
+            action = action.reshape(-1,self.nregion,self.nregion).squeeze(0)
+            log_prob = None
         else:
             m = Beta(concentration[:,:self.nregion*self.nregion] + 1e-10, concentration[:,self.nregion*self.nregion:] + 1e-10)
             action = m.rsample().squeeze(0)

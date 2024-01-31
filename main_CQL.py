@@ -627,7 +627,7 @@ if args.collection:
 
     # Store buffer
     dataset = replay_buffer.to_buffer()
-    pickle.dump(dataset, open(f'Replaymemories/{args.city}.pkl', 'wb'))
+    pickle.dump(dataset, open(f'Replaymemories/{args.city}_H.pkl', 'wb'))
 elif not args.test:
     scenario = Scenario(
         json_file=f"data/scenario_{city}.json",
