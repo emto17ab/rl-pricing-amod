@@ -61,6 +61,7 @@ class AMoD:
         self.rebFlow = defaultdict(dict)
         # number of vehicles with passengers, key: (i,j) - (origin, destination), t - time
         self.paxFlow = defaultdict(dict)
+        self.paxWait = defaultdict(dict)
         self.edges = []  # set of rebalancing edges
         self.nregion = len(scenario.G)  # number of regions
         for i in self.G:
@@ -76,6 +77,7 @@ class AMoD:
             self.rebFlow[i, j] = defaultdict(float)
         for i, j in self.demand:
             self.paxFlow[i, j] = defaultdict(float)
+            self.paxWait[i, j] = []
         for n in self.region:
             self.acc[n][0] = self.G.nodes[n]['accInit']
             self.dacc[n] = defaultdict(float)
@@ -169,6 +171,7 @@ class AMoD:
                         accCurrent -= 1
                         self.paxFlow[pax.origin, pax.destination][t +
                                                                   self.demandTime[pax.origin, pax.destination][t]] += 1
+                        self.paxWait[pax.origin, pax.destination].append(pax.wait_time)                                                                  
                         self.dacc[pax.destination][t +
                                                    self.demandTime[pax.origin, pax.destination][t]] += 1
                         self.servedDemand[pax.origin, pax.destination][t] += 1
@@ -367,6 +370,7 @@ class AMoD:
         self.dacc = defaultdict(dict)
         self.rebFlow = defaultdict(dict)
         self.paxFlow = defaultdict(dict)
+        self.paxWait = defaultdict(dict)
         self.passenger = dict()
         self.queue = defaultdict(list)
         self.edges = []
