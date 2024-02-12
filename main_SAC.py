@@ -626,6 +626,7 @@ else:
     demand_original_steps = []
     demand_scaled_steps = []
     reb_steps = []
+    reb_ori_steps = []
     reb_num = []
     pax_steps = []
     pax_wait = []
@@ -747,6 +748,7 @@ else:
         demand_scaled_steps.append(env.demand)
         available_steps.append(env.acc)
         reb_steps.append(env.rebFlow)
+        reb_ori_steps.append(env.rebFlow_ori)
         pax_steps.append(env.paxFlow)
         pax_wait.append(env.paxWait)
         reb_od = 0
@@ -754,7 +756,8 @@ else:
             reb_od += sum(flow.values())
         reb_num.append(reb_od)
         actions_step.append(actions)
-        price_mean.append(np.mean(actions_price))
+        if args.mode != 0:
+            price_mean.append(np.mean(actions_price))
         
         rebalancing_cost_steps.append(rebalancing_cost)
         queue_steps.append(queue)
@@ -773,6 +776,8 @@ else:
         # np.save(f"{args.directory}/{city}_cost_mode{args.mode}.npy", np.array(rebalancing_cost_steps))
         with open(f"{args.directory}/{city}_reb_mode{args.mode}.pickle", 'wb') as f:
             pickle.dump(reb_steps, f)
+        with open(f"{args.directory}/{city}_reb_ori_mode{args.mode}.pickle", 'wb') as f:
+            pickle.dump(reb_ori_steps, f)
 
     with open(f"{args.directory}/{city}_pax_mode{args.mode}.pickle", 'wb') as f:
         pickle.dump(pax_steps, f)

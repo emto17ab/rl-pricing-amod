@@ -59,9 +59,10 @@ class AMoD:
         self.dacc = defaultdict(dict)
         # number of rebalancing vehicles, key: (i,j) - (origin, destination), t - time
         self.rebFlow = defaultdict(dict)
+        self.rebFlow_ori = defaultdict(dict)
         # number of vehicles with passengers, key: (i,j) - (origin, destination), t - time
         self.paxFlow = defaultdict(dict)
-        self.paxWait = defaultdict(dict)
+        self.paxWait = defaultdict(list)
         self.edges = []  # set of rebalancing edges
         self.nregion = len(scenario.G)  # number of regions
         for i in self.G:
@@ -75,6 +76,7 @@ class AMoD:
         for i, j in self.G.edges:
             self.G.edges[i, j]['time'] = self.rebTime[i, j][self.time]
             self.rebFlow[i, j] = defaultdict(float)
+            self.rebFlow_ori[i, j] = defaultdict(float)
         for i, j in self.demand:
             self.paxFlow[i, j] = defaultdict(float)
             self.paxWait[i, j] = []
@@ -335,6 +337,7 @@ class AMoD:
             # update the number of vehicles
             self.rebAction[k] = min(self.acc[i][t+1], rebAction[k])
             self.rebFlow[i, j][t+self.rebTime[i, j][t]] = self.rebAction[k]
+            self.rebFlow_ori[i, j][t] = self.rebAction[k]
             self.acc[i][t+1] -= self.rebAction[k]
             self.dacc[j][t+self.rebTime[i, j][t]
                          ] += self.rebFlow[i, j][t+self.rebTime[i, j][t]]
@@ -369,8 +372,9 @@ class AMoD:
         self.acc = defaultdict(dict)
         self.dacc = defaultdict(dict)
         self.rebFlow = defaultdict(dict)
+        self.rebFlow_ori = defaultdict(dict)
         self.paxFlow = defaultdict(dict)
-        self.paxWait = defaultdict(dict)
+        self.paxWait = defaultdict(list)
         self.passenger = dict()
         self.queue = defaultdict(list)
         self.edges = []
@@ -398,7 +402,9 @@ class AMoD:
         self.time = 0
         for i, j in self.G.edges:
             self.rebFlow[i, j] = defaultdict(float)
+            self.rebFlow_ori[i,j] = defaultdict(float)
             self.paxFlow[i, j] = defaultdict(float)
+            self.paxWait[i, j] = []
         for n in self.G:
             self.acc[n][0] = self.G.nodes[n]['accInit']
             self.dacc[n] = defaultdict(float)
