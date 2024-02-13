@@ -51,9 +51,11 @@ class GNNActor(nn.Module):
                 action = (concentration) / (concentration.sum() + 1e-20)
             elif self.mode == 1:
                 action_o = (concentration[:,:,0]-1)/(concentration[:,:,0] + concentration[:,:,1] -2 + 1e-10)
+                action_o[action_o<0] = 0
                 action = action_o.squeeze(0).unsqueeze(-1)
             else:
                 action_o = (concentration[:,:,0]-1)/(concentration[:,:,0] + concentration[:,:,1] -2 + 1e-10)
+                action_o[action_o<0] = 0
                 action_reb = (concentration[:,:,2]) / (concentration[:,:,2].sum() + 1e-10)
                 action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_reb.squeeze(0).unsqueeze(-1)),-1)
             log_prob = None
@@ -115,6 +117,7 @@ class GNNActor1(nn.Module):
         concentration = x.squeeze(-1)
         if deterministic:
             action = (concentration[:,:,0]-1)/(concentration[:,:,0] + concentration[:,:,1] -2 + 1e-10)
+            action[action<0] = 0
             action = action.reshape(-1,self.nregion,self.nregion).squeeze(0)
             log_prob = None
         else:
@@ -148,6 +151,7 @@ class MLPActor(nn.Module):
         concentration = x.squeeze(-1)
         if deterministic:
             action = (concentration[:,:self.nregion*self.nregion]-1)/(concentration[:,:self.nregion*self.nregion] + concentration[:,self.nregion*self.nregion:] -2 + 1e-10)
+            action[action<0] = 0
             action = action.reshape(-1,self.nregion,self.nregion).squeeze(0)
             log_prob = None
         else:
@@ -191,9 +195,11 @@ class MLPActor1(nn.Module):
                 action = action.reshape(-1,self.nregion,1)
             elif self.mode == 1:
                 action = (concentration[:,:self.nregion]-1)/(concentration[:,:self.nregion] + concentration[:,self.nregion:] -2 + 1e-10)
+                action[action<0] = 0
                 action = action.reshape(-1,self.nregion,1)
             else:
                 action_o = (concentration[:,:self.nregion]-1)/(concentration[:,:self.nregion] + concentration[:,self.nregion:2*self.nregion] -2 + 1e-10)
+                action_o[action_o<0] = 0
                 action_reb = (concentration[:,2*self.nregion:]) / (concentration[:,2*self.nregion:].sum() + 1e-10)
                 action = torch.cat((action_o.reshape(-1,self.nregion,1), action_reb.reshape(-1,self.nregion,1)),-1)
             log_prob = None

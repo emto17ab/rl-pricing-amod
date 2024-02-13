@@ -506,7 +506,8 @@ for episode in epochs:
         f"Episode {episode+1} | Reward: {episode_reward:.2f} | ServedDemand: {episode_served_demand:.2f} | Reb. Cost: {episode_rebalancing_cost}"
     )
 
-w = open(f"./Replaymemories/{args.city}_heuristics.pkl", "wb")
+print("Rewards (mean, std):", np.mean(rewards), np.std(rewards))
+w = open(f"./Replaymemories/{args.city}_heuristic.pkl", "wb")
 pickle.dump(replay_buffer_rl, w)
 w.close()
 print("replay_buffer", replay_buffer_rl.size)

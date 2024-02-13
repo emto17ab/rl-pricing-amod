@@ -70,7 +70,7 @@ class ReplayData:
         self.episode_data["rew"] = []
         self.episode_data["obs2"] = []
 
-    def create_dataset(self, edge_index, memory_path, size=60000, st=False, sc=False):
+    def create_dataset(self, edge_index, memory_path, size=60000, st=False, sc=False, mc=False):
         """
         edge_index: Adjaency matrix of the graph
         memory_path: Path to the replay memory
@@ -81,7 +81,7 @@ class ReplayData:
         w = open(f"Replaymemories/{memory_path}.pkl", "rb")
 
         replay_buffer = pickle.load(w)
-        data = replay_buffer.sample_all(size)
+        data = replay_buffer.sample_all(size,mc)
 
         if st:
             mean = data["rew"].mean()
@@ -91,26 +91,45 @@ class ReplayData:
             data["rew"] = (data["rew"] - data["rew"].min()) / (
                 data["rew"].max() - data["rew"].min()
             )
-
-        (state_batch, action_batch, reward_batch, next_state_batch, mc_returns) = (
-            data["obs"],
-            data["act"],
-            args.rew_scale * data["rew"],
-            data["obs2"],
-            args.rew_scale * data["mc_returns"],
-        )
-        for i in range(len(state_batch)):
-            self.data_list.append(
-                PairData(
-                    edge_index,
-                    state_batch[i],
-                    reward_batch[i],
-                    action_batch[i],
-                    mc_returns[i],
-                    edge_index,
-                    next_state_batch[i],
-                )
+        if mc:
+            (state_batch, action_batch, reward_batch, next_state_batch, mc_returns) = (
+                data["obs"],
+                data["act"],
+                args.rew_scale * data["rew"],
+                data["obs2"],
+                args.rew_scale * data["mc_returns"],
             )
+            for i in range(len(state_batch)):
+                self.data_list.append(
+                    PairData(
+                        edge_index,
+                        state_batch[i],
+                        reward_batch[i],
+                        action_batch[i],
+                        mc_returns[i],
+                        edge_index,
+                        next_state_batch[i],
+                    )
+                )
+        else:
+            (state_batch, action_batch, reward_batch, next_state_batch) = (
+                data["obs"],
+                data["act"],
+                args.rew_scale * data["rew"],
+                data["obs2"],
+            )
+            for i in range(len(state_batch)):
+                self.data_list.append(
+                    PairData(
+                        edge_index,
+                        state_batch[i],
+                        reward_batch[i],
+                        action_batch[i],
+                        None,
+                        edge_index,
+                        next_state_batch[i],
+                    )
+                )       
 
     def store(self, data1, action, reward, data2):
         self.data_list.append(
@@ -209,16 +228,24 @@ class ReplayBuffer:
         self.mc_returns = np.zeros(size, dtype=np.float32)
         self.ptr, self.size, self.max_size = 0, 0, size
 
-    def sample_all(self, samples):
+    def sample_all(self, samples, mc=False):
         if samples > self.size:
             samples = self.ptr
-        batch = dict(
-            obs=self.obs_buf[:samples],
-            obs2=self.obs2_buf[:samples],
-            act=self.act_buf[:samples],
-            rew=self.rew_buf[:samples],
-            mc_returns=self.mc_returns[:samples],
-        )
+        if mc:
+            batch = dict(
+                obs=self.obs_buf[:samples],
+                obs2=self.obs2_buf[:samples],
+                act=self.act_buf[:samples],
+                rew=self.rew_buf[:samples],
+                mc_returns=self.mc_returns[:samples],
+            )
+        else:
+            batch = dict(
+                obs=self.obs_buf[:samples],
+                obs2=self.obs2_buf[:samples],
+                act=self.act_buf[:samples],
+                rew=self.rew_buf[:samples],
+            )            
         return {k: torch.as_tensor(v) for k, v in batch.items()}
 
 
@@ -684,6 +711,7 @@ elif not args.test:
         size=args.samples_buffer,
         st=args.st,
         sc=args.sc,
+        mc=args.enable_calql
     )
 
     train_episodes = args.max_episodes  # set max number of training episodes
