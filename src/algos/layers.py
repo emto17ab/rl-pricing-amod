@@ -201,7 +201,7 @@ class MLPActor1(nn.Module):
                 action_o = (concentration[:,:self.nregion]-1)/(concentration[:,:self.nregion] + concentration[:,self.nregion:2*self.nregion] -2 + 1e-10)
                 action_o[action_o<0] = 0
                 action_reb = (concentration[:,2*self.nregion:]) / (concentration[:,2*self.nregion:].sum() + 1e-10)
-                action = torch.cat((action_o.reshape(-1,self.nregion,1), action_reb.reshape(-1,self.nregion,1)),-1)
+                action = torch.cat((action_o.reshape(-1,self.nregion,1).squeeze(0), action_reb.reshape(-1,self.nregion,1).squeeze(0)),-1)
             log_prob = None
         else:
             if self.mode == 0:
