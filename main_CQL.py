@@ -703,7 +703,7 @@ elif not args.test:
     #######################################
     ############# Training Loop#############
     #######################################
-    # Initialize lists for logging
+    # Initialize dataset
     Dataset = ReplayData(device=device, rew_scale=args.rew_scale)
     Dataset.create_dataset(
         edge_index=edge_index,
@@ -720,6 +720,9 @@ elif not args.test:
     best_reward = -np.inf  # set best reward
     model.train()  # set model in train mode
 
+    # Metrics
+    loss_log = {"BQ1":[],"RQ1":[],"BQ2":[],"RQ2":[]}
+
     logging.info("Training start")
     for step in range(training_steps):
 
@@ -734,7 +737,15 @@ elif not args.test:
                 model.save_checkpoint(path=f"ckpt/offline/" + args.checkpoint_path + "_test.pth")
             logging.info(f"Training step {step} | Reward: {test_reward} | Q1 loss1: {log['Bellman loss Q1']} | Q1 loss2: {log['Regularizor loss Q1']} | Q1:{log['Q1']} | Q2 loss1: {log['Bellman loss Q2']} | Q2 loss2: {log['Regularizor loss Q2']} | Q2:{log['Q2']}")
         
+        loss_log["BQ1"].append(log['Bellman loss Q1'])
+        loss_log["RQ1"].append(log['Regularizor loss Q1'])
+        loss_log["BQ2"].append(log['Bellman loss Q2'])
+        loss_log["RQ2"].append(log['Regularizor loss Q2'])
+
         model.save_checkpoint(path=f"ckpt/offline/" + args.checkpoint_path + ".pth")
+
+    with open(f"{args.directory}/{city}_loss_mode{args.mode}_w{args.min_q_weight}_{train_episodes}.pickle", 'wb') as f:
+        pickle.dump(loss_log, f) 
 
 else:
     scenario = Scenario(
