@@ -359,7 +359,7 @@ class IQL(nn.Module):
             reb_act = action_batch[:, :, 1]
 
             price_act = torch.clamp(price_act, 0.0 + SMALL_NUMBER, 1.0 - SMALL_NUMBER)
-            reb_act = torch.clamp(reb_act, 0.0 + SMALL_NUMBER, 1.0 - SMALL_NUMBER)
+            # reb_act = torch.clamp(reb_act, 0.0 + SMALL_NUMBER, 1.0 - SMALL_NUMBER)
 
             price_log_prob = G.log_prob(price_act.squeeze(-1)).sum(dim=-1)
 

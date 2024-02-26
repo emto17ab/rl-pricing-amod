@@ -279,13 +279,15 @@ class ReplayBuffer:
         self.obs2_buf = np.zeros(combined_shape(size, obs_dim), dtype=np.float32)
         self.act_buf = np.zeros(combined_shape(size, act_dim), dtype=np.float32)
         self.rew_buf = np.zeros(size, dtype=np.float32)
+        self.done = np.zeros(size, dtype=np.float32)
         self.ptr, self.size, self.max_size = 0, 0, size
 
-    def store(self, obs, act, rew, next_obs):
+    def store(self, obs, act, rew, next_obs, done):
         self.obs_buf[self.ptr] = obs
         self.obs2_buf[self.ptr] = next_obs
         self.act_buf[self.ptr] = act
         self.rew_buf[self.ptr] = rew
+        self.done[self.ptr] = done
         self.ptr = (self.ptr + 1) % self.max_size
         self.size = min(self.size + 1, self.max_size)
 
@@ -296,6 +298,7 @@ class ReplayBuffer:
             obs2=self.obs2_buf[idxs],
             act=self.act_buf[idxs],
             rew=self.rew_buf[idxs],
+            done=self.done[idxs],
         )
         return {k: torch.as_tensor(v) for k, v in batch.items()}
 
@@ -472,7 +475,10 @@ for episode in epochs:
             rl_reward = paxreward + rebreward
             # Get combined action
             action_rl = np.array([action_rl_price,action_rl_reb]).T
-            replay_buffer_rl.store(obs1.x, action_rl, rl_reward, o.x)
+            if step == T-1:
+                replay_buffer_rl.store(obs1.x, action_rl, rl_reward, o.x, True)
+            else:
+                replay_buffer_rl.store(obs1.x, action_rl, rl_reward, o.x, False)
 
         rebAction, flows = DTV(env, open_requests)
         acc = {n: env.acc[n][env.time + 1] for n in env.region}
@@ -507,7 +513,7 @@ for episode in epochs:
     )
 
 print("Rewards (mean, std):", np.mean(rewards), np.std(rewards))
-w = open(f"./Replaymemories/{args.city}_heuristic.pkl", "wb")
+w = open(f"./Replaymemories/{args.city}_iql_heuristic.pkl", "wb")
 pickle.dump(replay_buffer_rl, w)
 w.close()
 print("replay_buffer", replay_buffer_rl.size)
