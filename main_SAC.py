@@ -130,7 +130,7 @@ class GNNParser:
 
 
 # Define calibrated simulation parameters
-demand_ratio = {'san_francisco': 2, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1.8,
+demand_ratio = {'san_francisco': 1, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1.8,
                 'nyc_man_south': 1.8, 'nyc_brooklyn': 9, 'porto': 4, 'rome': 1.8, 'shenzhen_baoan': 2.5,
                 'shenzhen_downtown_west': 2.5, 'shenzhen_downtown_east': 3, 'shenzhen_north': 3
                }
@@ -142,7 +142,7 @@ beta = {'san_francisco': 0.2, 'washington_dc': 0.5, 'chicago': 0.5, 'nyc_man_nor
                 'nyc_man_south': 0.5, 'nyc_brooklyn':0.5, 'porto': 0.1, 'rome': 0.1, 'shenzhen_baoan': 0.5,
                 'shenzhen_downtown_west': 0.5, 'shenzhen_downtown_east': 0.5, 'shenzhen_north': 0.5}
 
-test_tstep = {'san_francisco': 3, 'nyc_brooklyn': 4, 'shenzhen_downtown_west': 3, 'nyc_man_middle': 3, 'nyc_man_south': 3}
+test_tstep = {'san_francisco': 3, 'nyc_brooklyn': 4, 'shenzhen_downtown_west': 3, 'nyc_man_middle': 3, 'nyc_man_south': 3, 'nyc_man_north': 3, 'washington_dc':3, 'chicago':3}
 
 parser = argparse.ArgumentParser(description="SAC-GNN")
 
@@ -253,6 +253,12 @@ parser.add_argument(
     type=str,
     default="SAC",
     help="name of checkpoint file to save/load (default: SAC)",
+)
+parser.add_argument(
+    "--load",
+    type=bool,
+    default=False,
+    help="either to start training from checkpoint (default: False)",
 )
 parser.add_argument(
     "--clip",
@@ -372,6 +378,10 @@ if not args.test:
         mode=args.mode,
         q_lag=args.q_lag
     ).to(device)
+
+    if args.load:
+        print("load checkpoint")
+        model.load_checkpoint(path=f"ckpt/{args.checkpoint_path}.pth")
 
     train_episodes = args.max_episodes  # set max number of training episodes
     T = args.max_steps  # set episode length

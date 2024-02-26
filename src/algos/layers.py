@@ -484,3 +484,27 @@ class MLPCritic4_1(nn.Module):
         x = F.relu(self.lin3(x))  # (B, N, H)
         x = self.lin4(x).squeeze(-1)  # (B)
         return x
+    
+
+#########################################
+######### VALUE FUNCTION ################
+#########################################
+class VF(torch.nn.Module):
+
+    def __init__(self, in_channels=4, hidden_size=32, out_channels=1, nnodes=4):
+        super(VF, self).__init__()
+        self.hidden_size = hidden_size
+        self.in_channels = in_channels
+        self.conv1 = GCNConv(in_channels, hidden_size)
+        self.lin1 = nn.Linear(in_channels + hidden_size, hidden_size)
+        self.g_to_v = nn.Linear(hidden_size, out_channels)
+        self.nnodes = nnodes
+
+    def forward(self, state, edge_index):
+        x_pp = self.conv1(state, edge_index)
+        x_pp = torch.cat([state, x_pp], dim=1)
+        x_pp = x_pp.reshape(-1, self.nnodes, self.in_channels + self.hidden_size)
+        v = torch.sum(x_pp, dim=1)
+        v = F.relu(self.lin1(v))
+        v = self.g_to_v(v)
+        return v.squeeze(-1)

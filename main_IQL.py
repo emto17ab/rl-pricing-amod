@@ -4,6 +4,7 @@ from tqdm import trange
 import numpy as np
 import torch
 from src.envs.amod_env import Scenario, AMoD
+from src.algos.iql import IQL
 from src.algos.cql import SAC
 from src.algos.reb_flow_solver import solveRebFlow
 from src.misc.utils import dictsum, nestdictsum
@@ -13,19 +14,6 @@ from torch_geometric.data import Data, Batch
 import copy
 import logging
 
-
-def return_to_go(rewards):
-    """
-    Calculate the return-to-go for a given trajectory.
-    """
-    gamma = 0.97
-    return_to_go = [0] * len(rewards)
-    prev_return = 0
-    for i in range(len(rewards)):
-        return_to_go[-i - 1] = rewards[-i - 1] + gamma * prev_return
-        prev_return = return_to_go[-i - 1]
-    return np.array(return_to_go, dtype=np.float32)
-
 class PairData(Data):
     def __init__(
         self,
@@ -33,7 +21,7 @@ class PairData(Data):
         x_s=None,
         reward=None,
         action=None,
-        mc_returns=None,
+        done=None,
         edge_index_t=None,
         x_t=None,
     ):
@@ -42,7 +30,7 @@ class PairData(Data):
         self.x_s = x_s
         self.reward = reward
         self.action = action
-        self.mc_returns = mc_returns
+        self.done = done
         self.edge_index_t = edge_index_t
         self.x_t = x_t
 
@@ -60,9 +48,10 @@ class ReplayData:
     A simple FIFO experience replay buffer for SAC agents.
     """
 
-    def __init__(self, device, rew_scale):
+    def __init__(self, device,rew_scale):
         self.device = device
         self.data_list = []
+        self.rewards = []
         self.rew_scale = rew_scale
         self.episode_data = {}
         self.episode_data["obs"] = []
@@ -70,7 +59,7 @@ class ReplayData:
         self.episode_data["rew"] = []
         self.episode_data["obs2"] = []
 
-    def create_dataset(self, edge_index, memory_path, size=60000, st=False, sc=False, mc=False):
+    def create_dataset(self, edge_index, memory_path, size=60000, st=False, sc=False):
         """
         edge_index: Adjaency matrix of the graph
         memory_path: Path to the replay memory
@@ -81,7 +70,7 @@ class ReplayData:
         w = open(f"Replaymemories/{memory_path}.pkl", "rb")
 
         replay_buffer = pickle.load(w)
-        data = replay_buffer.sample_all(size,mc)
+        data = replay_buffer.sample_all(size)
 
         if st:
             mean = data["rew"].mean()
@@ -91,53 +80,35 @@ class ReplayData:
             data["rew"] = (data["rew"] - data["rew"].min()) / (
                 data["rew"].max() - data["rew"].min()
             )
-        if mc:
-            (state_batch, action_batch, reward_batch, next_state_batch, mc_returns) = (
-                data["obs"],
-                data["act"],
-                args.rew_scale * data["rew"],
-                data["obs2"],
-                args.rew_scale * data["mc_returns"],
-            )
-            for i in range(len(state_batch)):
-                self.data_list.append(
-                    PairData(
-                        edge_index,
-                        state_batch[i],
-                        reward_batch[i],
-                        action_batch[i],
-                        mc_returns[i],
-                        edge_index,
-                        next_state_batch[i],
-                    )
-                )
-        else:
-            (state_batch, action_batch, reward_batch, next_state_batch) = (
-                data["obs"],
-                data["act"],
-                args.rew_scale * data["rew"],
-                data["obs2"],
-            )
-            for i in range(len(state_batch)):
-                self.data_list.append(
-                    PairData(
-                        edge_index,
-                        state_batch[i],
-                        reward_batch[i],
-                        action_batch[i],
-                        None,
-                        edge_index,
-                        next_state_batch[i],
-                    )
-                )       
 
-    def store(self, data1, action, reward, data2):
+        (state_batch, action_batch, reward_batch, next_state_batch, done) = (
+            data["obs"],
+            data["act"],
+            args.rew_scale * data["rew"],
+            data["obs2"],
+            data["done"],
+        )
+        for i in range(len(state_batch)):
+            self.data_list.append(
+                PairData(
+                    edge_index,
+                    state_batch[i],
+                    reward_batch[i],
+                    action_batch[i],
+                    done[i],
+                    edge_index,
+                    next_state_batch[i],
+                )
+            )    
+
+    def store(self, data1, action, reward, data2, done):
         self.data_list.append(
             PairData(
                 data1.edge_index,
                 data1.x,
                 torch.as_tensor(reward),
                 torch.as_tensor(action),
+                torch.as_tensor(done),
                 data2.edge_index,
                 data2.x,
             )
@@ -155,34 +126,6 @@ class ReplayData:
             return Batch.from_data_list(data, follow_batch=["x_s", "x_t"]).to(
                 self.device
             )
-        
-    def store_episode_data(self, obs, action, reward, obs2, terminal=False):
-        """
-        store new transitions
-        """
-        self.episode_data["obs"].append(obs.x)
-        self.episode_data["act"].append(torch.as_tensor(action))
-        self.episode_data["rew"].append(torch.as_tensor(reward))
-        self.episode_data["obs2"].append(obs2.x)
-        if terminal:
-            mc_returns = return_to_go(self.episode_data["rew"])
-            for i in range(len(self.episode_data["obs"])):
-                self.data_list.append(
-                    PairData(
-                        edge_index,
-                        self.episode_data["obs"][i],
-                        args.rew_scale * self.episode_data["rew"][i],
-                        self.episode_data["act"][i],
-                        args.rew_scale * torch.as_tensor(mc_returns[i]),
-                        edge_index,
-                        self.episode_data["obs2"][i],
-                    )
-                )
-
-            self.episode_data["obs"] = []
-            self.episode_data["act"] = []
-            self.episode_data["rew"] = []
-            self.episode_data["obs2"] = []
 
     def to_buffer(self):
         # Transform data buffer to replay buffer
@@ -198,7 +141,7 @@ class ReplayData:
             buffer.obs2_buf[i] = self.data_list[i].x_t
             buffer.act_buf[i] = self.data_list[i].action
             buffer.rew_buf[i] = self.data_list[i].reward
-            buffer.mc_returns[i] = self.data_list[i].mc_returns
+            buffer.done[i] = self.data_list[i].done
 
         buffer.ptr = size
         buffer.size = size
@@ -225,27 +168,20 @@ class ReplayBuffer:
         self.act_buf = np.zeros(combined_shape(
             size, act_dim), dtype=np.float32)
         self.rew_buf = np.zeros(size, dtype=np.float32)
-        self.mc_returns = np.zeros(size, dtype=np.float32)
+        self.done = np.zeros(size, dtype=np.float32)
         self.ptr, self.size, self.max_size = 0, 0, size
 
-    def sample_all(self, samples, mc=False):
+    def sample_all(self, samples):
         if samples > self.size:
             samples = self.ptr
-        if mc:
-            batch = dict(
-                obs=self.obs_buf[:samples],
-                obs2=self.obs2_buf[:samples],
-                act=self.act_buf[:samples],
-                rew=self.rew_buf[:samples],
-                mc_returns=self.mc_returns[:samples],
-            )
-        else:
-            batch = dict(
-                obs=self.obs_buf[:samples],
-                obs2=self.obs2_buf[:samples],
-                act=self.act_buf[:samples],
-                rew=self.rew_buf[:samples],
-            )            
+
+        batch = dict(
+            obs=self.obs_buf[:samples],
+            obs2=self.obs2_buf[:samples],
+            act=self.act_buf[:samples],
+            rew=self.rew_buf[:samples],
+            done=self.done[:samples],
+        )         
         return {k: torch.as_tensor(v) for k, v in batch.items()}
 
 
@@ -414,10 +350,16 @@ parser.add_argument(
     help="size of the replay buffer",
 )
 parser.add_argument(
-    "--lagrange_thresh",
+    "--quantile",
     type=float,
-    default=-1,
-    help="threshold for the lagrange tuning of entropy (default: -1 =disabled)",
+    default=0.5,
+    help=" Quantile of expetile regression(default: 0.5)",
+)
+parser.add_argument(
+    "--temperature",
+    type=float,
+    default=1.0,
+    help="Weight of advantange(default: 1.0)",
 )
 parser.add_argument(
     "--city",
@@ -498,13 +440,9 @@ if args.collection:
         q_lr=3e-4,
         alpha=args.alpha,
         batch_size=args.batch_size,
-        use_automatic_entropy_tuning=False,
-        lagrange_thresh=args.lagrange_thresh,
         device=device,
         json_file=f'data/scenario_{city}.json',
-        min_q_version=3,
-        mode=args.mode,
-        q_lag=args.q_lag
+        mode=args.mode
     ).to(device)
 
     with open(f"data/scenario_{city}.json", "r") as file:
@@ -519,7 +457,7 @@ if args.collection:
         )
     ).long()
 
-    replay_buffer = ReplayData(device=device, rew_scale=args.rew_scale)
+    replay_buffer = ReplayData(device=device,rew_scale=args.rew_scale)
 
     print("load model")
     model.load_checkpoint(path=f"ckpt/{args.checkpoint_path}.pth")
@@ -556,12 +494,12 @@ if args.collection:
                     # store transition in memroy
                     rl_reward = paxreward + rebreward
                     if step == T - 1:
-                        replay_buffer.store_episode_data(
-                            obs1, action_rl, rl_reward, o, terminal=True
+                        replay_buffer.store(
+                            obs1, action_rl, rl_reward, o, True
                         )
                     else:
-                        replay_buffer.store_episode_data(
-                            obs1, action_rl, rl_reward, o, terminal=False
+                        replay_buffer.store(
+                            obs1, action_rl, rl_reward, o, False
                         )                        
 
                 action_rl = model.select_action(o, deterministic=False)
@@ -593,12 +531,12 @@ if args.collection:
                     # store transition in memroy
                     rl_reward = paxreward
                     if step == T - 1:
-                        replay_buffer.store_episode_data(
-                            obs1, action_rl, rl_reward, o, terminal=True
+                        replay_buffer.store(
+                            obs1, action_rl, rl_reward, o, True
                         )
                     else:
-                        replay_buffer.store_episode_data(
-                            obs1, action_rl, rl_reward, o, terminal=False
+                        replay_buffer.store(
+                            obs1, action_rl, rl_reward, o, False
                         )
 
                 action_rl = model.select_action(o)  
@@ -613,12 +551,12 @@ if args.collection:
                     # store transition in memroy
                     rl_reward = paxreward + rebreward
                     if step == T - 1:
-                        replay_buffer.store_episode_data(
-                            obs1, action_rl, rl_reward, o, terminal=True
+                        replay_buffer.store(
+                            obs1, action_rl, rl_reward, o, True
                         )
                     else:
-                        replay_buffer.store_episode_data(
-                            obs1, action_rl, rl_reward, o, terminal=False
+                        replay_buffer.store(
+                            obs1, action_rl, rl_reward, o, False
                         )
 
                 action_rl = model.select_action(o)
@@ -654,7 +592,7 @@ if args.collection:
 
     # Store buffer
     dataset = replay_buffer.to_buffer()
-    pickle.dump(dataset, open(f'Replaymemories/{args.city}.pkl', 'wb'))
+    pickle.dump(dataset, open(f'Replaymemories/{args.city}_iql.pkl', 'wb'))
 elif not args.test:
     scenario = Scenario(
         json_file=f"data/scenario_{city}.json",
@@ -670,7 +608,7 @@ elif not args.test:
 
     env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt)
 
-    model = SAC(
+    model = IQL(
         env=env,
         input_size=10,
         hidden_size=args.hidden_size,
@@ -678,14 +616,11 @@ elif not args.test:
         q_lr=3e-4,
         alpha=args.alpha,
         batch_size=args.batch_size,
-        use_automatic_entropy_tuning=False,
-        lagrange_thresh=args.lagrange_thresh,
-        min_q_weight=args.min_q_weight,
         device=device,
-        json_file=f'data/scenario_{city}.json',
-        min_q_version=3,
         mode=args.mode,
-        q_lag=args.q_lag
+        quantile=args.quantile,
+        temperature=args.temperature,
+        json_file=f'data/scenario_{city}.json',
     ).to(device)
 
     with open(f"data/scenario_{city}.json", "r") as file:
@@ -711,7 +646,6 @@ elif not args.test:
         size=args.samples_buffer,
         st=args.st,
         sc=args.sc,
-        mc=args.enable_calql
     )
 
     train_episodes = args.max_episodes  # set max number of training episodes
@@ -727,25 +661,16 @@ elif not args.test:
     for step in range(training_steps):
 
         batch = Dataset.sample_batch(args.batch_size)
-        log = model.update(data=batch, conservative=True,
-                     enable_calql=args.enable_calql)
+        log = model.update(data=batch)
         
         if step % 400 == 0:
             test_reward, test_served_demand, test_reb_cost = model.test_agent(10, env, args.cplexpath, args.directory)
             if test_reward > best_reward:
                 best_reward = test_reward
                 model.save_checkpoint(path=f"ckpt/offline/" + args.checkpoint_path + "_test.pth")
-            logging.info(f"Training step {step} | Reward: {test_reward} | Q1 loss1: {log['Bellman loss Q1']} | Q1 loss2: {log['Regularizor loss Q1']} | Q1:{log['Q1']} | Q2 loss1: {log['Bellman loss Q2']} | Q2 loss2: {log['Regularizor loss Q2']} | Q2:{log['Q2']}")
-        
-        loss_log["BQ1"].append(log['Bellman loss Q1'])
-        loss_log["RQ1"].append(log['Regularizor loss Q1'])
-        loss_log["BQ2"].append(log['Bellman loss Q2'])
-        loss_log["RQ2"].append(log['Regularizor loss Q2'])
+            logging.info(f"Training step {step} | Reward: {test_reward}")
 
         model.save_checkpoint(path=f"ckpt/offline/" + args.checkpoint_path + ".pth")
-
-    with open(f"{args.directory}/{city}_loss_mode{args.mode}_w{args.min_q_weight}_{train_episodes}.pickle", 'wb') as f:
-        pickle.dump(loss_log, f) 
 
 else:
     scenario = Scenario(
@@ -762,7 +687,7 @@ else:
 
     env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt)
 
-    model = SAC(
+    model = IQL(
         env=env,
         input_size=10,
         hidden_size=args.hidden_size,
@@ -770,13 +695,10 @@ else:
         q_lr=3e-4,
         alpha=args.alpha,
         batch_size=args.batch_size,
-        use_automatic_entropy_tuning=False,
-        lagrange_thresh=args.lagrange_thresh,
         device=device,
-        json_file=f'data/scenario_{city}.json',
-        min_q_version=3,
         mode=args.mode,
-        q_lag=args.q_lag
+        quantile=args.quantile,
+        temperature=args.temperature
     ).to(device)
 
     print("load model")
