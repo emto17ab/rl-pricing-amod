@@ -513,7 +513,7 @@ for episode in epochs:
     )
 
 print("Rewards (mean, std):", np.mean(rewards), np.std(rewards))
-w = open(f"./Replaymemories/{args.city}_iql_heuristic.pkl", "wb")
+w = open(f"./Replaymemories/{args.city}_iql_heuristic_L.pkl", "wb")
 pickle.dump(replay_buffer_rl, w)
 w.close()
 print("replay_buffer", replay_buffer_rl.size)

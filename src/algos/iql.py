@@ -377,6 +377,10 @@ class IQL(nn.Module):
 
             loss_pi = -(log_prob * weights).mean()
 
+        # log metrics
+        log = {"loss Q1":loss_q1.item(), "loss Q2":loss_q2.item(), "loss V":vf_loss.item(),
+                "Q1":torch.mean(q1_pred).item(),"Q2":torch.mean(q2_pred).item(),}
+
         self.optimizers["c1_optimizer"].zero_grad()
         loss_q1.backward(retain_graph=True)
         # nn.utils.clip_grad_norm_(self.critic1.parameters(), self.clip)
@@ -423,6 +427,8 @@ class IQL(nn.Module):
             p.requires_grad = True
         for p in self.critic2.parameters():
             p.requires_grad = True
+        
+        return log
 
 
     def configure_optimizers(self):

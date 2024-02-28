@@ -352,14 +352,14 @@ parser.add_argument(
 parser.add_argument(
     "--quantile",
     type=float,
-    default=0.5,
-    help=" Quantile of expetile regression(default: 0.5)",
+    default=0.8,
+    help=" Quantile of expetile regression(default: 0.8)",
 )
 parser.add_argument(
     "--temperature",
     type=float,
-    default=1.0,
-    help="Weight of advantange(default: 1.0)",
+    default=3.0,
+    help="Weight of advantange(default: 3.0)",
 )
 parser.add_argument(
     "--city",
@@ -592,7 +592,7 @@ if args.collection:
 
     # Store buffer
     dataset = replay_buffer.to_buffer()
-    pickle.dump(dataset, open(f'Replaymemories/{args.city}_iql.pkl', 'wb'))
+    pickle.dump(dataset, open(f'Replaymemories/{args.city}_iql_H.pkl', 'wb'))
 elif not args.test:
     scenario = Scenario(
         json_file=f"data/scenario_{city}.json",
@@ -655,7 +655,7 @@ elif not args.test:
     model.train()  # set model in train mode
 
     # Metrics
-    loss_log = {"BQ1":[],"RQ1":[],"BQ2":[],"RQ2":[]}
+    loss_log = {"lossq1":[],"lossq2":[],"lossv":[],"q1":[],"q2":[]}
 
     logging.info("Training start")
     for step in range(training_steps):
@@ -668,9 +668,18 @@ elif not args.test:
             if test_reward > best_reward:
                 best_reward = test_reward
                 model.save_checkpoint(path=f"ckpt/offline/" + args.checkpoint_path + "_test.pth")
-            logging.info(f"Training step {step} | Reward: {test_reward}")
+            logging.info(f"Training step {step} | Reward: {test_reward} | Q1 loss: {log['loss Q1']} | Q2 loss: {log['loss Q2']} | V loss:{log['loss V']} | Q1: {log['Q1']} | Q2: {log['Q2']}")       
+
+        loss_log['lossq1'].append(log['loss Q1'])
+        loss_log['lossq2'].append(log['loss Q2'])
+        loss_log['lossv'].append(log['loss V'])
+        loss_log['q1'].append(log['Q1'])
+        loss_log['q1'].append(log['Q2'])
 
         model.save_checkpoint(path=f"ckpt/offline/" + args.checkpoint_path + ".pth")
+
+    with open(f"{args.directory}/{city}_metrics_mode{args.mode}_L_{train_episodes}.pickle", 'wb') as f:
+        pickle.dump(loss_log, f)
 
 else:
     scenario = Scenario(
