@@ -50,11 +50,11 @@ class GNNActor(nn.Module):
             if self.mode == 0:
                 action = (concentration) / (concentration.sum() + 1e-20)
             elif self.mode == 1:
-                action_o = (concentration[:,:,0]-1)/(concentration[:,:,0] + concentration[:,:,1] -2 + 1e-10)
+                action_o = (concentration[:,:,0])/(concentration[:,:,0] + concentration[:,:,1] + 1e-10)
                 action_o[action_o<0] = 0
                 action = action_o.squeeze(0).unsqueeze(-1)
             else:
-                action_o = (concentration[:,:,0]-1)/(concentration[:,:,0] + concentration[:,:,1] -2 + 1e-10)
+                action_o = (concentration[:,:,0])/(concentration[:,:,0] + concentration[:,:,1] + 1e-10)
                 action_o[action_o<0] = 0
                 action_reb = (concentration[:,:,2]) / (concentration[:,:,2].sum() + 1e-10)
                 action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_reb.squeeze(0).unsqueeze(-1)),-1)
