@@ -707,7 +707,8 @@ else:
         device=device,
         mode=args.mode,
         quantile=args.quantile,
-        temperature=args.temperature
+        temperature=args.temperature,
+        json_file=f'data/scenario_{city}.json'
     ).to(device)
 
     print("load model")

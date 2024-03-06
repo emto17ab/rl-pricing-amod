@@ -109,7 +109,7 @@ class GNNParser:
 
 
 # Define calibrated simulation parameters
-demand_ratio = {'san_francisco': 1, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1.8,
+demand_ratio = {'san_francisco': 2, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1.8,
                 'nyc_man_south': 1.8, 'nyc_brooklyn': 9, 'porto': 4, 'rome': 1.8, 'shenzhen_baoan': 2.5,
                 'shenzhen_downtown_west': 2.5, 'shenzhen_downtown_east': 3, 'shenzhen_north': 3
                }
@@ -236,6 +236,7 @@ best_reward = -np.inf  # set best reward
 
 # Check metrics
 epoch_demand_list = []
+epoch_serve_list = []
 epoch_reward_list = []
 epoch_waiting_list = []
 epoch_servedrate_list = []
@@ -312,6 +313,7 @@ for i_episode in range(10):
     # Keep metrics
     epoch_reward_list.append(episode_reward)
     epoch_demand_list.append(env.arrivals)
+    epoch_serve_list.append(episode_served_demand)
     epoch_waiting_list.append(episode_waiting/episode_served_demand)
     epoch_servedrate_list.append(episode_served_demand/env.arrivals)
 
@@ -321,6 +323,6 @@ for i_episode in range(10):
 
 print(f"Average arrival: {np.mean(epoch_demand_list)}")
 print(f"Average reward: {np.mean(epoch_reward_list)}")
-# print(f"Avergaed served demand: {np.mean(epoch_demand_list)}")
+print(f"Avergaed served demand: {np.mean(epoch_serve_list)}")
 print(f"Average waiting time: {np.mean(epoch_waiting_list)}")
 print(f"Avergae serve rate: {np.mean(epoch_servedrate_list)}")

@@ -130,7 +130,7 @@ class GNNParser:
 
 
 # Define calibrated simulation parameters
-demand_ratio = {'san_francisco': 1, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1.8,
+demand_ratio = {'san_francisco': 2, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1.8,
                 'nyc_man_south': 1.8, 'nyc_brooklyn': 9, 'porto': 4, 'rome': 1.8, 'shenzhen_baoan': 2.5,
                 'shenzhen_downtown_west': 2.5, 'shenzhen_downtown_east': 3, 'shenzhen_north': 3
                }
@@ -748,8 +748,8 @@ else:
             elif args.mode == 2:
                 actions_price.append(np.mean(2*np.array(action_rl)[:,0]))
             rebalancing_cost.append(info["rebalancing_cost"])
-            queue.append([len(env.queue[i]) for i in sorted(env.queue.keys())])
-            # queue.append(np.mean([len(env.queue[i]) for i in env.queue.keys()]))
+            # queue.append([len(env.queue[i]) for i in sorted(env.queue.keys())])
+            queue.append(np.mean([len(env.queue[i]) for i in env.queue.keys()]))
         # Send current statistics to screen
         epochs.set_description(
             f"Episode {episode+1} | Reward: {episode_reward:.2f} | ServedDemand: {episode_served_demand:.2f} | Reb. Cost: {episode_rebalancing_cost}"
@@ -770,7 +770,7 @@ else:
             price_mean.append(np.mean(actions_price))
         
         rebalancing_cost_steps.append(rebalancing_cost)
-        queue_steps.append(queue)
+        queue_steps.append(np.mean(queue))
         waiting_steps.append(episode_waiting/episode_served_demand)
 
         rewards.append(episode_reward)
@@ -808,7 +808,7 @@ else:
     print("Served demand (mean, std):", np.mean(demands), np.std(demands))
     print("Rebalancing cost (mean, std):", np.mean(costs), np.std(costs))
     print("Waiting time (mean, std):", np.mean(waiting_steps), np.std(waiting_steps))
-    # print("Queue length (mean, std):", np.mean(queue_steps), np.std(queue_steps))
+    print("Queue length (mean, std):", np.mean(queue_steps), np.std(queue_steps))
     print("Arrivals (mean, std):", np.mean(arrivals), np.std(arrivals))
     print("Rebalancing trips (mean, std):", np.mean(reb_num), np.std(reb_num))
     if args.mode != 0:

@@ -744,7 +744,7 @@ elif not args.test:
 
         model.save_checkpoint(path=f"ckpt/offline/" + args.checkpoint_path + ".pth")
 
-    with open(f"{args.directory}/{city}_loss_mode{args.mode}_w{args.min_q_weight}_{train_episodes}.pickle", 'wb') as f:
+    with open(f"{args.directory}/{city}_loss_mode{args.mode}_w{args.min_q_weight}_{train_episodes}_L.pickle", 'wb') as f:
         pickle.dump(loss_log, f) 
 
 else:
