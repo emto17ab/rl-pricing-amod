@@ -121,7 +121,7 @@ beta = {'san_francisco': 0.2, 'washington_dc': 0.5, 'chicago': 0.5, 'nyc_man_nor
                 'nyc_man_south': 0.5, 'nyc_brooklyn':0.5, 'porto': 0.1, 'rome': 0.1, 'shenzhen_baoan': 0.5,
                 'shenzhen_downtown_west': 0.5, 'shenzhen_downtown_east': 0.5, 'shenzhen_north': 0.5}
 
-test_tstep = {'san_francisco': 3, 'nyc_brooklyn': 4, 'shenzhen_downtown_west': 3}
+test_tstep = {'san_francisco': 3, 'nyc_brooklyn': 4, 'shenzhen_downtown_west': 3, 'nyc_man_middle': 3, 'nyc_man_south': 3, 'nyc_man_north': 3, 'washington_dc':3, 'chicago':3}
 
 parser = argparse.ArgumentParser(description="SAC-GNN")
 
@@ -179,6 +179,31 @@ parser.add_argument(
     default=1,
     help="jitter for demand 0 (default: 1)",
 )
+parser.add_argument(
+    "--maxt",
+    type=int,
+    default=2,
+    help="maximum passenger waiting time (default: 6mins)",
+)
+parser.add_argument(
+    "--impute",
+    type=bool,
+    default=False,
+    help="Whether impute the zero price (default: False)",
+)
+parser.add_argument(
+    "--supply_ratio",
+    type=float,
+    default=1.0,
+    help="supply scaling factor (default: 1)",
+)
+parser.add_argument(
+    "--demand_ratio",
+    type=float,
+    default=1.0,
+    metavar="S",
+    help="demand_ratio (default: 0.5)",
+)
 
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
@@ -193,9 +218,11 @@ scenario = Scenario(
     sd=args.seed,
     json_tstep=args.json_tstep,
     tf=args.max_steps,
+    impute=args.impute,
+    supply_ratio=args.supply_ratio,
 )
 
-env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter)
+env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt)
 
 parser = GNNParser(
     env, T=6, json_file=f"data/scenario_{city}.json"
@@ -209,6 +236,7 @@ best_reward = -np.inf  # set best reward
 
 # Check metrics
 epoch_demand_list = []
+epoch_serve_list = []
 epoch_reward_list = []
 epoch_waiting_list = []
 epoch_servedrate_list = []
@@ -285,6 +313,7 @@ for i_episode in range(10):
     # Keep metrics
     epoch_reward_list.append(episode_reward)
     epoch_demand_list.append(env.arrivals)
+    epoch_serve_list.append(episode_served_demand)
     epoch_waiting_list.append(episode_waiting/episode_served_demand)
     epoch_servedrate_list.append(episode_served_demand/env.arrivals)
 
@@ -294,6 +323,6 @@ for i_episode in range(10):
 
 print(f"Average arrival: {np.mean(epoch_demand_list)}")
 print(f"Average reward: {np.mean(epoch_reward_list)}")
-# print(f"Avergaed served demand: {np.mean(epoch_demand_list)}")
+print(f"Avergaed served demand: {np.mean(epoch_serve_list)}")
 print(f"Average waiting time: {np.mean(epoch_waiting_list)}")
 print(f"Avergae serve rate: {np.mean(epoch_servedrate_list)}")
