@@ -793,27 +793,37 @@ else:
     costs = []
     arrivals = []
 
-    # demand_original_steps = []
-    # demand_scaled_steps = []
-    # reb_steps = []
-    # actions_step = []
-    # available_steps = []
-    # rebalancing_cost_steps = []
-    # price_original_steps = []
-    # queue_steps = []
+    demand_original_steps = []
+    demand_scaled_steps = []
+    reb_steps = []
+    reb_ori_steps = []
+    reb_num = []
+    pax_steps = []
+    pax_wait = []
+    actions_step = []
+    price_mean = []
+    available_steps = []
+    rebalancing_cost_steps = []
+    price_original_steps = []
+    queue_steps = []
+    waiting_steps = []
 
     for episode in range(10):
         actions = []
+        actions_price = []
         rebalancing_cost = []
+        rebalancing_num = []
         queue = []
 
         episode_reward = 0
         episode_served_demand = 0
+        episode_price = []
         episode_rebalancing_cost = 0
+        episode_waiting = 0
         obs = env.reset()
         # Original demand and price
-        # demand_original_steps.append(env.demand)
-        # price_original_steps.append(env.price)
+        demand_original_steps.append(env.demand)
+        price_original_steps.append(env.price)
 
         action_rl = [0]*env.nregion        
         done = False
@@ -891,20 +901,37 @@ else:
             
             episode_served_demand += info["served_demand"]
             episode_rebalancing_cost += info["rebalancing_cost"]
+            episode_waiting += info['served_waiting']
             actions.append(action_rl)
+            if args.mode == 1:
+                actions_price.append(np.mean(2*np.array(action_rl)))
+            elif args.mode == 2:
+                actions_price.append(np.mean(2*np.array(action_rl)[:,0]))
             rebalancing_cost.append(info["rebalancing_cost"])
-            queue.append([len(env.queue[i]) for i in env.queue.keys()])
+            # queue.append([len(env.queue[i]) for i in sorted(env.queue.keys())])
+            queue.append(np.mean([len(env.queue[i]) for i in env.queue.keys()]))
         # Send current statistics to screen
         epochs.set_description(
             f"Episode {episode+1} | Reward: {episode_reward:.2f} | ServedDemand: {episode_served_demand:.2f} | Reb. Cost: {episode_rebalancing_cost}"
         )
         # Log KPIs
-        # demand_scaled_steps.append(env.demand)
-        # available_steps.append(env.acc)
-        # reb_steps.append(env.rebFlow)
-        # actions_step.append(actions)
-        # rebalancing_cost_steps.append(rebalancing_cost)
-        # queue_steps.append(queue)
+        demand_scaled_steps.append(env.demand)
+        available_steps.append(env.acc)
+        reb_steps.append(env.rebFlow)
+        reb_ori_steps.append(env.rebFlow_ori)
+        pax_steps.append(env.paxFlow)
+        pax_wait.append(env.paxWait)
+        reb_od = 0
+        for (o,d),flow in env.rebFlow.items():
+            reb_od += sum(flow.values())
+        reb_num.append(reb_od)
+        actions_step.append(actions)
+        if args.mode != 0:
+            price_mean.append(np.mean(actions_price))
+        
+        rebalancing_cost_steps.append(rebalancing_cost)
+        queue_steps.append(np.mean(queue))
+        waiting_steps.append(episode_waiting/episode_served_demand)
 
         rewards.append(episode_reward)
         demands.append(episode_served_demand)
@@ -916,9 +943,16 @@ else:
     # np.save(f"{args.directory}/{city}_queue_mode{args.mode}.npy", np.array(queue_steps))
     # np.save(f"{args.directory}/{city}_served_mode{args.mode}.npy", np.array([demands,arrivals]))
     # if env.mode != 1: 
-    #     np.save(f"{args.directory}/{city}_cost_mode{args.mode}.npy", np.array(rebalancing_cost_steps))
+        # np.save(f"{args.directory}/{city}_cost_mode{args.mode}.npy", np.array(rebalancing_cost_steps))
     #     with open(f"{args.directory}/{city}_reb_mode{args.mode}.pickle", 'wb') as f:
-    #         pickle.dump(reb_steps, f)                    
+    #         pickle.dump(reb_steps, f)
+    #     with open(f"{args.directory}/{city}_reb_ori_mode{args.mode}.pickle", 'wb') as f:
+    #         pickle.dump(reb_ori_steps, f)
+
+    # with open(f"{args.directory}/{city}_pax_mode{args.mode}.pickle", 'wb') as f:
+    #     pickle.dump(pax_steps, f)
+    # with open(f"{args.directory}/{city}_pax_wait_mode{args.mode}.pickle", 'wb') as f:
+    #     pickle.dump(pax_wait, f)                     
     
     # with open(f"{args.directory}/{city}_demand_ori_mode{args.mode}.pickle", 'wb') as f:
     #     pickle.dump(demand_original_steps, f)
@@ -933,4 +967,9 @@ else:
     print("Rewards (mean, std):", np.mean(rewards), np.std(rewards))
     print("Served demand (mean, std):", np.mean(demands), np.std(demands))
     print("Rebalancing cost (mean, std):", np.mean(costs), np.std(costs))
+    print("Waiting time (mean, std):", np.mean(waiting_steps), np.std(waiting_steps))
+    print("Queue length (mean, std):", np.mean(queue_steps), np.std(queue_steps))
     print("Arrivals (mean, std):", np.mean(arrivals), np.std(arrivals))
+    print("Rebalancing trips (mean, std):", np.mean(reb_num), np.std(reb_num))
+    if args.mode != 0:
+        print("Price scalar (mean, std):", np.mean(price_mean), np.std(price_mean))

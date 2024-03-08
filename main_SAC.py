@@ -573,7 +573,7 @@ else:
         demand_ratio=demand_ratio[city],
         json_hr=json_hr[city],
         sd=args.seed,
-        json_tstep=test_tstep[city],
+        json_tstep=args.json_tstep,
         tf=args.max_steps,
         impute=args.impute,
         supply_ratio=args.supply_ratio
