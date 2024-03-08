@@ -10,6 +10,7 @@ from torch_geometric.nn import GCNConv
 from torch_geometric.utils import grid
 from src.algos.reb_flow_solver import solveRebFlow
 from src.misc.utils import dictsum
+from src.algos.layers import GNNActor, GNNActor1, MLPActor, MLPActor1, GNNCritic1, GNNCritic2, GNNCritic3, GNNCritic4, GNNCritic4_1, GNNCritic5, GNNCritic6, MLPCritic4, MLPCritic4_1
 import random
 import json
 
@@ -92,215 +93,6 @@ class Scalar(nn.Module):
 
 
 #########################################
-############## ACTOR ####################
-#########################################
-class GNNActor(nn.Module):
-    """
-    Actor \pi(a_t | s_t) parametrizing the concentration parameters of a Dirichlet Policy.
-    """
-
-    def __init__(self, in_channels, hidden_size=32, act_dim=6, mode=0):
-        super().__init__()
-        self.mode = mode
-        self.in_channels = in_channels
-        self.act_dim = act_dim
-        self.conv1 = GCNConv(in_channels, in_channels)
-        self.lin1 = nn.Linear(in_channels, hidden_size)
-        self.lin2 = nn.Linear(hidden_size, hidden_size)
-        if mode == 0:
-            self.lin3 = nn.Linear(hidden_size, 1)
-        elif mode == 1:
-            self.lin3 = nn.Linear(hidden_size, 4)
-        else:
-            self.lin3 = nn.Linear(hidden_size, 5)
-
-    def forward(self, state, edge_index, deterministic=False):
-        out = F.relu(self.conv1(state, edge_index))
-        x = out + state
-        x = x.reshape(-1, self.act_dim, self.in_channels)
-        x = F.leaky_relu(self.lin1(x))
-        x = F.leaky_relu(self.lin2(x))
-        x = F.softplus(self.lin3(x))
-        concentration = x.squeeze(-1)
-        if deterministic:
-            if self.mode == 0:
-                action = (concentration) / (concentration.sum() + 1e-20)
-            elif self.mode == 1:
-                action_o = (concentration[:,:,0]-1)/(concentration[:,:,0] + concentration[:,:,1] -2 + 1e-20)
-                action_d = (concentration[:,:,2]-1)/(concentration[:,:,2] + concentration[:,:,3] -2 + 1e-20)
-                action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1)),-1)
-            else:
-                action_o = (concentration[:,:,0]-1)/(concentration[:,:,0] + concentration[:,:,1] -2 + 1e-20)
-                action_d = (concentration[:,:,2]-1)/(concentration[:,:,2] + concentration[:,:,3] -2 + 1e-20)
-                action_reb = (concentration[:,:,4]) / (concentration[:,:,4].sum() + 1e-20)
-                action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1),action_reb.squeeze(0).unsqueeze(-1)),-1)
-            log_prob = None
-        else:
-            if self.mode == 0:
-                m = Dirichlet(concentration + 1e-20)
-                action = m.rsample()
-                log_prob = m.log_prob(action)
-                action = action.squeeze(0).unsqueeze(-1)
-            elif self.mode == 1:
-                m_o = Beta(concentration[:,:,0] + 1e-20, concentration[:,:,1] + 1e-20)
-                m_d = Beta(concentration[:,:,2] + 1e-20, concentration[:,:,3] + 1e-20)
-                action_o = m_o.rsample()
-                action_d = m_d.rsample()
-                log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_d.log_prob(action_d).sum(dim=-1)
-                action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1)),-1)                
-            else:
-                # Price
-                m_o = Beta(concentration[:,:,0] + 1e-20, concentration[:,:,1] + 1e-20)
-                m_d = Beta(concentration[:,:,2] + 1e-20, concentration[:,:,3] + 1e-20)
-                action_o = m_o.rsample()
-                action_d = m_d.rsample()
-                # Rebalancing desired distribution
-                m_reb = Dirichlet(concentration[:,:,-1] + 1e-20)
-                action_reb = m_reb.rsample()              
-                log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_d.log_prob(action_d).sum(dim=-1) + m_reb.log_prob(action_reb)
-                action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_d.squeeze(0).unsqueeze(-1),action_reb.squeeze(0).unsqueeze(-1)),-1)          
-        return action, log_prob
-
-
-#########################################
-############## CRITIC ###################
-#########################################
-
-
-class GNNCritic1(nn.Module):
-    """
-    Architecture 1, GNN, Pointwise Multiplication, Readout, FC
-    """
-
-    def __init__(self, in_channels, hidden_size=256, act_dim=6):
-        super().__init__()
-        self.act_dim = act_dim
-        self.in_channels = in_channels
-        self.conv1 = GCNConv(in_channels, in_channels)
-        self.lin1 = nn.Linear(in_channels, hidden_size)
-        self.lin2 = nn.Linear(hidden_size, hidden_size)
-        self.lin3 = nn.Linear(hidden_size, 1)
-
-    def forward(self, state, edge_index, action):
-        out = F.relu(self.conv1(state, edge_index))
-        x = out + state
-        x = x.reshape(-1, self.act_dim, self.in_channels)  # (B,N,21)
-        action = action * 10
-        action = action.unsqueeze(-1)  # (B,N,1)
-        x = x * action  # pointwise multiplication (B,N,21)
-        x = x.sum(dim=1)  # (B,21)
-        x = F.relu(self.lin1(x))  # (B,H)
-        x = F.relu(self.lin2(x))  # (B,H)
-        x = self.lin3(x).squeeze(-1)  # (B)
-        return x
-
-
-class GNNCritic2(nn.Module):
-    """
-    Architecture 2, GNN, Readout, Concatenation, FC
-    """
-
-    def __init__(self, in_channels, hidden_size=256, act_dim=6):
-        super().__init__()
-        self.act_dim = act_dim
-        self.conv1 = GCNConv(in_channels, in_channels)
-        self.lin1 = nn.Linear(in_channels + act_dim, hidden_size)
-        self.lin2 = nn.Linear(hidden_size, hidden_size)
-        self.lin3 = nn.Linear(hidden_size, 1)
-
-    def forward(self, state, edge_index, action):
-        out = F.relu(self.conv1(state, edge_index))
-        x = out + state
-        x = x.reshape(-1, self.act_dim, 21)  # (B,N,21)
-        x = torch.sum(x, dim=1)  # (B, 21)
-        concat = torch.cat([x, action], dim=-1)  # (B, 21+N)
-        x = F.relu(self.lin1(concat))  # (B,H)
-        x = F.relu(self.lin2(x))  # (B,H)
-        x = self.lin3(x).squeeze(-1)  # B
-        return x
-
-
-class GNNCritic3(nn.Module):
-    """
-    Architecture 3: Concatenation, GNN, Readout, FC
-    """
-
-    def __init__(self, in_channels, hidden_size=32, act_dim=6):
-        super().__init__()
-        self.act_dim = act_dim
-        self.conv1 = GCNConv(22, 22)
-        self.lin1 = nn.Linear(22, hidden_size)
-        self.lin2 = nn.Linear(hidden_size, hidden_size)
-        self.lin3 = nn.Linear(hidden_size, 1)
-
-    def forward(self, state, edge_index, action):
-        cat = torch.cat([state, action.unsqueeze(-1)], dim=-1)  # (B,N,22)
-        out = F.relu(self.conv1(cat, edge_index))
-        x = out + cat
-        x = x.reshape(-1, self.act_dim, 22)  # (B,N,22)
-        x = F.relu(self.lin1(x))  # (B, H)
-        x = F.relu(self.lin2(x))  # (B, H)
-        x = torch.sum(x, dim=1)  # (B, 22)
-        x = self.lin3(x).squeeze(-1)  # (B)
-        return x
-
-
-class GNNCritic4(nn.Module):
-    """
-    Architecture 4: GNN, Concatenation, FC, Readout
-    """
-
-    def __init__(self, in_channels, hidden_size=32, act_dim=6, mode=1):
-        super().__init__()
-        self.act_dim = act_dim
-        self.mode = mode
-        self.conv1 = GCNConv(in_channels, in_channels)
-        self.lin1 = nn.Linear(in_channels + self.mode + 1, hidden_size)
-        self.lin2 = nn.Linear(hidden_size, hidden_size)
-        self.lin3 = nn.Linear(hidden_size, 1)
-        self.in_channels = in_channels
-
-    def forward(self, state, edge_index, action):
-        out = F.relu(self.conv1(state, edge_index))
-        x = out + state
-        x = x.reshape(-1, self.act_dim, self.in_channels)  # (B,N,21)
-        concat = torch.cat([x, action], dim=-1)  # (B,N,22)
-        x = F.relu(self.lin1(concat))
-        x = F.relu(self.lin2(x))  # (B, N, H)
-        x = torch.sum(x, dim=1)  # (B, H)
-        x = self.lin3(x).squeeze(-1)  # (B)
-        return x
-
-
-class GNNCritic5(nn.Module):
-    """
-    Architecture 5, GNN, Pointwise Multiplication, FC, Readout
-    """
-
-    def __init__(self, in_channels, hidden_size=256, act_dim=6):
-        super().__init__()
-        self.act_dim = act_dim
-        self.in_channels = in_channels
-        self.conv1 = GCNConv(in_channels, in_channels)
-        self.lin1 = nn.Linear(in_channels, hidden_size)
-        self.lin2 = nn.Linear(hidden_size, hidden_size)
-        self.lin3 = nn.Linear(hidden_size, 1)
-
-    def forward(self, state, edge_index, action):
-        out = F.relu(self.conv1(state, edge_index))
-        x = out + state
-        x = x.reshape(-1, self.act_dim, self.in_channels)  # (B,N,21)
-        action = action + 1
-        action = action.unsqueeze(-1)  # (B,N,1)
-        x = x * action  # pointwise multiplication (B,N,21)
-        x = F.relu(self.lin1(x))  # (B,N,H)
-        x = F.relu(self.lin2(x))  # (B,N,H)
-        x = x.sum(dim=1)  # (B,H)
-        x = self.lin3(x).squeeze(-1)  # (B)
-        return x
-
-
-#########################################
 ############## A2C AGENT ################
 #########################################
 
@@ -330,6 +122,7 @@ class SAC(nn.Module):
         min_q_version=3,
         clip=200,
         critic_version=4,
+        price_version = "GNN-origin",
         mode = 1,
         q_lag = 10
     ):
@@ -342,6 +135,7 @@ class SAC(nn.Module):
         self.path = None
         self.act_dim = env.nregion
         self.mode = mode
+        self.price = price_version
 
         # SAC parameters
         self.alpha = alpha
@@ -372,7 +166,24 @@ class SAC(nn.Module):
 
         self.replay_buffer = ReplayData(device=device)
         # nnets
-        self.actor = GNNActor(self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode)
+        self.edges=None
+        if price_version == 'GNN-origin':
+            self.actor = GNNActor(self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode)
+        elif price_version == 'GNN-od':
+            self.edges = torch.zeros(len(env.region)**2,2).long()
+            k = 0
+            for i in env.region:
+                for j in env.region:
+                    self.edges[k,0] = i
+                    self.edges[k,1] = j
+                    k += 1
+            self.actor = GNNActor1(self.edges,self.input_size,self.hidden_size, act_dim=self.act_dim, mode=mode)
+        elif price_version == 'MLP-od':
+            self.actor = MLPActor(self.input_size,self.hidden_size, act_dim=self.act_dim, mode=mode)
+        elif price_version == 'MLP-origin':
+            self.actor = MLPActor1(self.input_size,self.hidden_size, act_dim=self.act_dim, mode=mode)
+        else:
+            raise ValueError("Price version only allowed among 'GNN-origin', 'GNN-od', 'MLP-origin', and 'MLP-od'.")
     
         if critic_version == 1:
             GNNCritic = GNNCritic1
@@ -381,24 +192,32 @@ class SAC(nn.Module):
         if critic_version == 3:
             GNNCritic = GNNCritic3
         if critic_version == 4:
-            GNNCritic = GNNCritic4
+            if price_version == 'GNN-origin':
+                GNNCritic = GNNCritic4
+            elif price_version == 'GNN-od':
+                GNNCritic = GNNCritic4_1
+            elif price_version == 'MLP-od':
+                GNNCritic = MLPCritic4
+            elif price_version == 'MLP-origin':
+                GNNCritic = MLPCritic4_1
         if critic_version == 5:
             GNNCritic = GNNCritic5
+
         self.critic1 = GNNCritic(
-            self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode
+            self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode, edges=self.edges
         )
         self.critic2 = GNNCritic(
-            self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode
+            self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode, edges=self.edges
         )
         assert self.critic1.parameters() != self.critic2.parameters()
    
 
         self.critic1_target = GNNCritic(
-            self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode
+            self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode, edges=self.edges
         )
         self.critic1_target.load_state_dict(self.critic1.state_dict())
         self.critic2_target = GNNCritic(
-            self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode
+            self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode, edges=self.edges
         )
         self.critic2_target.load_state_dict(self.critic2.state_dict())
 
@@ -454,7 +273,8 @@ class SAC(nn.Module):
             data.x_t,
             data.edge_index_t,
             data.reward,
-            data.action.reshape(-1, self.nodes, self.mode+1),
+            # data.action.reshape(-1, self.nodes, self.mode+1),
+            data.action.reshape(-1, self.nodes, max(self.mode,1)) if self.price.split('-')[1]=='origin' else  data.action.reshape(-1, self.nodes, self.nodes),
         )
 
         q1 = self.critic1(state_batch, edge_index, action_batch)
@@ -536,13 +356,10 @@ class SAC(nn.Module):
             p.requires_grad = False
 
         # one gradient descent step for policy network
-        with autograd.detect_anomaly():
-            self.optimizers["a_optimizer"].zero_grad()
-            loss_pi = self.compute_loss_pi(data)
-            loss_pi.backward(retain_graph=False)
+        self.optimizers["a_optimizer"].zero_grad()
+        loss_pi = self.compute_loss_pi(data)
+        loss_pi.backward(retain_graph=False)
         actor_grad_norm = nn.utils.clip_grad_norm_(self.actor.parameters(), 10)
-        if torch.isnan(actor_grad_norm).any():
-            print("Nan graidient after clip!")
         self.optimizers["a_optimizer"].step()
 
         # Unfreeze Q-networks
@@ -619,7 +436,7 @@ class SAC(nn.Module):
 
                     eps_reward += paxreward
 
-                    action_rl = self.select_action(o)  
+                    action_rl = self.select_action(o,deterministic=True)  
 
                     env.matching_update()
                 elif env.mode == 2:
@@ -628,12 +445,12 @@ class SAC(nn.Module):
                     o = parser.parse_obs(obs=obs)
                     eps_reward += paxreward
 
-                    action_rl = self.select_action(o)
+                    action_rl = self.select_action(o,deterministic=True)
 
                     # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
                     desiredAcc = {
                         env.region[i]: int(
-                            action_rl[i][2] * dictsum(env.acc, env.time + 1))
+                            action_rl[i][-1] * dictsum(env.acc, env.time + 1))
                         for i in range(len(env.region))
                     }
                     # solve minimum rebalancing distance problem (Step 3 in paper)

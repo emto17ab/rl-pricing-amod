@@ -142,7 +142,7 @@ beta = {'san_francisco': 0.2, 'washington_dc': 0.5, 'chicago': 0.5, 'nyc_man_nor
                 'nyc_man_south': 0.5, 'nyc_brooklyn':0.5, 'porto': 0.1, 'rome': 0.1, 'shenzhen_baoan': 0.5,
                 'shenzhen_downtown_west': 0.5, 'shenzhen_downtown_east': 0.5, 'shenzhen_north': 0.5}
 
-test_tstep = {'san_francisco': 3, 'nyc_brooklyn': 4, 'shenzhen_downtown_west': 3}
+test_tstep = {'san_francisco': 3, 'nyc_brooklyn': 4, 'shenzhen_downtown_west': 3, 'nyc_man_middle': 3, 'nyc_man_south': 3, 'nyc_man_north': 3, 'washington_dc':3, 'chicago':3}
 
 parser = argparse.ArgumentParser(description="SAC-GNN")
 
@@ -152,10 +152,10 @@ parser.add_argument(
 )
 parser.add_argument(
     "--demand_ratio",
-    type=int,
-    default=0.5,
+    type=float,
+    default=1,
     metavar="S",
-    help="demand_ratio (default: 0.5)",
+    help="demand_ratio (default: 1)",
 )
 parser.add_argument(
     "--json_hr", type=int, default=7, metavar="S", help="json_hr (default: 7)"
@@ -170,7 +170,7 @@ parser.add_argument(
 parser.add_argument(
     '--mode', 
     type=int, 
-    default=0,
+    default=1,
     help='rebalancing mode. (0:manul, 1:pricing, 2:both. default 1)',
 )
 
@@ -231,6 +231,12 @@ parser.add_argument(
     help="jitter for demand 0 (default: 1)",
 )
 parser.add_argument(
+    "--maxt",
+    type=int,
+    default=2,
+    help="maximum passenger waiting time (default: 6mins)",
+)
+parser.add_argument(
     "--alpha",
     type=float,
     default=0.3,
@@ -247,6 +253,12 @@ parser.add_argument(
     type=str,
     default="SAC",
     help="name of checkpoint file to save/load (default: SAC)",
+)
+parser.add_argument(
+    "--load",
+    type=bool,
+    default=False,
+    help="either to start training from checkpoint (default: False)",
 )
 parser.add_argument(
     "--clip",
@@ -269,7 +281,7 @@ parser.add_argument(
 parser.add_argument(
     "--q_lag",
     type=int,
-    default=10,
+    default=1,
     help="update frequency of Q target networks (default: 10)",
 )
 parser.add_argument(
@@ -290,6 +302,25 @@ parser.add_argument(
     default=4,
     help="critic version (default: 4)",
 )
+parser.add_argument(
+    "--price_version",
+    type=str,
+    default="GNN-origin",
+    help="price network version",
+)
+parser.add_argument(
+    "--impute",
+    type=int,
+    default=0,
+    help="Whether impute the zero price (default: False)",
+)
+parser.add_argument(
+    "--supply_ratio",
+    type=float,
+    default=1.0,
+    help="supply scaling factor (default: 1)",
+)
+
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
 device = torch.device("cuda" if args.cuda else "cpu")
@@ -304,13 +335,33 @@ if not args.test:
         sd=args.seed,
         json_tstep=args.json_tstep,
         tf=args.max_steps,
+        impute=args.impute,
+        supply_ratio=args.supply_ratio,
     )
 
-    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter)
+    # d = {
+    # (2, 3): 6,
+    # (2, 0): 4,
+    # (0, 3): 4,
+    # "default": 1,
+    # }
+    # r = {
+    # 0: [1, 1, 1, 2, 2, 3, 3, 1, 1, 1, 2, 2],
+    # 1: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    # 2: [1, 1, 1, 2, 2, 3, 4, 4, 2, 1, 1, 1],
+    # 3: [1, 1, 1, 2, 2, 2, 2, 2, 2, 1, 1, 1],
+    # }
+    # scenario = Scenario(tf=20, demand_input=d, demand_ratio=r, ninit=30, N1=2, N2=2)
+
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt)
 
     parser = GNNParser(
         env, T=6, json_file=f"data/scenario_{city}.json"
     )  # Timehorizon T=6 (K in paper)
+
+    # parser = GNNParser(
+    #     env, T=6
+    # )  # Timehorizon T=6 (K in paper)
 
     model = SAC(
         env=env,
@@ -323,9 +374,14 @@ if not args.test:
         use_automatic_entropy_tuning=False,
         clip=args.clip,
         critic_version=args.critic_version,
+        price_version = args.price_version,
         mode=args.mode,
         q_lag=args.q_lag
     ).to(device)
+
+    if args.load:
+        print("load checkpoint")
+        model.load_checkpoint(path=f"ckpt/{args.checkpoint_path}.pth")
 
     train_episodes = args.max_episodes  # set max number of training episodes
     T = args.max_steps  # set episode length
@@ -433,7 +489,7 @@ if not args.test:
                 # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
                 desiredAcc = {
                     env.region[i]: int(
-                        action_rl[i][2] * dictsum(env.acc, env.time + 1))
+                        action_rl[i][-1] * dictsum(env.acc, env.time + 1))
                     for i in range(len(env.region))
                 }
                 # solve minimum rebalancing distance problem (Step 3 in paper)
@@ -489,14 +545,16 @@ if not args.test:
                 path=f"ckpt/{args.checkpoint_path}_sample.pth")
             best_reward = episode_reward
         model.save_checkpoint(path=f"ckpt/{args.checkpoint_path}_running.pth")
-        if i_episode % 10 == 0:
+        if i_episode % 100 == 0:
             test_reward, test_served_demand, test_rebalancing_cost = model.test_agent(
-                1, env, args.cplexpath, args.directory, parser=parser
+                10, env, args.cplexpath, args.directory, parser=parser
             )
             if test_reward >= best_reward_test:
                 best_reward_test = test_reward
                 model.save_checkpoint(
                     path=f"ckpt/{args.checkpoint_path}_test.pth")
+        # if (i_episode>=30 and i_episode<=50 and i_episode % 10 == 0):
+        #     model.save_checkpoint(path=f"ckpt/{args.checkpoint_path}_running_{i_episode}.pth")          
     # Save metrics file
     metricPath = f"{args.directory}/train_logs/"
     if not os.path.exists(metricPath):
@@ -515,12 +573,35 @@ else:
         demand_ratio=demand_ratio[city],
         json_hr=json_hr[city],
         sd=args.seed,
-        json_tstep=test_tstep[city],
+        json_tstep=args.json_tstep,
         tf=args.max_steps,
+        impute=args.impute,
+        supply_ratio=args.supply_ratio
     )
 
-    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter)
-    parser = GNNParser(env, T=6, json_file=f"data/scenario_{city}.json")
+    # d = {
+    # (2, 3): 6,
+    # (2, 0): 4,
+    # (0, 3): 4,
+    # "default": 1,
+    # }
+    # r = {
+    # 0: [1, 1, 1, 2, 2, 3, 3, 1, 1, 1, 2, 2],
+    # 1: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+    # 2: [1, 1, 1, 2, 2, 3, 4, 4, 2, 1, 1, 1],
+    # 3: [1, 1, 1, 2, 2, 2, 2, 2, 2, 1, 1, 1],
+    # }
+    # scenario = Scenario(tf=20, demand_input=d, demand_ratio=r, ninit=30, N1=2, N2=2)
+
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt)
+
+    parser = GNNParser(
+        env, T=6, json_file=f"data/scenario_{city}.json"
+    )  # Timehorizon T=6 (K in paper)
+
+    # parser = GNNParser(
+    #     env, T=6
+    # )  # Timehorizon T=6 (K in paper)
 
     model = SAC(
         env=env,
@@ -533,6 +614,7 @@ else:
         use_automatic_entropy_tuning=False,
         clip=args.clip,
         critic_version=args.critic_version,
+        price_version = args.price_version,
         mode=args.mode,
         q_lag=args.q_lag
     ).to(device)
@@ -553,20 +635,31 @@ else:
 
     demand_original_steps = []
     demand_scaled_steps = []
+    reb_steps = []
+    reb_ori_steps = []
+    reb_num = []
+    pax_steps = []
+    pax_wait = []
     actions_step = []
+    price_mean = []
     available_steps = []
     rebalancing_cost_steps = []
     price_original_steps = []
     queue_steps = []
+    waiting_steps = []
 
     for episode in range(10):
         actions = []
+        actions_price = []
         rebalancing_cost = []
+        rebalancing_num = []
         queue = []
 
         episode_reward = 0
         episode_served_demand = 0
+        episode_price = []
         episode_rebalancing_cost = 0
+        episode_waiting = 0
         obs = env.reset()
         # Original demand and price
         demand_original_steps.append(env.demand)
@@ -615,7 +708,7 @@ else:
 
                 episode_reward += paxreward
 
-                action_rl = model.select_action(o)  
+                action_rl = model.select_action(o, deterministic=True)  
 
                 env.matching_update()
             elif env.mode == 2:
@@ -624,12 +717,12 @@ else:
                 o = parser.parse_obs(obs=obs)
                 episode_reward += paxreward
 
-                action_rl = model.select_action(o)
+                action_rl = model.select_action(o, deterministic=True)
 
                 # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
                 desiredAcc = {
                     env.region[i]: int(
-                        action_rl[i][2] * dictsum(env.acc, env.time + 1))
+                        action_rl[i][-1] * dictsum(env.acc, env.time + 1))
                     for i in range(len(env.region))
                 }
                 # solve minimum rebalancing distance problem (Step 3 in paper)
@@ -643,15 +736,20 @@ else:
                 # Take rebalancing action in environment
                 _, rebreward, done, info, _, _ = env.reb_step(rebAction)
                 episode_reward += rebreward
-                episode_reward += rebreward
             else:
                 raise ValueError("Only mode 0, 1, and 2 are allowed")  
             
             episode_served_demand += info["served_demand"]
             episode_rebalancing_cost += info["rebalancing_cost"]
+            episode_waiting += info['served_waiting']
             actions.append(action_rl)
+            if args.mode == 1:
+                actions_price.append(np.mean(2*np.array(action_rl)))
+            elif args.mode == 2:
+                actions_price.append(np.mean(2*np.array(action_rl)[:,0]))
             rebalancing_cost.append(info["rebalancing_cost"])
-            queue.append([len(env.queue[i]) for i in env.queue.keys()])
+            # queue.append([len(env.queue[i]) for i in sorted(env.queue.keys())])
+            queue.append(np.mean([len(env.queue[i]) for i in env.queue.keys()]))
         # Send current statistics to screen
         epochs.set_description(
             f"Episode {episode+1} | Reward: {episode_reward:.2f} | ServedDemand: {episode_served_demand:.2f} | Reb. Cost: {episode_rebalancing_cost}"
@@ -659,9 +757,21 @@ else:
         # Log KPIs
         demand_scaled_steps.append(env.demand)
         available_steps.append(env.acc)
+        reb_steps.append(env.rebFlow)
+        reb_ori_steps.append(env.rebFlow_ori)
+        pax_steps.append(env.paxFlow)
+        pax_wait.append(env.paxWait)
+        reb_od = 0
+        for (o,d),flow in env.rebFlow.items():
+            reb_od += sum(flow.values())
+        reb_num.append(reb_od)
         actions_step.append(actions)
+        if args.mode != 0:
+            price_mean.append(np.mean(actions_price))
+        
         rebalancing_cost_steps.append(rebalancing_cost)
-        queue_steps.append(queue)
+        queue_steps.append(np.mean(queue))
+        waiting_steps.append(episode_waiting/episode_served_demand)
 
         rewards.append(episode_reward)
         demands.append(episode_served_demand)
@@ -671,20 +781,35 @@ else:
     # Save metrics file
     np.save(f"{args.directory}/{city}_actions_mode{args.mode}.npy", np.array(actions_step))
     np.save(f"{args.directory}/{city}_queue_mode{args.mode}.npy", np.array(queue_steps))
+    # np.save(f"{args.directory}/{city}_served_mode{args.mode}.npy", np.array([demands,arrivals]))
     if env.mode != 1: 
-        np.save(f"{args.directory}/{city}_cost_mode{args.mode}.npy", np.array(rebalancing_cost_steps))            
+        # np.save(f"{args.directory}/{city}_cost_mode{args.mode}.npy", np.array(rebalancing_cost_steps))
+        with open(f"{args.directory}/{city}_reb_mode{args.mode}.pickle", 'wb') as f:
+            pickle.dump(reb_steps, f)
+        with open(f"{args.directory}/{city}_reb_ori_mode{args.mode}.pickle", 'wb') as f:
+            pickle.dump(reb_ori_steps, f)
+
+    with open(f"{args.directory}/{city}_pax_mode{args.mode}.pickle", 'wb') as f:
+        pickle.dump(pax_steps, f)
+    with open(f"{args.directory}/{city}_pax_wait_mode{args.mode}.pickle", 'wb') as f:
+        pickle.dump(pax_wait, f)                     
     
-    with open(f"{args.directory}/{city}_demand_ori_mode{args.mode}.pickle", 'wb') as f:
-        pickle.dump(demand_original_steps, f)
-    with open(f"{args.directory}/{city}_price_ori_mode{args.mode}.pickle", 'wb') as f:
-        pickle.dump(price_original_steps, f)
+    # with open(f"{args.directory}/{city}_demand_ori_mode{args.mode}.pickle", 'wb') as f:
+    #     pickle.dump(demand_original_steps, f)
+    # with open(f"{args.directory}/{city}_price_ori_mode{args.mode}.pickle", 'wb') as f:
+    #     pickle.dump(price_original_steps, f)
 
     with open(f"{args.directory}/{city}_demand_scaled_mode{args.mode}.pickle", 'wb') as f:
         pickle.dump(demand_scaled_steps, f)    
-    with open(f"{args.directory}/{city}_acc_mode{args.mode}.pickle", 'wb') as f:
-        pickle.dump(available_steps, f)
+    # with open(f"{args.directory}/{city}_acc_mode{args.mode}.pickle", 'wb') as f:
+    #     pickle.dump(available_steps, f)
 
     print("Rewards (mean, std):", np.mean(rewards), np.std(rewards))
     print("Served demand (mean, std):", np.mean(demands), np.std(demands))
     print("Rebalancing cost (mean, std):", np.mean(costs), np.std(costs))
+    print("Waiting time (mean, std):", np.mean(waiting_steps), np.std(waiting_steps))
+    print("Queue length (mean, std):", np.mean(queue_steps), np.std(queue_steps))
     print("Arrivals (mean, std):", np.mean(arrivals), np.std(arrivals))
+    print("Rebalancing trips (mean, std):", np.mean(reb_num), np.std(reb_num))
+    if args.mode != 0:
+        print("Price scalar (mean, std):", np.mean(price_mean), np.std(price_mean))
