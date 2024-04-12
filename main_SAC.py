@@ -320,6 +320,12 @@ parser.add_argument(
     default=1.0,
     help="supply scaling factor (default: 1)",
 )
+parser.add_argument(
+    "--small",
+    type=bool,
+    default=False,
+    help="whether to run the small hypothetical case (default: False)",
+)
 
 args = parser.parse_args()
 args.cuda = not args.no_cuda and torch.cuda.is_available()
@@ -328,40 +334,42 @@ city = args.city
 
 
 if not args.test:
-    scenario = Scenario(
-        json_file=f"data/scenario_{city}.json",
-        demand_ratio=demand_ratio[city],
-        json_hr=json_hr[city],
-        sd=args.seed,
-        json_tstep=args.json_tstep,
-        tf=args.max_steps,
-        impute=args.impute,
-        supply_ratio=args.supply_ratio,
-    )
-
-    # d = {
-    # (2, 3): 6,
-    # (2, 0): 4,
-    # (0, 3): 4,
-    # "default": 1,
-    # }
-    # r = {
-    # 0: [1, 1, 1, 2, 2, 3, 3, 1, 1, 1, 2, 2],
-    # 1: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-    # 2: [1, 1, 1, 2, 2, 3, 4, 4, 2, 1, 1, 1],
-    # 3: [1, 1, 1, 2, 2, 2, 2, 2, 2, 1, 1, 1],
-    # }
-    # scenario = Scenario(tf=20, demand_input=d, demand_ratio=r, ninit=30, N1=2, N2=2)
+    if not args.small:
+        scenario = Scenario(
+            json_file=f"data/scenario_{city}.json",
+            demand_ratio=demand_ratio[city],
+            json_hr=json_hr[city],
+            sd=args.seed,
+            json_tstep=args.json_tstep,
+            tf=args.max_steps,
+            impute=args.impute,
+            supply_ratio=args.supply_ratio,
+        )
+    else:
+        d = {
+        (2, 3): 6,
+        (2, 0): 4,
+        (0, 3): 4,
+        "default": 1,
+        }
+        r = {
+        0: [1, 1, 1, 2, 2, 3, 3, 1, 1, 1, 2, 2],
+        1: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+        2: [1, 1, 1, 2, 2, 3, 4, 4, 2, 1, 1, 1],
+        3: [1, 1, 1, 2, 2, 2, 2, 2, 2, 1, 1, 1],
+        }
+        scenario = Scenario(tf=20, demand_input=d, demand_ratio=r, ninit=30, N1=2, N2=2)
 
     env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt)
 
-    parser = GNNParser(
-        env, T=6, json_file=f"data/scenario_{city}.json"
-    )  # Timehorizon T=6 (K in paper)
-
-    # parser = GNNParser(
-    #     env, T=6
-    # )  # Timehorizon T=6 (K in paper)
+    if not args.small:
+        parser = GNNParser(
+            env, T=6, json_file=f"data/scenario_{city}.json"
+        )  # Timehorizon T=6 (K in paper)
+    else:
+        parser = GNNParser(
+            env, T=6
+        )  # Timehorizon T=6 (K in paper)
 
     model = SAC(
         env=env,
@@ -568,40 +576,43 @@ if not args.test:
     with open(f"{args.directory}/train_logs/{city}_export_mode{args.mode}_{train_episodes}.pickle", 'wb') as f:
         pickle.dump(export, f) 
 else:
-    scenario = Scenario(
-        json_file=f"data/scenario_{city}.json",
-        demand_ratio=demand_ratio[city],
-        json_hr=json_hr[city],
-        sd=args.seed,
-        json_tstep=args.json_tstep,
-        tf=args.max_steps,
-        impute=args.impute,
-        supply_ratio=args.supply_ratio
-    )
+    if not args.small:
+        scenario = Scenario(
+            json_file=f"data/scenario_{city}.json",
+            demand_ratio=demand_ratio[city],
+            json_hr=json_hr[city],
+            sd=args.seed,
+            json_tstep=args.json_tstep,
+            tf=args.max_steps,
+            impute=args.impute,
+            supply_ratio=args.supply_ratio
+        )
+    else:
 
-    # d = {
-    # (2, 3): 6,
-    # (2, 0): 4,
-    # (0, 3): 4,
-    # "default": 1,
-    # }
-    # r = {
-    # 0: [1, 1, 1, 2, 2, 3, 3, 1, 1, 1, 2, 2],
-    # 1: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
-    # 2: [1, 1, 1, 2, 2, 3, 4, 4, 2, 1, 1, 1],
-    # 3: [1, 1, 1, 2, 2, 2, 2, 2, 2, 1, 1, 1],
-    # }
-    # scenario = Scenario(tf=20, demand_input=d, demand_ratio=r, ninit=30, N1=2, N2=2)
+        d = {
+        (2, 3): 6,
+        (2, 0): 4,
+        (0, 3): 4,
+        "default": 1,
+        }
+        r = {
+        0: [1, 1, 1, 2, 2, 3, 3, 1, 1, 1, 2, 2],
+        1: [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
+        2: [1, 1, 1, 2, 2, 3, 4, 4, 2, 1, 1, 1],
+        3: [1, 1, 1, 2, 2, 2, 2, 2, 2, 1, 1, 1],
+        }
+        scenario = Scenario(tf=20, demand_input=d, demand_ratio=r, ninit=30, N1=2, N2=2)
 
     env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt)
 
-    parser = GNNParser(
-        env, T=6, json_file=f"data/scenario_{city}.json"
-    )  # Timehorizon T=6 (K in paper)
-
-    # parser = GNNParser(
-    #     env, T=6
-    # )  # Timehorizon T=6 (K in paper)
+    if not args.small:
+        parser = GNNParser(
+            env, T=6, json_file=f"data/scenario_{city}.json"
+        )  # Timehorizon T=6 (K in paper)
+    else:
+        parser = GNNParser(
+            env, T=6
+        )  # Timehorizon T=6 (K in paper)
 
     model = SAC(
         env=env,
