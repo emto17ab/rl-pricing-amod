@@ -116,7 +116,7 @@ class GNNActor1(nn.Module):
         x = F.softplus(self.lin2(x))
         concentration = x.squeeze(-1)
         if deterministic:
-            action = (concentration[:,:,0]-1)/(concentration[:,:,0] + concentration[:,:,1] -2 + 1e-10)
+            action = (concentration[:,:,0])/(concentration[:,:,0] + concentration[:,:,1] + 1e-10)
             action[action<0] = 0
             action = action.reshape(-1,self.nregion,self.nregion).squeeze(0)
             log_prob = None
@@ -150,7 +150,7 @@ class MLPActor(nn.Module):
         x = F.softplus(self.lin4(x))
         concentration = x.squeeze(-1)
         if deterministic:
-            action = (concentration[:,:self.nregion*self.nregion]-1)/(concentration[:,:self.nregion*self.nregion] + concentration[:,self.nregion*self.nregion:] -2 + 1e-10)
+            action = (concentration[:,:self.nregion*self.nregion])/(concentration[:,:self.nregion*self.nregion] + concentration[:,self.nregion*self.nregion:] + 1e-10)
             action[action<0] = 0
             action = action.reshape(-1,self.nregion,self.nregion).squeeze(0)
             log_prob = None
