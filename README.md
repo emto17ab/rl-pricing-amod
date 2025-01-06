@@ -1,12 +1,18 @@
-# Graph Meta-RL for AMoD
+# Graph-RL for joint rebalancing and pricing in AMoD
 Official implementation of 'Learning joint rebalancing and dynamic pricing policies for Autonomous Mobility-on-Demand'. The paper is curently under review and the link to the paper will be added as soon as it becomes publicly available.
 
 ## Prerequisites
 
-You will need to have a working IBM CPLEX installation. If you are a student or academic, IBM is releasing CPLEX Optimization Studio for free. You can find more info [here](https://community.ibm.com/community/user/datascience/blogs/xavier-nodet1/2020/07/09/cplex-free-for-students)
+You will need to have a working IBM CPLEX installation. If you are a student or academic, IBM is releasing CPLEX Optimization Studio for free. You can find more info [here](https://community.ibm.com/community/user/datascience/blogs/xavier-nodet1/2020/07/09/cplex-free-for-students).
 
-To install all required dependencies, run
+The code is built with python 3.9.18. Different python version might result in error of running the code. To install all required dependencies, run
 ```
+pip install -r requirements.txt
+```
+It is recommended to create a virtual environment before installing the packages. If you are using Anaconda or minicoda, run
+```
+conda create --name {env_name} python==3.9
+conda activaye {env_name}
 pip install -r requirements.txt
 ```
 
