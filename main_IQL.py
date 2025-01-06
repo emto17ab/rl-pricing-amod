@@ -338,12 +338,6 @@ parser.add_argument(
     help="name of the offline dataset file",
 )
 parser.add_argument(
-    "--min_q_weight",
-    type=float,
-    default=5,
-    help="CQL coefficient (eta in paper)",
-)
-parser.add_argument(
     "--samples_buffer",
     type=int,
     default=10000,
