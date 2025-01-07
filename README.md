@@ -9,7 +9,7 @@ The code is built with python 3.9.18. Different python version might result in e
 ```
 pip install -r requirements.txt
 ```
-It is recommended to create a virtual environment before installing the packages. If you are using Anaconda or minicoda, run
+It is recommended to create a virtual environment before installing the packages. If you are using Anaconda or miniconda, run
 ```
 conda create --name {env_name} python==3.9
 conda activaye {env_name}
@@ -18,9 +18,9 @@ pip install -r requirements.txt
 
 ## Contents
 
-* `src/algos/sac.py`: PyTorch implementation of Temporal Graph Networks for A2C.
-* `src/algos/IQL.py`: PyTorch implementation of Temporal Graph Networks for IQL.
-* `src/algos/CQL.py`: PyTorch implementation of Temporal Graph Networks for CQL.
+* `src/algos/sac.py`: PyTorch implementation of Graph Networks for A2C.
+* `src/algos/IQL.py`: PyTorch implementation of Graph Networks for IQL.
+* `src/algos/CQL.py`: PyTorch implementation of Graph Networks for CQL.
 * `src/algos/reb_flow_solver.py`: thin wrapper around CPLEX formulation of the Minimum Rebalancing Cost problem.
 * `src/envs/amod_env.py`: AMoD simulator.
 * `src/cplex_mod/`: CPLEX formulation of Rebalancing and Matching problems.
@@ -48,7 +48,7 @@ model arguments:
     --alpha           entropy coefficient (default: 0.3)
     --p_lr            Actor learning reate (default 1e-3)
     --q_lr            Critic learning rate (default: 1e-3)
-    --checkpoint_path name of the model checkpoint file to load from/save to
+    --checkpoint_path name of the model checkpoint file to load from/save to. The checkpoint file will be saved to/load from path: ckpt/{checkpoint_path}.
     --city            which city to train on 
     --rew_scale       reward scaling (default 0.01, for SF 0.1)
     --critic_version  defined critic version to use (default: 4)
@@ -57,7 +57,7 @@ simulator arguments: (unless necessary, we recommend using the provided ones)
     --seed          random seed (default: 10)
     --json_tsetp    (default: 3)
 ```
-To train an agent offline by CQL, `main_CQL.py` accepts the foolowing arguments additional to main_SAC. Attention: Do not change the default setting for `mode`.
+To train an agent offline by CQL, `main_CQL.py` accepts the following arguments additional to `main_SAC.py`. Attention: Do not change the default setting for `mode` in offline training. The offline training only accpets training for the joint policy.
 ```bash
     
 model arguments:
@@ -69,7 +69,7 @@ model arguments:
     --sc              whether to scale (max-min) the data (default: Fasle)     
 ```
 
-To train an agent offline by IQL, `main_IQL.py` accepts the foolowing arguments additional to main_SAC. Attention: Do not change the default setting for `mode`.
+To train an agent offline by IQL, `main_IQL.py` accepts the foolowing arguments additional to `main_SAC.py`. Attention: Do not change the default setting for `mode`.
 ```bash
     
 model arguments:
@@ -85,35 +85,35 @@ Windows: "C:/Program Files/ibm/ILOG/CPLEX_Studio128/opl/bin/x64_win64/"
 OSX: "/Applications/CPLEX_Studio128/opl/bin/x86-64_osx/"
 Linux: "/opt/ibm/ILOG/CPLEX_Studio128/opl/bin/x86-64_linux/"
 ```
-### Training and simulating an agent
-***Important***: Before training agent offline, download offline training dataset from [this link](https://www.dropbox.com/scl/fi/daeuygfz5z2tlmvh4foia/Replaymemories.zip?rlkey=nr16hfc3bk29741w2mq33f0zb&st=ljjvkdja&dl=0), unzip it, and put it to the root of the repository.
+## Training and simulating an agent
+Before starting training, remeber to create a folder with the same name as specified by the `directory` arguement (default saved_files) to store intermediate and log files, and a folder named `ckpt` for the checkpoint weight files. All checkpoints will be saved under `ckpt/`.
+### Training and simulating an agent online
 1. To train an agent online for the joint policy:
 ```
 python main_SAC.py --city {city_name} --mode 2
 ```
-Remeber to create a folder with the same name as specified by the `directory` arguement (default saved_files) to store intermediate and log files, and a folder named `ckpt` for the checkpoint weight files. All checkpoints will be saved under `ckpt/`.
 2. To evaluate a pretrained agent run the following:
 ```
 python main_SAC.py --city {city_name} --test True --checkpoint_path {checkpoint_name}
 ```
 When evaluating the checkpoint, there is no need to include `ckpt/` in the checkpoint_name. Same rule applies to the following offline evaluation.
 ### Training and simulating an agent offline
-
-1. To train an agent offline by CQL for heuristic, 75%, 90% datasets:
+***Important***: Before training agent offline, download offline training dataset from [this link](https://www.dropbox.com/scl/fi/daeuygfz5z2tlmvh4foia/Replaymemories.zip?rlkey=nr16hfc3bk29741w2mq33f0zb&st=ljjvkdja&dl=0), unzip it, and put it to the root of the repository.
+1. To train an agent offline by CQL with heuristic, 75%, or 90% datasets:
 ```
-python main_CQL.py --city city_name --memory_path dataset_name
+python main_CQL.py --city {city_name} --memory_path {dataset_name}
 ```
 e.g. to train an agent offline on the heuristic dataset on NYC brooklyn: 
 ```
 python main_CQL.py --city nyc_brooklyn --memory_path nyc_brooklyn_heuristic
 ```
-Similarly, to train an agent offline IQL for heuristic, 75%, 90% datasets:
+Similarly, to train an agent offline IQL for heuristic, 75%, or 90% datasets:
 ```
-python main_IQL.py --city city_name --memory_path dataset_name
+python main_IQL.py --city {city_name} --memory_path {dataset_name}
 ```
 e.g. to train an agent offline on the heuristic dataset on NYC brooklyn: 
 ```
-python main_CQL.py --city nyc_brooklyn --memory_path nyc_brooklyn_iql_heuristic
+python main_IQL.py --city nyc_brooklyn --memory_path nyc_brooklyn_iql_heuristic
 ```
 2. To evaluate a pretrained agent run the following:
 ```
