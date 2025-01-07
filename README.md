@@ -27,7 +27,7 @@ pip install -r requirements.txt
 * `src/misc/`: helper functions.
 * `data/`: json files for different cities in the simulator.
 
-## Examples
+## Experiments
 
 To train an agent online, `main_SAC.py` accepts the following arguments:
 ```bash
@@ -85,9 +85,9 @@ Windows: "C:/Program Files/ibm/ILOG/CPLEX_Studio128/opl/bin/x64_win64/"
 OSX: "/Applications/CPLEX_Studio128/opl/bin/x86-64_osx/"
 Linux: "/opt/ibm/ILOG/CPLEX_Studio128/opl/bin/x86-64_linux/"
 ```
-## Training and simulating an agent
+### Training and simulating an agent
 Before starting training, remeber to create a folder with the same name as specified by the `directory` arguement (default saved_files) to store intermediate and log files, and a folder named `ckpt` for the checkpoint weight files. All checkpoints will be saved under `ckpt/`.
-### Training and simulating an agent online
+#### Training and simulating an agent online
 1. To train an agent online for the joint policy:
 ```
 python main_SAC.py --city {city_name} --mode 2
@@ -97,7 +97,7 @@ python main_SAC.py --city {city_name} --mode 2
 python main_SAC.py --city {city_name} --test True --checkpoint_path {checkpoint_name}
 ```
 When evaluating the checkpoint, there is no need to include `ckpt/` in the checkpoint_name. Same rule applies to the following offline evaluation.
-### Training and simulating an agent offline
+#### Training and simulating an agent offline
 ***Important***: Before training agent offline, download offline training dataset from [this link](https://www.dropbox.com/scl/fi/daeuygfz5z2tlmvh4foia/Replaymemories.zip?rlkey=nr16hfc3bk29741w2mq33f0zb&st=ljjvkdja&dl=0), unzip it, and put it to the root of the repository.
 1. To train an agent offline by CQL with heuristic, 75%, or 90% datasets:
 ```
