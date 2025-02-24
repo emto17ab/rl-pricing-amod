@@ -12,7 +12,7 @@ pip install -r requirements.txt
 It is recommended to create a virtual environment before installing the packages. If you are using Anaconda or miniconda, run
 ```
 conda create --name {env_name} python==3.9
-conda activaye {env_name}
+conda activate {env_name}
 pip install -r requirements.txt
 ```
 
