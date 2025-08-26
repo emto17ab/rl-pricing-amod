@@ -1,5 +1,5 @@
 # Graph-RL for joint rebalancing and pricing in AMoD
-Official implementation of 'Learning joint rebalancing and dynamic pricing policies for Autonomous Mobility-on-Demand'. The paper is curently under review and the link to the paper will be added as soon as it becomes publicly available.
+Official implementation of ['Learning joint rebalancing and dynamic pricing policies for Autonomous Mobility-on-Demand'](https://ieeexplore.ieee.org/abstract/document/11063454).
 
 ## Prerequisites
 
