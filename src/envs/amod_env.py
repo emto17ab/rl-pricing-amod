@@ -23,7 +23,7 @@ class AMoD:
     def __init__(self, scenario, mode, beta=0.2, jitter=0, max_wait=2):
         # I changed it to deep copy so that the scenario input is not modified by env
         self.scenario = deepcopy(scenario)
-        self.mode = mode  # Mode of rebalancing
+        self.mode = mode  # Mode of rebalancing (0:manul, 1:pricing, 2:both. default 1)
         self.jitter = jitter # Jitter for zero demand
         self.max_wait = max_wait # Maximum passenger waiting time
         self.G = scenario.G  # Road Graph: node - regiocon'dn, edge - connection of regions, node attr: 'accInit', edge attr: 'time'
@@ -65,13 +65,17 @@ class AMoD:
         self.paxWait = defaultdict(list)
         self.edges = []  # set of rebalancing edges
         self.nregion = len(scenario.G)  # number of regions
+
+        # Set all edges
         for i in self.G:
             self.edges.append((i, i))
             for e in self.G.out_edges(i):
                 self.edges.append(e)
         self.edges = list(set(self.edges))
+
         # number of edges leaving each region
         self.nedge = [len(self.G.out_edges(n))+1 for n in self.region]
+
         # set rebalancing time for each link
         for i, j in self.G.edges:
             self.G.edges[i, j]['time'] = self.rebTime[i, j][self.time]
@@ -83,6 +87,7 @@ class AMoD:
         for n in self.region:
             self.acc[n][0] = self.G.nodes[n]['accInit']
             self.dacc[n] = defaultdict(float)
+
         # scenario.tstep: number of steps as one timestep
         self.beta = beta * scenario.tstep
         t = self.time
@@ -117,22 +122,24 @@ class AMoD:
         self.info["operating_cost"] = 0  # initialize operating cost
         self.info['revenue'] = 0
         self.info['rebalancing_cost'] = 0
-
+        
+        # Loop over all the regions
         for n in self.region:
-
+            # Set number of cars at region n at node t
             accCurrent = self.acc[n][t]
+
+            # Loop over all regions j reachacble from regions n
             # Update current queue
             for j in self.G[n]:
+
+                # Set the demand and price
                 d = self.demand[n, j][t]
                 p = self.price[n, j][t]
+
                 if (price is not None) and (np.sum(price) != 0):
-                    # TODO: Different demand model, scaling, and price
                     p_ori = p
-                    # p = 4 + 1.5*self.demandTime[n,
-                    #                             j][t]*self.tstep*price[n].item()
                     if p_ori != 0:
                         if isinstance(price[0], list):
-                            # p = p_ori * (price[n][0] + price[j][1])
                             if len(price[0]) == len(price):
                                 p = 2 * p_ori * price[n][j]
                             else:
@@ -140,22 +147,16 @@ class AMoD:
                             d = max(demand_update(d, p, 2 * p_ori, p_ori, self.jitter), 0)    
                         else:
                             p = p_ori * price[n] * 2
-                            d = max(demand_update(d, p, 2 * p_ori, p_ori, self.jitter), 0)
-                            # p = 10 + max(self.demandTime[n,j][t]*self.tstep-6,0)*price[n].item()
-                            # d = max(demand_update(d, p, 2*max(p_ori,p), p_ori), 0)                        
+                            d = max(demand_update(d, p, 2 * p_ori, p_ori, self.jitter), 0)                    
                     self.demand[n, j][t] = d
                     self.price[n, j][t] = p
                 else:
                     if self.demand[n, j][t] == 0 and self.price[n, j][t]!=0:
                         self.demand[n, j][t] = self.jitter
-                        d = self.jitter
-                # elif np.sum(price) == 0:
-                #     p_ori = p
-                #     d = max(demand_update(d, p, 2 * p_ori, p_ori, self.jitter), 0)
-                #     self.demand[n, j][t] = d                    
+                        d = self.jitter             
                     
-                newp, self.arrivals = generate_passenger(
-                    (n, j, t, d, p), self.max_wait, self.arrivals)
+                newp, self.arrivals = generate_passenger((n, j, t, d, p), self.max_wait, self.arrivals)
+
                 self.passenger[n][t].extend(newp)
                 # shuffle passenger list at station so that the passengers are not served in destination order
                 random.Random(42).shuffle(self.passenger[n][t])
@@ -455,6 +456,7 @@ class Scenario:
                     self.rebTime[i, j][t] = (
                         (abs(i//N1-j//N1) + abs(i % N1-j % N1))*grid_travel_time)
 
+            # Set 
             for n in self.G.nodes:
                 # initial number of vehicles at station
                 self.G.nodes[n]['accInit'] = int(ninit)
@@ -489,16 +491,31 @@ class Scenario:
             else:
                 self.tripAttr = self.get_random_demand()  # randomly generated demand
         else:
+            # Set the varying time (default False)
             self.varying_time = varying_time
+            
+            # Since we are in this branch, we are reading a json file
             self.is_json = True
+
+            # Read json file
             with open(json_file, "r") as file:
                 data = json.load(file)
+
+            # Stores the time-step size (presumably in minutes) into self.tstep. This value is used when binning timestamps into discrete time indices.
             self.tstep = json_tstep
+
+            # Number of latitude and longitude divisions in the grid
             self.N1 = data["nlat"]
             self.N2 = data["nlon"]
+
+            #  Will hold aggregated demand per OD per time bin. 
+            #  It's a defaultdict(dict): keys are OD tuples (o,d) and values will be dicts mapping time indices → demand volumes.
             self.demand_input = defaultdict(dict)
+
+            # See if the data has regions specified
             self.json_regions = json_regions
 
+            # Create a directed graph representing the regions and their connections.
             if json_regions != None:
                 self.G = nx.complete_graph(json_regions)
             elif 'region' in data:
@@ -506,61 +523,141 @@ class Scenario:
             else:
                 self.G = nx.complete_graph(self.N1*self.N2)
             self.G = self.G.to_directed()
-            self.p = defaultdict(dict)
-            self.alpha = 0
-            self.demandTime = defaultdict(dict)
-            self.rebTime = defaultdict(dict)
-            self.json_start = json_hr * 60
-            self.tf = tf
+
+            # Add edges from each node to itself (self-loops)
             self.edges = list(self.G.edges) + [(i, i) for i in self.G.nodes]
+
+            # Sets the number of regions based on the graph's nodes (# of regions = # of nodes)
             self.nregion = len(self.G)
 
+            # Will hold aggregated/averaged prices per OD per time bin (p[(o,d)][t])
+            self.p = defaultdict(dict)
+
+            # No randomness is added to demand input. Hence demand is fixed. If alpha = 0.2 demand_input will fluctuate within [0.8, 1.2] * demand_input 
+            self.alpha = 0
+
+            # Creates stucture for travel time per OD per time bin (demandTime[(o,d)][t])
+            self.demandTime = defaultdict(dict)
+
+            # Creates structure for rebalancing time per OD per time bin (rebTime[(o,d)][t])
+            self.rebTime = defaultdict(dict)
+
+            # Multiply hour by minutes to get the starting time in minutes after midnight
+            self.json_start = json_hr * 60
+
+            # Sets the number of steps per episode (default 20). Hence for each time step we generate a demand, travel time, rebalancing time, and price profile.
+            self.tf = tf
+
+            ####################### OOOOOOOOOOBBBBBBBBBBBBSSSSSSSSSSSSSS ############################
+            # THIS DOES NOTHING, WHY IT IS HERE?????????
             for i, j in self.demand_input:
                 self.demandTime[i, j] = defaultdict(int)
                 self.rebTime[i, j] = 1
-
+            #########################################################################################
+   
+            # Creates nregion × nregion numpy array of zeros (default) for time index t. The code will accumulate demand volumes into array cells [o,d]
             matrix_demand = defaultdict(lambda: np.zeros((self.nregion,self.nregion)))
+
+            # Similarly stores aggregated (volume-weighted) price sums for each time index.
             matrix_price_ori = defaultdict(lambda: np.zeros((self.nregion,self.nregion)))
+
+            # Loops over the data demand file
             for item in data["demand"]:
+                # Sets the variables
+                # t= time stamp (in minutes after midnight)
+                # o= origin region
+                # d= destination region
+                # v= demand
+                # tt= travel time (in minutes)
+                # p= price (in dollars)
                 t, o, d, v, tt, p = item["time_stamp"], item["origin"], item[
                     "destination"], item["demand"], item["travel_time"], item["price"]
+                
+                # If json_regions was provided and this OD pair is not in that list, the record is skipped.
                 if json_regions != None and (o not in json_regions or d not in json_regions):
                     continue
+                
+                # If this OD (o,d) has not been seen before, initialize three dicts for it:
                 if (o, d) not in self.demand_input:
                     self.demand_input[o, d], self.p[o, d], self.demandTime[o, d] = defaultdict(
                         float), defaultdict(float), defaultdict(float)
 
-                # set ALL demand, price, and traveling time for OD. price and traveling time will be averaged by demand after
+                # Set ALL demand, price, and traveling time for OD. 
+
+                # First a time index is calculated by subtracting the starting time (self.json_start) from the timestamp t
+                # and dividing by the time step size (json_tstep). This bins the timestamp into discrete time indices.
+
+                # The demand is incremented for specific OD and time index by the demand volume v, scaled by a demand_ratio factor.
                 self.demand_input[o, d][(
                     t-self.json_start)//json_tstep] += v*demand_ratio
+
+                # The price p is accumulated in a volume-weighted manner (p*v) for the same OD and time index. 
+                # This is not just summing prices: it’s building a demand-weighted sum. Later we divide by total demand to get average price.
                 self.p[o, d][(t-self.json_start) //
                              json_tstep] += p*v*demand_ratio
+
+                # Same as price. Accumulates travel times weighted by demand volume. 
+                # Also divide by json_tstep (normalizing since demand is aggregated over that bin length) to get average travel time per unit time.
                 self.demandTime[o, d][(t-self.json_start) //
                                       json_tstep] += tt*v*demand_ratio/json_tstep
 
+
+                # At time bin k, matrix_demand[k][o,d] = total number of demand from o to d
                 matrix_demand[(t-self.json_start) //
                                       json_tstep][o,d] += v*demand_ratio
+
+                # At time bin k, matrix_price_ori[k][o,d] = total price (weighted by demand) from o to d
+                # Later divided by matrix_demand to get average observed price per OD/time bin             
                 matrix_price_ori[(t-self.json_start) //
                                       json_tstep][o,d] += p*v*demand_ratio
 
+            
+            # Price and traveling time will be averaged by demand after
+            # Loop over all Edges in the graph
             for o, d in self.edges:
+                # Loop over all time indices from 0 to tf*2
                 for t in range(0, tf*2):
+
+                    # See if there was any demand recorded for this OD at this time index
                     if t in self.demand_input[o, d]:
+                        # Divide the accumulated p * v sum by total v to get volume-weighted average price at that bin
                         self.p[o, d][t] /= self.demand_input[o, d][t]
+
+                        # Similarly compute average travel time and ensure it is an integer of at least 1 minute
                         self.demandTime[o, d][t] /= self.demand_input[o, d][t]
                         self.demandTime[o, d][t] = max(
                             int(round(self.demandTime[o, d][t])), 1)
+
+                        # Compute the matrix-based average price for that time slice
                         matrix_price_ori[t][o,d] /= matrix_demand[t][o,d]
+                    
+                    # If not set it to zero
                     else:
                         self.demand_input[o, d][t] = 0
                         self.p[o, d][t] = 0
                         self.demandTime[o, d][t] = 0
 
+            # Creates a matrix matrix_reb (nregion × nregion) initialized to zeros to store baseline rebalancing times per OD.
             matrix_reb = np.zeros((self.nregion,self.nregion))
+
+            # Loops over the rebalancing time data in the JSON file
             for item in data["rebTime"]:
+
+                # Extracts the relevant fields
+                # hr= the hour associated with the rebalancing time
+                # o= origin region
+                # d= destination region
+                # rt= rebalancing time (in minutes)
                 hr, o, d, rt = item["time_stamp"], item["origin"], item["destination"], item["reb_time"]
+
+                # Skips the record if it doesn't belong to json_regions (if that filter exists)
                 if json_regions != None and (o not in json_regions or d not in json_regions):
                     continue
+
+                # If varying time is true (default False
+                # Each JSON rebTime record with hour hr is mapped to the time bins that cover that hour (a sliding window). 
+                # Effect: rebalancing time is written only into the bins that correspond to the actual hour hr in the JSON 
+                # (so rebTime varies across the timeline according to the timestamps in the file). 
                 if varying_time:
                     t0 = int((hr*60 - self.json_start)//json_tstep)
                     t1 = int((hr*60 + 60 - self.json_start)//json_tstep)
@@ -576,39 +673,53 @@ class Scenario:
             
             # KNN regression for each time step
             if impute:
+                # Create dictionary to store the regresors
                 knn = defaultdict(lambda: KNeighborsRegressor(n_neighbors=3))
+                # Loop over time steps
                 for t in matrix_price_ori.keys():
                     reb = matrix_reb
                     price = matrix_price_ori[t]
                     X = []
                     y = []
+                    # Loop over all region pairs to construct training set
                     for i in range(self.nregion):
                         for j in range(self.nregion):
+                            # if the price is not zero use it as training data for the regressor
                             if price[i,j] != 0:
                                 X.append(reb[i,j])
                                 y.append(price[i,j])
                     X_train = np.array(X).reshape(-1, 1)
                     y_train = np.array(y)
+
+                    # Fit the regressor for that time point
                     knn[t].fit(X_train, y_train)
 
                 # Test point
                 for o, d in self.edges:
                     for t in range(0, tf*2):
+                        # If there is no price for specific time point, and a regressor exists for that time point, use it 
+                        # to impute the price at that time point.s
                         if self.p[o,d][t]==0 and t in knn.keys():
                             
                             knn_regressor = knn[t]
 
                             X_test = np.array([[matrix_reb[o,d]]])
+
                             # Predict the value for the test point
                             y_pred = knn_regressor.predict(X_test)[0]
                             self.p[o,d][t] = float(y_pred)
 
             # Initial vehicle distribution
+            # Data contains hour and total number of vechiles in network
             for item in data["totalAcc"]:
                 hr, acc = item["hour"], item["acc"]
                 if hr == json_hr+int(round(json_tstep/2*tf/60)):
+                    # Loop over all nodes
                     for n in self.G.nodes:
+                        # Distribute number of vehicles uniformly across nodes
                         self.G.nodes[n]['accInit'] = int(supply_ratio*acc/len(self.G))
+
+
             self.tripAttr = self.get_random_demand()
 
     def get_random_demand(self, reset=False):
@@ -625,15 +736,22 @@ class Scenario:
         # skip this when resetting the demand
         # if not reset:
         if self.is_json:
+            # Loop over the time indicies
             for t in range(0, self.tf*2):
+                # Loop over all the edges
                 for i, j in self.edges:
+                    # check if demand exists for OD pair i,j for time t
                     if (i, j) in self.demand_input and t in self.demand_input[i, j]:
+                        # Sample demand from Poisson with parameter set by demand_input
                         demand[i, j][t] = np.random.poisson(
                             self.demand_input[i, j][t])
+                        # Set price given by p
                         price[i, j][t] = self.p[i, j][t]
+                    # Else set price and demand to 0
                     else:
                         demand[i, j][t] = 0
                         price[i, j][t] = 0
+                    # Append, origin, destination, time, demand at time, price at time
                     tripAttr.append((i, j, t, demand[i, j][t], price[i, j][t]))
         else:
             self.static_demand = dict()
