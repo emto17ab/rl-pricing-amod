@@ -105,7 +105,9 @@ class GNNParser:
             .squeeze(0)
             .view(1 + self.T + 1 + 1 + 1, self.env.nregion)
             .T
-        )       
+        )
+        # Based on the topology_graph in the data specifices how the nodes are connected.
+        # List 1 start nodes, list 2 destination nodes        
         if self.json_file is not None:
             edge_index = torch.vstack(
                 (
@@ -125,6 +127,16 @@ class GNNParser:
                 ),
                 dim=0,
             ).long()
+        # In x each row represents a region with the
+        # 1. value being the curr availability,
+        # 2. - (1+T) value the estimated availability for that region for time step t and T ahead
+        # T+2 queue length at that node
+        # T+3 current demand at that node
+        # T+4 current price of that node
+
+        # edge_index contains two lists 
+        # first list start nodes
+        # second list destination nodes for the start nodes in list 1
         data = Data(x, edge_index)
         return data
 
@@ -176,7 +188,7 @@ parser.add_argument(
 
 parser.add_argument(
     "--beta",
-    type=int,
+    type=float,
     default=0.5,
     metavar="S",
     help="cost of rebalancing (default: 0.5)",
@@ -203,7 +215,7 @@ parser.add_argument(
     type=int,
     default=10000,
     metavar="N",
-    help="number of episodes to train agent (default: 16k)",
+    help="number of episodes to train agent (default: 10k)",
 )
 parser.add_argument(
     "--max_steps",
@@ -234,7 +246,7 @@ parser.add_argument(
     "--maxt",
     type=int,
     default=2,
-    help="maximum passenger waiting time (default: 6mins)",
+    help="maximum passenger waiting time (default: 2mins)",
 )
 parser.add_argument(
     "--alpha",
@@ -270,19 +282,19 @@ parser.add_argument(
     "--p_lr",
     type=float,
     default=1e-3,
-    help="learning rate for policy network (default: 1e-4)",
+    help="learning rate for policy network (default: 1e-3)",
 )
 parser.add_argument(
     "--q_lr",
     type=float,
     default=1e-3,
-    help="learning rate for Q networks (default: 4e-3)",
+    help="learning rate for Q networks (default: 1e-3)",
 )
 parser.add_argument(
     "--q_lag",
     type=int,
     default=1,
-    help="update frequency of Q target networks (default: 10)",
+    help="update frequency of Q target networks (default: 1)",
 )
 parser.add_argument(
     "--city",
