@@ -17,12 +17,13 @@ class GNNParser:
     Parser converting raw environment observations to agent inputs (s_t).
     """
 
-    def __init__(self, env, T=10, json_file=None, scale_factor=0.01):
+    def __init__(self, env, T=10, json_file=None, scale_factor=0.01, device=torch.device("cpu")):
         super().__init__()
         self.env = env
         self.T = T
         self.s = scale_factor
         self.json_file = json_file
+        self.device = device
         if self.json_file is not None:
             with open(json_file, "r") as file:
                 self.data = json.load(file)
@@ -43,7 +44,7 @@ class GNNParser:
                             self.s for n in self.env.region]
                     )
                     .view(1, 1, self.env.nregion)
-                    .float(),
+                    .float().to(self.device),
                     # Estimated availability
                     torch.tensor(
                         [
@@ -59,7 +60,7 @@ class GNNParser:
                         ]
                     )
                     .view(1, self.T, self.env.nregion)
-                    .float(),
+                    .float().to(self.device),
                     # Queue length
                     torch.tensor(
                         [
@@ -67,7 +68,7 @@ class GNNParser:
                         ]
                     )
                     .view(1, 1, self.env.nregion)
-                    .float(),
+                    .float().to(self.device),
                     # Current demand
                     torch.tensor(
                             [
@@ -83,7 +84,7 @@ class GNNParser:
                             ]
                     )
                     .view(1, 1, self.env.nregion)
-                    .float(),
+                    .float().to(self.device),
                     # Current price
                     torch.tensor(
                             [
@@ -98,7 +99,7 @@ class GNNParser:
                             ]
                     )
                     .view(1, 1, self.env.nregion)
-                    .float(),                    
+                    .float().to(self.device),                    
                 ),
                 dim=1,
             )
@@ -118,7 +119,7 @@ class GNNParser:
                         [edge["j"] for edge in self.data["topology_graph"]]
                     ).view(1, -1),
                 )
-            ).long()
+            ).long().to(self.device)
         else:
             edge_index = torch.cat(
                 (
@@ -126,7 +127,7 @@ class GNNParser:
                     torch.arange(self.env.nregion).view(1, self.env.nregion),
                 ),
                 dim=0,
-            ).long()
+            ).long().to(self.device)
         # In x each row represents a region with the
         # 1. value being the curr availability,
         # 2. - (1+T) value the estimated availability for that region for time step t and T ahead
@@ -224,12 +225,14 @@ parser.add_argument(
     metavar="N",
     help="number of steps per episode (default: T=20)",
 )
+
 parser.add_argument(
-    "--no-cuda", 
-    type=bool, 
-    default=True,
-    help="disables CUDA training",
+    "--cuda", 
+    action="store_true",
+    default=False,
+    help="Enables CUDA training",
 )
+
 parser.add_argument(
     "--batch_size",
     type=int,
@@ -340,10 +343,20 @@ parser.add_argument(
 )
 
 args = parser.parse_args()
-args.cuda = not args.no_cuda and torch.cuda.is_available()
+args.cuda = args.cuda and torch.cuda.is_available()
+print(f"The cuda argument is: {args.cuda}")
 device = torch.device("cuda" if args.cuda else "cpu")
+
+# Initialize CUDA context if using GPU
+if args.cuda:
+    torch.cuda.init()
+    torch.cuda.empty_cache()
+    print(f"CUDA device: {torch.cuda.get_device_name()}")
+    print(f"CUDA memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+
 city = args.city
 
+print(f"The device is: {device}")
 
 if not args.test:
     if not args.small:
@@ -376,11 +389,11 @@ if not args.test:
 
     if not args.small:
         parser = GNNParser(
-            env, T=6, json_file=f"data/scenario_{city}.json"
+            env, T=6, json_file=f"data/scenario_{city}.json", device=device
         )  # Timehorizon T=6 (K in paper)
     else:
         parser = GNNParser(
-            env, T=6
+            env, T=6, device=device
         )  # Timehorizon T=6 (K in paper)
 
     model = SAC(
@@ -396,8 +409,9 @@ if not args.test:
         critic_version=args.critic_version,
         price_version = args.price_version,
         mode=args.mode,
-        q_lag=args.q_lag
-    ).to(device)
+        q_lag=args.q_lag,
+        device=device
+    )
 
     if args.load:
         print("load checkpoint")
@@ -619,11 +633,11 @@ else:
 
     if not args.small:
         parser = GNNParser(
-            env, T=6, json_file=f"data/scenario_{city}.json"
+            env, T=6, json_file=f"data/scenario_{city}.json", device=device
         )  # Timehorizon T=6 (K in paper)
     else:
         parser = GNNParser(
-            env, T=6
+            env, T=6, device=device
         )  # Timehorizon T=6 (K in paper)
 
     model = SAC(
@@ -639,8 +653,9 @@ else:
         critic_version=args.critic_version,
         price_version = args.price_version,
         mode=args.mode,
-        q_lag=args.q_lag
-    ).to(device)
+        q_lag=args.q_lag,
+        device=device
+    )
 
     print("load model")
     model.load_checkpoint(path=f"ckpt/{args.checkpoint_path}.pth")
