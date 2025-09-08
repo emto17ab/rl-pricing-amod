@@ -56,12 +56,12 @@ class ReplayData:
     def store(self, data1, action, reward, data2):
         self.data_list.append(
             PairData(
-                data1.edge_index,
-                data1.x,
-                torch.as_tensor(reward),
-                torch.as_tensor(action),
-                data2.edge_index,
-                data2.x,
+                data1.edge_index.to(self.device),
+                data1.x.to(self.device),
+                torch.as_tensor(reward).to(self.device),
+                torch.as_tensor(action).to(self.device),
+                data2.edge_index.to(self.device),
+                data2.x.to(self.device),
             )
         )
         self.rewards.append(reward)
@@ -76,11 +76,11 @@ class ReplayData:
             std = np.std(self.rewards)
             batch = Batch.from_data_list(data, follow_batch=["x_s", "x_t"])
             batch.reward = (batch.reward - mean) / (std + 1e-16)
-            return batch.to(self.device)
+            batch = batch.to(self.device)
+            return batch
         else:
-            return Batch.from_data_list(data, follow_batch=["x_s", "x_t"]).to(
-                self.device
-            )
+            batch = Batch.from_data_list(data, follow_batch=["x_s", "x_t"]).to(self.device)
+            return batch
 
 
 class Scalar(nn.Module):
@@ -170,7 +170,7 @@ class SAC(nn.Module):
         if price_version == 'GNN-origin':
             self.actor = GNNActor(self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode)
         elif price_version == 'GNN-od':
-            self.edges = torch.zeros(len(env.region)**2,2).long()
+            self.edges = torch.zeros(len(env.region)**2,2).long().to(device)
             k = 0
             for i in env.region:
                 for j in env.region:
@@ -184,6 +184,9 @@ class SAC(nn.Module):
             self.actor = MLPActor1(self.input_size,self.hidden_size, act_dim=self.act_dim, mode=mode)
         else:
             raise ValueError("Price version only allowed among 'GNN-origin', 'GNN-od', 'MLP-origin', and 'MLP-od'.")
+        
+        # Explicitly move actor to device
+        self.actor = self.actor.to(device)
     
         if critic_version == 1:
             GNNCritic = GNNCritic1
@@ -210,7 +213,10 @@ class SAC(nn.Module):
             self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode, edges=self.edges
         )
         assert self.critic1.parameters() != self.critic2.parameters()
-   
+        
+        # Explicitly move critics to device
+        self.critic1 = self.critic1.to(device)
+        self.critic2 = self.critic2.to(device)
 
         self.critic1_target = GNNCritic(
             self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode, edges=self.edges
@@ -220,6 +226,10 @@ class SAC(nn.Module):
             self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode, edges=self.edges
         )
         self.critic2_target.load_state_dict(self.critic2.state_dict())
+        
+        # Explicitly move target critics to device
+        self.critic1_target = self.critic1_target.to(device)
+        self.critic2_target = self.critic2_target.to(device)
 
         for p in self.critic1_target.parameters():
             p.requires_grad = False
@@ -243,7 +253,7 @@ class SAC(nn.Module):
 
         if self.use_automatic_entropy_tuning:
             self.target_entropy = -np.prod(self.act_dim).item()
-            self.log_alpha = Scalar(0.0)
+            self.log_alpha = Scalar(0.0).to(device)
             self.alpha_optimizer = torch.optim.Adam(
                 self.log_alpha.parameters(), lr=1e-3
             )
@@ -254,7 +264,18 @@ class SAC(nn.Module):
 
     def select_action(self, data, deterministic=False):
         with torch.no_grad():
-            a, _ = self.actor(data.x, data.edge_index, deterministic)
+            # Ensure data is on the correct device - be more explicit
+            if hasattr(data, 'x') and data.x is not None:
+                data_x = data.x.clone().detach().to(self.device)
+            else:
+                raise ValueError("Data object missing x attribute")
+            
+            if hasattr(data, 'edge_index') and data.edge_index is not None:
+                data_edge_index = data.edge_index.clone().detach().to(self.device)
+            else:
+                raise ValueError("Data object missing edge_index attribute")
+                
+            a, _ = self.actor(data_x, data_edge_index, deterministic)
         a = a.squeeze(-1)
         a = a.detach().cpu().numpy().tolist()
         return a
@@ -268,13 +289,13 @@ class SAC(nn.Module):
             reward_batch,
             action_batch,
         ) = (
-            data.x_s,
-            data.edge_index_s,
-            data.x_t,
-            data.edge_index_t,
-            data.reward,
+            data.x_s.to(self.device),
+            data.edge_index_s.to(self.device),
+            data.x_t.to(self.device),
+            data.edge_index_t.to(self.device),
+            data.reward.to(self.device),
             # data.action.reshape(-1, self.nodes, self.mode+1),
-            data.action.reshape(-1, self.nodes, max(self.mode,1)) if self.price.split('-')[1]=='origin' else  data.action.reshape(-1, self.nodes, self.nodes),
+            (data.action.reshape(-1, self.nodes, max(self.mode,1)) if self.price.split('-')[1]=='origin' else  data.action.reshape(-1, self.nodes, self.nodes)).to(self.device),
         )
 
         q1 = self.critic1(state_batch, edge_index, action_batch)
@@ -282,11 +303,39 @@ class SAC(nn.Module):
         with torch.no_grad():
             # Target actions come from *current* policy
             a2, logp_a2 = self.actor(next_state_batch, edge_index2)
+            # Ensure actor outputs are on correct device
+            a2 = a2.to(self.device)
+            logp_a2 = logp_a2.to(self.device)
+            
             q1_pi_targ = self.critic1_target(next_state_batch, edge_index2, a2)
             q2_pi_targ = self.critic2_target(next_state_batch, edge_index2, a2)
+            # Ensure critic outputs are on correct device
+            q1_pi_targ = q1_pi_targ.to(self.device)
+            q2_pi_targ = q2_pi_targ.to(self.device)
+            
             q_pi_targ = torch.min(q1_pi_targ, q2_pi_targ)
 
-            backup = reward_batch + self.gamma * (q_pi_targ - self.alpha * logp_a2)
+            # Ensure alpha and gamma are on the correct device as tensors
+            alpha_tensor = torch.tensor(self.alpha, device=self.device, dtype=q_pi_targ.dtype)
+            gamma_tensor = torch.tensor(self.gamma, device=self.device, dtype=q_pi_targ.dtype)
+            
+            # Ensure all tensors are on the same device before computation
+            reward_batch = reward_batch.to(self.device)
+            q_pi_targ = q_pi_targ.to(self.device)
+            logp_a2 = logp_a2.to(self.device)
+            alpha_tensor = alpha_tensor.to(self.device)
+            gamma_tensor = gamma_tensor.to(self.device)
+            
+            # Compute backup with explicit device handling for each operation
+            alpha_logp = alpha_tensor * logp_a2
+            q_minus_alpha = q_pi_targ - alpha_logp
+            gamma_q = gamma_tensor * q_minus_alpha
+            backup = reward_batch + gamma_q
+
+        # Ensure q1, q2, and backup are on the same device
+        q1 = q1.to(self.device)
+        q2 = q2.to(self.device)
+        backup = backup.to(self.device)
 
         loss_q1 = F.mse_loss(q1, backup)
         loss_q2 = F.mse_loss(q2, backup)
@@ -295,8 +344,8 @@ class SAC(nn.Module):
 
     def compute_loss_pi(self, data):
         state_batch, edge_index = (
-            data.x_s,
-            data.edge_index_s,
+            data.x_s.to(self.device),
+            data.edge_index_s.to(self.device),
         )
 
         actions, logp_a = self.actor(state_batch, edge_index)
@@ -305,15 +354,18 @@ class SAC(nn.Module):
         q_a = torch.min(q1_1, q2_a)
 
         if self.use_automatic_entropy_tuning:
+            target_entropy_tensor = torch.tensor(self.target_entropy, device=self.device, dtype=logp_a.dtype)
             alpha_loss = -(
-                self.log_alpha() * (logp_a + self.target_entropy).detach()
+                self.log_alpha() * (logp_a + target_entropy_tensor).detach()
             ).mean()
             self.alpha_optimizer.zero_grad()
             alpha_loss.backward()
             self.alpha_optimizer.step()
-            self.alpha = self.log_alpha().exp()
+            self.alpha = self.log_alpha().exp().item()  # Convert to Python scalar to avoid device issues
 
-        loss_pi = (self.alpha * logp_a - q_a).mean()
+        # Ensure alpha is on the correct device as tensor
+        alpha_tensor = torch.tensor(self.alpha, device=self.device, dtype=logp_a.dtype)
+        loss_pi = (alpha_tensor * logp_a - q_a).mean()
 
         return loss_pi
 

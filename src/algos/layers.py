@@ -39,6 +39,11 @@ class GNNActor(nn.Module):
             self.lin3 = nn.Linear(hidden_size, 3)
 
     def forward(self, state, edge_index, deterministic=False):
+        # Ensure state and edge_index are on the same device as the model
+        device = next(self.parameters()).device
+        state = state.to(device)
+        edge_index = edge_index.to(device)
+        
         out = F.relu(self.conv1(state, edge_index))
         x = out + state
         x = x.reshape(-1, self.act_dim, self.in_channels)
@@ -327,6 +332,12 @@ class GNNCritic4(nn.Module):
         self.in_channels = in_channels
 
     def forward(self, state, edge_index, action):
+        # Ensure all inputs are on the same device as the model
+        device = next(self.parameters()).device
+        state = state.to(device)
+        edge_index = edge_index.to(device)
+        action = action.to(device)
+        
         out = F.relu(self.conv1(state, edge_index))
         x = out + state
         x = x.reshape(-1, self.act_dim, self.in_channels)  # (B,N,21)
