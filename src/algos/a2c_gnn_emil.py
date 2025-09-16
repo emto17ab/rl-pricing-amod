@@ -3,7 +3,7 @@ import torch
 from torch import nn
 import json
 from torch_geometric.data import Data
-from src.algos.layers import GNNOrigin, GNNOD, MLPOD, MLPOrigin, GNNCritic, GNNActor
+from src.algos.layers import GNNOrigin, GNNOD, MLPOD, MLPOrigin, GNNCritic, GNNActor_Emil
 import torch.nn.functional as F
 from collections import namedtuple
 
@@ -199,7 +199,7 @@ class A2C(nn.Module):
         # Set the action dimension and other attributes
         self.price = price_version
         self.edges = None
-        self.actor = GNNActor(self.input_size, self.hidden_size)
+        self.actor = GNNActor_Emil(self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode)
         """
         # Set price based on GNN and origin-based action (single price per origin)
         if price_version == 'GNN-origin':
@@ -236,7 +236,7 @@ class A2C(nn.Module):
 
     
     # Combines select action and forward steps of actor and critic
-    def select_action(self, obs, deterministic=False):
+    def select_action(self, obs):
         # Parse the observation to get the graph data
         data = self.parse_obs(obs).to(self.device)
 
@@ -377,7 +377,7 @@ class A2C(nn.Module):
                     obs, paxreward, done, info, _, _ = env.match_step_simple()
                     eps_reward += paxreward
 
-                    action_rl = self.select_action(obs)
+                    action_rl = self.select_action(obs, deterministic=True)
                     
                     # transform sample from Dirichlet into actual vehicle counts
                     desiredAcc = {
