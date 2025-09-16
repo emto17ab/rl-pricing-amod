@@ -44,6 +44,49 @@ class GNNActor(nn.Module):
         log_prob = m.log_prob(action)
         return action, log_prob
 
+class GNNActor_Emil(nn.Module):
+    def __init__(self, in_channels, hidden_size=32, act_dim=6, mode=0, edges=None):
+        super().__init__()
+        self.mode = mode
+        self.in_channels = in_channels
+        self.act_dim = act_dim
+        self.conv1 = GCNConv(in_channels, in_channels)
+        self.lin1 = nn.Linear(in_channels, hidden_size)
+        self.lin2 = nn.Linear(hidden_size, hidden_size)
+        if mode == 0:
+            self.lin3 = nn.Linear(hidden_size, 1)
+        elif mode == 1:
+            self.lin3 = nn.Linear(hidden_size, 2)
+        else:
+            self.lin3 = nn.Linear(hidden_size, 3)
+    def forward(self, data):
+        out = F.relu(self.conv1(data.x, data.edge_index))
+        x = out + data.x
+        x = F.leaky_relu(self.lin1(x))
+        x = F.leaky_relu(self.lin2(x))
+        x = F.softplus(self.lin3(x))
+      
+        if self.mode == 0:
+            concentration = x.squeeze(-1) + 1e-20
+            m = Dirichlet(concentration)
+            action = m.rsample()
+            log_prob = m.log_prob(action)
+        elif self.mode == 1:
+            m_o = Beta(x[:, 0] + 1e-10, x[:, 1] + 1e-10)
+            action_o = m_o.rsample()
+            log_prob = m_o.log_prob(action_o).sum(dim=-1)
+            action = action_o.unsqueeze(-1)        
+        else:        
+            m_o = Beta(x[:, 0] + 1e-10, x[:, 1] + 1e-10)
+            action_o = m_o.rsample()
+            # Rebalancing desired distribution
+            m_reb = Dirichlet(x[:, 2] + 1e-10)
+            action_reb = m_reb.rsample()              
+            log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_reb.log_prob(action_reb)
+            action = torch.cat((action_o.unsqueeze(-1), action_reb.unsqueeze(-1)), -1)       
+        return action, log_prob
+
+
 class GNNOrigin(nn.Module):
     """
     Actor \pi(a_t | s_t) parametrizing the concentration parameters of a Dirichlet Policy.
