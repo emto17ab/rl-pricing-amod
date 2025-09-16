@@ -18,7 +18,33 @@ import json
 #########################################
 ############## ACTOR ####################
 #########################################
+
+
 class GNNActor(nn.Module):
+    """
+    Actor \pi(a_t | s_t) parametrizing the concentration parameters of a Dirichlet Policy.
+    """
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        
+        self.conv1 = GCNConv(in_channels, in_channels)
+        self.lin1 = nn.Linear(in_channels, 32)
+        self.lin2 = nn.Linear(32, 32)
+        self.lin3 = nn.Linear(32, 1)
+    
+    def forward(self, data):
+        out = F.relu(self.conv1(data.x, data.edge_index))
+        x = out + data.x
+        x = F.relu(self.lin1(x))
+        x = F.relu(self.lin2(x))
+        x = self.lin3(x)
+        x = F.softplus(x).reshape(-1) + 1e-20
+        m = Dirichlet(x)
+        action = m.rsample()
+        log_prob = m.log_prob(action)
+        return action, log_prob
+
+class GNNOrigin(nn.Module):
     """
     Actor \pi(a_t | s_t) parametrizing the concentration parameters of a Dirichlet Policy.
     """
@@ -54,6 +80,7 @@ class GNNActor(nn.Module):
         if deterministic:
             if self.mode == 0:
                 action = (concentration) / (concentration.sum() + 1e-20)
+                action = action.squeeze(0)  # Ensure consistent shape with stochastic mode
             elif self.mode == 1:
                 action_o = (concentration[:,:,0])/(concentration[:,:,0] + concentration[:,:,1] + 1e-10)
                 action_o[action_o<0] = 0
@@ -69,7 +96,7 @@ class GNNActor(nn.Module):
                 m = Dirichlet(concentration + 1e-20)
                 action = m.rsample()
                 log_prob = m.log_prob(action)
-                action = action.squeeze(0).unsqueeze(-1)
+                action = action.squeeze(0)  # Remove batch dimension, keep as 1D vector
             elif self.mode == 1:
                 m_o = Beta(concentration[:,:,0] + 1e-10, concentration[:,:,1] + 1e-10)
                 action_o = m_o.rsample()
@@ -86,7 +113,7 @@ class GNNActor(nn.Module):
         return action, log_prob
     
 
-class GNNActor1(nn.Module):
+class GNNOD(nn.Module):
     """
     Actor \pi(a_t | s_t) parametrizing the concentration parameters of a Beta Policy. OD-based action.
     """
@@ -132,7 +159,7 @@ class GNNActor1(nn.Module):
             action = action.reshape(-1,self.nregion,self.nregion).squeeze(0)
         return action, log_prob
     
-class MLPActor(nn.Module):
+class MLPOD(nn.Module):
     """
     Actor \pi(a_t | s_t) parametrizing the concentration parameters of a Beta Policy. OD-based actoin.
     """
@@ -166,7 +193,7 @@ class MLPActor(nn.Module):
             action = action.reshape(-1,self.nregion,self.nregion).squeeze(0)       
         return action, log_prob
     
-class MLPActor1(nn.Module):
+class MLPOrigin(nn.Module):
     """
     Actor \pi(a_t | s_t) parametrizing the concentration parameters of a Beta Policy. Origin-based action.
     """
@@ -233,10 +260,30 @@ class MLPActor1(nn.Module):
 ############## CRITIC ###################
 #########################################
 
+class GNNCritic(nn.Module):
+    """
+    Critic parametrizing the value function estimator V(s_t).
+    """
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        
+        self.conv1 = GCNConv(in_channels, in_channels)
+        self.lin1 = nn.Linear(in_channels, 32)
+        self.lin2 = nn.Linear(32, 32)
+        self.lin3 = nn.Linear(32, 1)
+    
+    def forward(self, data):
+        out = F.relu(self.conv1(data.x, data.edge_index))
+        x = out + data.x 
+        x = torch.sum(x, dim=0)
+        x = F.relu(self.lin1(x))
+        x = F.relu(self.lin2(x))
+        x = self.lin3(x)
+        return x
 
 class GNNCritic1(nn.Module):
     """
-    Architecture 1, GNN, Pointwise Multiplication, Readout, FC
+    Architecture 1, GNN, Readout, FC
     """
 
     def __init__(self, in_channels, hidden_size=256, act_dim=6, edges=None):
@@ -248,13 +295,10 @@ class GNNCritic1(nn.Module):
         self.lin2 = nn.Linear(hidden_size, hidden_size)
         self.lin3 = nn.Linear(hidden_size, 1)
 
-    def forward(self, state, edge_index, action):
+    def forward(self, state, edge_index):
         out = F.relu(self.conv1(state, edge_index))
         x = out + state
         x = x.reshape(-1, self.act_dim, self.in_channels)  # (B,N,21)
-        action = action * 10
-        action = action.unsqueeze(-1)  # (B,N,1)
-        x = x * action  # pointwise multiplication (B,N,21)
         x = x.sum(dim=1)  # (B,21)
         x = F.relu(self.lin1(x))  # (B,H)
         x = F.relu(self.lin2(x))  # (B,H)
@@ -264,24 +308,23 @@ class GNNCritic1(nn.Module):
 
 class GNNCritic2(nn.Module):
     """
-    Architecture 2, GNN, Readout, Concatenation, FC
+    Architecture 2, GNN, Readout, FC
     """
 
     def __init__(self, in_channels, hidden_size=256, act_dim=6, edges=None):
         super().__init__()
         self.act_dim = act_dim
         self.conv1 = GCNConv(in_channels, in_channels)
-        self.lin1 = nn.Linear(in_channels + act_dim, hidden_size)
+        self.lin1 = nn.Linear(in_channels, hidden_size)
         self.lin2 = nn.Linear(hidden_size, hidden_size)
         self.lin3 = nn.Linear(hidden_size, 1)
 
-    def forward(self, state, edge_index, action):
+    def forward(self, state, edge_index):
         out = F.relu(self.conv1(state, edge_index))
         x = out + state
         x = x.reshape(-1, self.act_dim, 21)  # (B,N,21)
         x = torch.sum(x, dim=1)  # (B, 21)
-        concat = torch.cat([x, action], dim=-1)  # (B, 21+N)
-        x = F.relu(self.lin1(concat))  # (B,H)
+        x = F.relu(self.lin1(x))  # (B,H)
         x = F.relu(self.lin2(x))  # (B,H)
         x = self.lin3(x).squeeze(-1)  # B
         return x
@@ -289,32 +332,31 @@ class GNNCritic2(nn.Module):
 
 class GNNCritic3(nn.Module):
     """
-    Architecture 3: Concatenation, GNN, Readout, FC
+    Architecture 3: GNN, Readout, FC
     """
 
     def __init__(self, in_channels, hidden_size=32, act_dim=6, edges=None):
         super().__init__()
         self.act_dim = act_dim
-        self.conv1 = GCNConv(22, 22)
-        self.lin1 = nn.Linear(22, hidden_size)
+        self.conv1 = GCNConv(in_channels, in_channels)
+        self.lin1 = nn.Linear(in_channels, hidden_size)
         self.lin2 = nn.Linear(hidden_size, hidden_size)
         self.lin3 = nn.Linear(hidden_size, 1)
 
-    def forward(self, state, edge_index, action):
-        cat = torch.cat([state, action.unsqueeze(-1)], dim=-1)  # (B,N,22)
-        out = F.relu(self.conv1(cat, edge_index))
-        x = out + cat
-        x = x.reshape(-1, self.act_dim, 22)  # (B,N,22)
+    def forward(self, state, edge_index):
+        out = F.relu(self.conv1(state, edge_index))
+        x = out + state
+        x = x.reshape(-1, self.act_dim, self.in_channels)  # (B,N,in_channels)
         x = F.relu(self.lin1(x))  # (B, H)
         x = F.relu(self.lin2(x))  # (B, H)
-        x = torch.sum(x, dim=1)  # (B, 22)
+        x = torch.sum(x, dim=1)  # (B, in_channels)
         x = self.lin3(x).squeeze(-1)  # (B)
         return x
 
 
-class GNNCritic4(nn.Module):
+class GNNCriticOrigin(nn.Module):
     """
-    Architecture 4: GNN, Concatenation, FC, Readout
+    Architecture 4: GNN, FC, Readout - Origin-based actions
     """
 
     def __init__(self, in_channels, hidden_size=32, act_dim=6, mode=1, edges=None):
@@ -322,27 +364,21 @@ class GNNCritic4(nn.Module):
         self.act_dim = act_dim
         self.mode = mode
         self.conv1 = GCNConv(in_channels, in_channels)
-        # self.lin1 = nn.Linear(in_channels + self.mode + 1, hidden_size)
-        if (mode == 0) | (mode == 1):
-            self.lin1 = nn.Linear(in_channels + 1, hidden_size)
-        else:
-            self.lin1 = nn.Linear(in_channels + 2, hidden_size)
+        self.lin1 = nn.Linear(in_channels, hidden_size)
         self.lin2 = nn.Linear(hidden_size, hidden_size)
         self.lin3 = nn.Linear(hidden_size, 1)
         self.in_channels = in_channels
 
-    def forward(self, state, edge_index, action):
+    def forward(self, state, edge_index):
         # Ensure all inputs are on the same device as the model
         device = next(self.parameters()).device
         state = state.to(device)
         edge_index = edge_index.to(device)
-        action = action.to(device)
         
         out = F.relu(self.conv1(state, edge_index))
         x = out + state
-        x = x.reshape(-1, self.act_dim, self.in_channels)  # (B,N,21)
-        concat = torch.cat([x, action], dim=-1)  # (B,N,22)
-        x = F.relu(self.lin1(concat))
+        x = x.reshape(-1, self.act_dim, self.in_channels)  # (B,N,in_channels)
+        x = F.relu(self.lin1(x))
         x = F.relu(self.lin2(x))  # (B, N, H)
         x = torch.sum(x, dim=1)  # (B, H)
         x = self.lin3(x).squeeze(-1)  # (B)
@@ -351,7 +387,7 @@ class GNNCritic4(nn.Module):
 
 class GNNCritic5(nn.Module):
     """
-    Architecture 5, GNN, Pointwise Multiplication, FC, Readout
+    Architecture 5, GNN, FC, Readout
     """
 
     def __init__(self, in_channels, hidden_size=256, act_dim=6, edges=None):
@@ -363,13 +399,10 @@ class GNNCritic5(nn.Module):
         self.lin2 = nn.Linear(hidden_size, hidden_size)
         self.lin3 = nn.Linear(hidden_size, 1)
 
-    def forward(self, state, edge_index, action):
+    def forward(self, state, edge_index):
         out = F.relu(self.conv1(state, edge_index))
         x = out + state
-        x = x.reshape(-1, self.act_dim, self.in_channels)  # (B,N,21)
-        action = action + 1
-        action = action.unsqueeze(-1)  # (B,N,1)
-        x = x * action  # pointwise multiplication (B,N,21)
+        x = x.reshape(-1, self.act_dim, self.in_channels)  # (B,N,in_channels)
         x = F.relu(self.lin1(x))  # (B,N,H)
         x = F.relu(self.lin2(x))  # (B,N,H)
         x = x.sum(dim=1)  # (B,H)
@@ -379,31 +412,30 @@ class GNNCritic5(nn.Module):
 
 class GNNCritic6(nn.Module):
     """
-    Architecture 6: OD-based action
+    Architecture 6: GNN, FC, Readout
     """
 
     def __init__(self, in_channels, hidden_size=128, act_dim=10, mode=1, edges=None):
         super().__init__()
         self.nregion = act_dim
         self.conv1 = GCNConv(in_channels, in_channels)
-        self.lin1 = nn.Linear(in_channels + self.nregion, hidden_size)
+        self.lin1 = nn.Linear(in_channels, hidden_size)
         self.lin2 = nn.Linear(hidden_size, hidden_size)
         self.lin3 = nn.Linear(hidden_size, 1)
         self.in_channels = in_channels
 
-    def forward(self, state, edge_index, action):
+    def forward(self, state, edge_index):
         out = F.relu(self.conv1(state, edge_index))
         x = out + state
-        x = x.reshape(-1, self.nregion, self.in_channels)  # (B,N,21)
-        concat = torch.cat([x, action], dim=-1)  # (B,N,22)
-        x = F.relu(self.lin1(concat))
+        x = x.reshape(-1, self.nregion, self.in_channels)  # (B,N,in_channels)
+        x = F.relu(self.lin1(x))
         x = F.relu(self.lin2(x))  # (B, N, H)
         x = torch.sum(x, dim=1)  # (B, H)
         x = self.lin3(x).squeeze(-1)  # (B)
         return x
     
 
-class GNNCritic4_1(nn.Module):
+class GNNCriticOD(nn.Module):
     """
     Architecture 4: OD-based action with GNN
     """
@@ -414,15 +446,15 @@ class GNNCritic4_1(nn.Module):
         self.edges = edges
         self.conv1 = GCNConv(in_channels, in_channels)
 
-        self.lin1 = nn.Linear(2*in_channels+1, hidden_size)
+        self.lin1 = nn.Linear(2*in_channels, hidden_size)
         self.lin2 = nn.Linear(hidden_size, hidden_size)
         self.lin3 = nn.Linear(hidden_size, 1)
         self.in_channels = in_channels
 
-    def forward(self, state, edge_index, action):
+    def forward(self, state, edge_index):
         out = F.relu(self.conv1(state, edge_index))
         x = out + state
-        x = x.reshape(-1, self.nregion, self.in_channels)  # (B,N,21)
+        x = x.reshape(-1, self.nregion, self.in_channels)  # (B,N,in_channels)
 
         # Obtain edge features using 'out' for the updated node features
         # edge_features = torch.cat([x[edges[:, 0]], x[edges[:, 1]]], dim=1)
@@ -436,14 +468,13 @@ class GNNCritic4_1(nn.Module):
         # Concatenate features from source and destination nodes
         edge_features = torch.cat([edge_features_src, edge_features_dst], dim=2)
 
-        concat = torch.cat([edge_features, torch.flatten(action,start_dim=-2).unsqueeze(-1)], dim=-1)  # (B,N,22)
-        x = F.relu(self.lin1(concat))
+        x = F.relu(self.lin1(edge_features))
         x = F.relu(self.lin2(x))  # (B, N, H)
         x = torch.sum(x, dim=1)  # (B, H)
         x = self.lin3(x).squeeze(-1)  # (B)
         return x
     
-class MLPCritic4(nn.Module):
+class MLPCriticOD(nn.Module):
     """
     Architecture 4: OD-based action with MLP
     """
@@ -451,23 +482,22 @@ class MLPCritic4(nn.Module):
     def __init__(self, in_channels, hidden_size=128, act_dim=10, mode=1, edges=None):
         super().__init__()
         self.nregion = act_dim
-        self.lin1 = nn.Linear(self.nregion*(in_channels + self.nregion), hidden_size)
+        self.lin1 = nn.Linear(self.nregion*in_channels, hidden_size)
         self.lin2 = nn.Linear(hidden_size, hidden_size)
         self.lin3 = nn.Linear(hidden_size, hidden_size)
         self.lin4 = nn.Linear(hidden_size, 1)
         self.in_channels = in_channels
 
-    def forward(self, state, edge_index, action):
+    def forward(self, state, edge_index):
         state = state.reshape(-1, self.nregion, self.in_channels)
-        concat = torch.cat([state, action], dim=-1)  # (B,N,22)
-        x = concat.reshape(-1, self.nregion*(self.in_channels + self.nregion))
+        x = state.reshape(-1, self.nregion*self.in_channels)
         x = F.relu(self.lin1(x))
         x = F.relu(self.lin2(x))  # (B, N, H)
         x = F.relu(self.lin3(x))  # (B, N, H)
         x = self.lin4(x).squeeze(-1)  # (B)
         return x
     
-class MLPCritic4_1(nn.Module):
+class MLPCriticOrigin(nn.Module):
     """
     Architecture 4: Origin-based action with MLP
     """
@@ -475,21 +505,15 @@ class MLPCritic4_1(nn.Module):
     def __init__(self, in_channels, hidden_size=128, act_dim=10, mode=1, edges=None):
         super().__init__()
         self.nregion = act_dim
-        if (mode == 0) | (mode == 1):
-            self.lin1 = nn.Linear(self.nregion*(in_channels + 1), hidden_size)
-            self.nfeatures = in_channels + 1
-        else:
-            self.lin1 = nn.Linear(self.nregion*(in_channels + 2), hidden_size)
-            self.nfeatures = in_channels + 2
+        self.lin1 = nn.Linear(self.nregion*in_channels, hidden_size)
         self.lin2 = nn.Linear(hidden_size, hidden_size)
         self.lin3 = nn.Linear(hidden_size, hidden_size)
         self.lin4 = nn.Linear(hidden_size, 1)
         self.in_channels = in_channels
 
-    def forward(self, state, edge_index, action):
+    def forward(self, state, edge_index):
         state = state.reshape(-1, self.nregion, self.in_channels)
-        concat = torch.cat([state, action], dim=-1)  # (B,N,22)
-        x = concat.reshape(-1, self.nregion * self.nfeatures)
+        x = state.reshape(-1, self.nregion*self.in_channels)
         x = F.relu(self.lin1(x))
         x = F.relu(self.lin2(x))  # (B, N, H)
         x = F.relu(self.lin3(x))  # (B, N, H)
