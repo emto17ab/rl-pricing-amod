@@ -1,14 +1,13 @@
-from __future__ import print_function
 import argparse
+import torch
+from src.envs.amod_env2 import Scenario, AMoD
+from src.algos.a2c_gnn_emil2 import A2C
 from tqdm import trange
 import numpy as np
-import torch
-from src.envs.amod_env import Scenario, AMoD
-from src.algos.a2c_gnn_emil import A2C
-from src.algos.reb_flow_solver import solveRebFlow
 from src.misc.utils import dictsum, nestdictsum
-import json, pickle
 import copy, os
+from src.algos.reb_flow_solver import solveRebFlow
+import json, pickle
 
 # Define calibrated simulation parameters
 demand_ratio = {'san_francisco': 2, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1.8,
@@ -25,7 +24,7 @@ beta = {'san_francisco': 0.2, 'washington_dc': 0.5, 'chicago': 0.5, 'nyc_man_nor
 
 test_tstep = {'san_francisco': 3, 'nyc_brooklyn': 4, 'shenzhen_downtown_west': 3, 'nyc_man_middle': 3, 'nyc_man_south': 3, 'nyc_man_north': 3, 'washington_dc':3, 'chicago':3}
 
-parser = argparse.ArgumentParser(description="A2C-GNN")
+parser = argparse.ArgumentParser(description="SAC-GNN")
 
 # Simulator parameters
 parser.add_argument(
@@ -65,14 +64,18 @@ parser.add_argument(
 
 # Model parameters
 parser.add_argument(
-    "--test", type=bool, default=False, help="activates test mode for agent evaluation"
+    "--test", 
+    action="store_true",
+    default=False, 
+    help="activates test mode for agent evaluation"
 )
 parser.add_argument(
     "--cplexpath",
     type=str,
-    default="C:/Program Files/IBM/ILOG/CPLEX_Studio201/opl/bin/x64_win64/",
+    default="/apps/cplex/cplex1210/opl/bin/x86-64_linux/", # Changed to HPC PATH
     help="defines directory of the CPLEX installation",
 )
+
 parser.add_argument(
     "--directory",
     type=str,
@@ -91,9 +94,8 @@ parser.add_argument(
     type=int,
     default=20,
     metavar="N",
-    help="number of steps per episode (default: T=20)",
+    help="number of steps per episode (default: 20)",
 )
-
 parser.add_argument(
     "--cuda", 
     action="store_true",
@@ -119,18 +121,14 @@ parser.add_argument(
     default=2,
     help="maximum passenger waiting time (default: 2mins)",
 )
-parser.add_argument(
-    "--alpha",
-    type=float,
-    default=0.3,
-    help="entropy coefficient (default: 0.3)",
-)
+
 parser.add_argument(
     "--hidden_size",
     type=int,
-    default=30,
-    help="hidden size of neural networks (default: 30)",
+    default=256,
+    help="hidden size of neural networks (default: 256)",
 )
+
 parser.add_argument(
     "--checkpoint_path",
     type=str,
@@ -139,70 +137,72 @@ parser.add_argument(
 )
 parser.add_argument(
     "--load",
-    type=bool,
+    action="store_true",
     default=False,
     help="either to start training from checkpoint (default: False)",
 )
+
 parser.add_argument(
     "--clip",
     type=int,
     default=500,
     help="clip value for gradient clipping (default: 500)",
 )
+
 parser.add_argument(
     "--p_lr",
     type=float,
     default=1e-3,
     help="learning rate for policy network (default: 1e-3)",
 )
+
 parser.add_argument(
     "--q_lr",
     type=float,
     default=1e-3,
     help="learning rate for Q networks (default: 1e-3)",
 )
-parser.add_argument(
-    "--q_lag",
-    type=int,
-    default=1,
-    help="update frequency of Q target networks (default: 1)",
-)
+
 parser.add_argument(
     "--city",
     type=str,
     default="san_francisco",
     help="city to train on",
 )
-parser.add_argument(
-    "--rew_scale",
-    type=float,
-    default=0.1,
-    help="reward scaling factor (default: 0.1)",
-)
 
-parser.add_argument(
-    "--price_version",
-    type=str,
-    default="GNN-origin",
-    help="price network version",
-)
 parser.add_argument(
     "--impute",
     type=int,
     default=0,
     help="Whether impute the zero price (default: False)",
 )
+
 parser.add_argument(
     "--supply_ratio",
     type=float,
     default=1.0,
     help="supply scaling factor (default: 1)",
 )
+
 parser.add_argument(
-    "--small",
-    type=bool,
-    default=False,
-    help="whether to run the small hypothetical case (default: False)",
+    "--look_ahead",
+    type=int,
+    default=6,
+    help="Time steps to look ahead (default: 6)",
+)
+
+parser.add_argument(
+    "--scale_factor",
+    type=float,
+    default=0.01,
+    help="Scale factor (default: 0.01)",
+)
+
+parser.add_argument(
+    "--gamma",
+    type=float,
+    default=0.97,
+    help="Discount factor (default: 0.97)",
 )
 
 # Parser arguments
@@ -211,19 +211,11 @@ args = parser.parse_args()
 # Set device
 args.cuda = args.cuda and torch.cuda.is_available()
 device = torch.device("cuda" if args.cuda else "cpu")
-print("Using device:", device)
 
-# Initialize CUDA context if using GPU
-if args.cuda:
-    torch.cuda.init()
-    torch.cuda.empty_cache()
-    print(f"CUDA device: {torch.cuda.get_device_name()}")
-    print(f"CUDA memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
-
-# Set city-specific parameters
+# Set city
 city = args.city
 
-# Create the scenario object
+# Create the scenario
 scenario = Scenario(
             json_file=f"data/scenario_{city}.json",
             demand_ratio=demand_ratio[city],
@@ -232,33 +224,35 @@ scenario = Scenario(
             json_tstep=args.json_tstep,
             tf=args.max_steps,
             impute=args.impute,
-            supply_ratio=args.supply_ratio,
-        )
+            supply_ratio=args.supply_ratio)
 
-# Create the AMoD environment
+# Create the environment
 env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt)
 
 # Load the model 
 model = A2C(
         env=env,
-        input_size=10,
+        input_size= args.look_ahead + 4, # 4 features + time encoding
         hidden_size=args.hidden_size,
         device=device,
         p_lr=args.p_lr,
         q_lr=args.q_lr,
-        T = 6, 
+        T = args.look_ahead,
+        scale_factor = args.scale_factor,
         json_file=f"data/scenario_{city}.json",
-        scale_factor = 0.01,
-        price_version = args.price_version,
         mode=args.mode,
-        alpha=args.alpha,
-        clip=args.clip
+        clip=args.clip,
+        gamma=args.gamma, 
     )
 
 if args.load:
-        print("load checkpoint")
-        model.load_checkpoint(path=f"ckpt/{args.checkpoint_path}.pth")
+    print("load checkpoint")
+    model.load_checkpoint(path=f"ckpt/{args.checkpoint_path}.pth")
 
+#Initialize lists for logging
+log = {'train_reward': [], 
+        'train_served_demand': [], 
+        'train_reb_cost': []}
 train_episodes = args.max_episodes  # set max number of training episodes
 epochs = trange(train_episodes)  # epoch iterator
 best_reward = -np.inf  # set best reward
@@ -293,12 +287,12 @@ for i_episode in epochs:
     current_eps = []
     done = False
     step = 0
+
     while not done:
-        # take matching step (Step 1 in paper)
         if env.mode == 0:
             obs, paxreward, done, info, _, _ = env.match_step_simple()
             episode_reward += paxreward
-
+       
             action_rl = model.select_action(obs)
 
             # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
@@ -320,12 +314,11 @@ for i_episode in epochs:
 
         elif env.mode == 1:
             obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
-
             episode_reward += paxreward
             model.rewards.append(paxreward)
             action_rl = model.select_action(obs)  
-
             env.matching_update()
+
         elif env.mode == 2:
             obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
 
@@ -339,6 +332,7 @@ for i_episode in epochs:
                     action_rl[i][-1] * dictsum(env.acc, env.time + 1))
                 for i in range(len(env.region))
             }
+
             # solve minimum rebalancing distance problem (Step 3 in paper)
             rebAction = solveRebFlow(
                 env,
@@ -350,22 +344,20 @@ for i_episode in epochs:
             # Take rebalancing action in environment
             new_obs, rebreward, done, info, _, _ = env.reb_step(rebAction)
             episode_reward += rebreward
-            model.rewards.append(paxreward + rebreward)                
+            model.rewards.append(paxreward + rebreward)
         else:
-            raise ValueError("Only mode 0, 1, and 2 are allowed")                    
-
+            raise ValueError("Only mode 0, 1, and 2 are allowed")
+        
         # track performance over episode
         episode_served_demand += info["served_demand"]
         episode_rebalancing_cost += info["rebalancing_cost"]
         episode_waiting += info['served_waiting']
         actions.append(action_rl)
 
-        if done:
-            break
         step += 1
 
     grad_norms = model.training_step()  # update model after episode and get metrics
-        
+
     # Keep metrics
     epoch_reward_list.append(episode_reward)
     epoch_demand_list.append(env.arrivals)
@@ -377,25 +369,16 @@ for i_episode in epochs:
     price_history.append(actions)
 
     epochs.set_description(
-        f"Episode {i_episode+1} | Reward: {episode_reward:.2f} | Grad Norms: Actor={grad_norms['actor_grad_norm']:.2f}, Critic={grad_norms['critic_grad_norm']:.2f} | Loss: Actor={grad_norms['actor_loss']:.2f}, Critic={grad_norms['critic_loss']:.2f}"
-    )
-
+                f"Episode {i_episode+1} | Reward: {episode_reward:.2f} | Grad Norms: Actor={grad_norms['actor_grad_norm']:.2f}, Critic={grad_norms['critic_grad_norm']:.2f}| Loss: Actor ={grad_norms['actor_loss']:.2f}, Critic={grad_norms['critic_loss']:.2f}"
+            )
     # Checkpoint best performing model
     if episode_reward >= best_reward:
         model.save_checkpoint(
             path=f"ckpt/{args.checkpoint_path}_sample.pth")
         best_reward = episode_reward
     model.save_checkpoint(path=f"ckpt/{args.checkpoint_path}_running.pth")
-    if i_episode % 100 == 0:
-        test_reward, test_served_demand, test_rebalancing_cost = model.test_agent(
-            10, env, args.cplexpath, args.directory
-        )
-        if test_reward >= best_reward_test:
-            best_reward_test = test_reward
-            model.save_checkpoint(
-                path=f"ckpt/{args.checkpoint_path}_test.pth")
-        
-# Save metrics file
+   
+
 metricPath = f"{args.directory}/train_logs/"
 if not os.path.exists(metricPath):
     os.makedirs(metricPath)

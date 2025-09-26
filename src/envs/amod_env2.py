@@ -9,9 +9,9 @@ import numpy as np
 import subprocess
 import os
 import networkx as nx
-from src.misc.utils import mat2str
-from src.misc.helper_functions import demand_update
-from src.envs.structures import generate_passenger
+from src.misc.utils2 import mat2str
+from src.misc.helper_functions2 import demand_update
+from src.envs.structures2 import generate_passenger
 from copy import deepcopy
 import json
 import random
@@ -20,7 +20,7 @@ import random
 class AMoD:
     # initialization
     # updated to take scenario and beta (cost for rebalancing) as input
-    def __init__(self, scenario, mode, beta=0.2, jitter=0, max_wait=2):
+    def __init__(self, scenario, mode, beta, jitter, max_wait):
         # I changed it to deep copy so that the scenario input is not modified by env
         self.scenario = deepcopy(scenario)
         self.mode = mode  # Mode of rebalancing (0:manul, 1:pricing, 2:both. default 1)
@@ -65,17 +65,14 @@ class AMoD:
         self.paxWait = defaultdict(list)
         self.edges = []  # set of rebalancing edges
         self.nregion = len(scenario.G)  # number of regions
-
         # Set all edges
         for i in self.G:
             self.edges.append((i, i))
             for e in self.G.out_edges(i):
                 self.edges.append(e)
         self.edges = list(set(self.edges))
-
         # number of edges leaving each region
         self.nedge = [len(self.G.out_edges(n))+1 for n in self.region]
-
         # set rebalancing time for each link
         for i, j in self.G.edges:
             self.G.edges[i, j]['time'] = self.rebTime[i, j][self.time]
@@ -87,7 +84,6 @@ class AMoD:
         for n in self.region:
             self.acc[n][0] = self.G.nodes[n]['accInit']
             self.dacc[n] = defaultdict(float)
-
         # scenario.tstep: number of steps as one timestep
         self.beta = beta * scenario.tstep
         t = self.time
@@ -122,7 +118,7 @@ class AMoD:
         self.info["operating_cost"] = 0  # initialize operating cost
         self.info['revenue'] = 0
         self.info['rebalancing_cost'] = 0
-        
+
         # Loop over all the regions
         for n in self.region:
             # Set number of cars at region n at node t
@@ -131,15 +127,17 @@ class AMoD:
             # Loop over all regions j reachacble from regions n
             # Update current queue
             for j in self.G[n]:
-
                 # Set the demand and price
                 d = self.demand[n, j][t]
                 p = self.price[n, j][t]
-
                 if (price is not None) and (np.sum(price) != 0):
+                    # TODO: Different demand model, scaling, and price
                     p_ori = p
+                    # p = 4 + 1.5*self.demandTime[n,
+                    #                             j][t]*self.tstep*price[n].item()
                     if p_ori != 0:
                         if isinstance(price[0], list):
+                            # p = p_ori * (price[n][0] + price[j][1])
                             if len(price[0]) == len(price):
                                 p = 2 * p_ori * price[n][j]
                             else:
@@ -147,16 +145,22 @@ class AMoD:
                             d = max(demand_update(d, p, 2 * p_ori, p_ori, self.jitter), 0)    
                         else:
                             p = p_ori * price[n] * 2
-                            d = max(demand_update(d, p, 2 * p_ori, p_ori, self.jitter), 0)                    
+                            d = max(demand_update(d, p, 2 * p_ori, p_ori, self.jitter), 0)
+                            # p = 10 + max(self.demandTime[n,j][t]*self.tstep-6,0)*price[n].item()
+                            # d = max(demand_update(d, p, 2*max(p_ori,p), p_ori), 0)                        
                     self.demand[n, j][t] = d
                     self.price[n, j][t] = p
                 else:
                     if self.demand[n, j][t] == 0 and self.price[n, j][t]!=0:
                         self.demand[n, j][t] = self.jitter
-                        d = self.jitter             
+                        d = self.jitter
+                # elif np.sum(price) == 0:
+                #     p_ori = p
+                #     d = max(demand_update(d, p, 2 * p_ori, p_ori, self.jitter), 0)
+                #     self.demand[n, j][t] = d                    
                     
-                newp, self.arrivals = generate_passenger((n, j, t, d, p), self.max_wait, self.arrivals)
-
+                newp, self.arrivals = generate_passenger(
+                    (n, j, t, d, p), self.max_wait, self.arrivals)
                 self.passenger[n][t].extend(newp)
                 # shuffle passenger list at station so that the passengers are not served in destination order
                 random.Random(42).shuffle(self.passenger[n][t])
@@ -456,7 +460,6 @@ class Scenario:
                     self.rebTime[i, j][t] = (
                         (abs(i//N1-j//N1) + abs(i % N1-j % N1))*grid_travel_time)
 
-            # Set 
             for n in self.G.nodes:
                 # initial number of vehicles at station
                 self.G.nodes[n]['accInit'] = int(ninit)
@@ -561,7 +564,6 @@ class Scenario:
 
             # Similarly stores aggregated (volume-weighted) price sums for each time index.
             matrix_price_ori = defaultdict(lambda: np.zeros((self.nregion,self.nregion)))
-
             # Loops over the data demand file
             for item in data["demand"]:
                 # Sets the variables
@@ -593,7 +595,7 @@ class Scenario:
                     t-self.json_start)//json_tstep] += v*demand_ratio
 
                 # The price p is accumulated in a volume-weighted manner (p*v) for the same OD and time index. 
-                # This is not just summing prices: it’s building a demand-weighted sum. Later we divide by total demand to get average price.
+                # This is not just summing prices: it's building a demand-weighted sum. Later we divide by total demand to get average price.
                 self.p[o, d][(t-self.json_start) //
                              json_tstep] += p*v*demand_ratio
 
@@ -737,27 +739,20 @@ class Scenario:
         # skip this when resetting the demand
         # if not reset:
         if self.is_json:
-            # Loop over the time indicies
             for t in range(0, self.tf*2):
-                # Loop over all the edges
                 for i, j in self.edges:
-                    # check if demand exists for OD pair i,j for time t
                     if (i, j) in self.demand_input and t in self.demand_input[i, j]:
-                        # Sample demand from Poisson with parameter set by demand_input
                         demand[i, j][t] = np.random.poisson(
                             self.demand_input[i, j][t])
-                        # Set price given by p
                         price[i, j][t] = self.p[i, j][t]
-                    # Else set price and demand to 0
                     else:
                         demand[i, j][t] = 0
                         price[i, j][t] = 0
-                    # Append, origin, destination, time, demand at time, price at time
                     tripAttr.append((i, j, t, demand[i, j][t], price[i, j][t]))
         else:
             self.static_demand = dict()
             region_rand = (np.random.rand(len(self.G))*self.alpha *
-                           2+1-self.alpha)  # multiplyer of demand
+                            2+1-self.alpha)  # multiplyer of demand
             if type(self.demand_input) in [float, int, list, np.array]:
 
                 if type(self.demand_input) in [float, int]:
@@ -773,7 +768,7 @@ class Scenario:
                     for idx in range(len(J)):
                         # allocation of demand to OD pairs
                         self.static_demand[i, J[idx]
-                                           ] = self.region_demand[i] * prob[idx]
+                                            ] = self.region_demand[i] * prob[idx]
             elif type(self.demand_input) in [dict, defaultdict]:
                 for i, j in self.edges:
                     self.static_demand[i, j] = self.demand_input[i, j] if (
@@ -798,4 +793,4 @@ class Scenario:
                             2)+1)*self.demandTime[i, j][t]
                     tripAttr.append((i, j, t, demand[i, j][t], price[i, j][t]))
 
-        return tripAttr
+        return tripAttr   

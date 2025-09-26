@@ -45,11 +45,12 @@ class GNNActor(nn.Module):
         return action, log_prob
 
 class GNNActor_Emil(nn.Module):
-    def __init__(self, in_channels, hidden_size=32, act_dim=6, mode=0, edges=None):
+    def __init__(self, in_channels, hidden_size=32, act_dim=6, mode=0, edges=None, temperature=1.0):
         super().__init__()
         self.mode = mode
         self.in_channels = in_channels
         self.act_dim = act_dim
+        self.temperature = temperature
         self.conv1 = GCNConv(in_channels, in_channels)
         self.lin1 = nn.Linear(in_channels, hidden_size)
         self.lin2 = nn.Linear(hidden_size, hidden_size)
@@ -59,32 +60,59 @@ class GNNActor_Emil(nn.Module):
             self.lin3 = nn.Linear(hidden_size, 2)
         else:
             self.lin3 = nn.Linear(hidden_size, 3)
+        
+        # Store the latest distribution parameters for logging
+        self.latest_beta_params = None
+        self.latest_dirichlet_params = None
     def forward(self, data):
         out = F.relu(self.conv1(data.x, data.edge_index))
         x = out + data.x
         x = F.leaky_relu(self.lin1(x))
         x = F.leaky_relu(self.lin2(x))
-        x = F.softplus(self.lin3(x))
+        x = self.lin3(x)
+        x = F.softplus(x)
       
         if self.mode == 0:
             concentration = x.squeeze(-1) + 1e-20
+            # Store actual parameters passed to Dirichlet
+            self.latest_dirichlet_params = concentration.detach().cpu().numpy()
             m = Dirichlet(concentration)
             action = m.rsample()
             log_prob = m.log_prob(action)
         elif self.mode == 1:
-            m_o = Beta(x[:, 0] + 1e-10, x[:, 1] + 1e-10)
+            alpha_param = x[:, 0] + 1e-10
+            beta_param = x[:, 1] + 1e-10
+            # Store actual parameters passed to Beta
+            self.latest_beta_params = (alpha_param.detach().cpu().numpy(), beta_param.detach().cpu().numpy())
+            m_o = Beta(alpha_param, beta_param)
             action_o = m_o.rsample()
             log_prob = m_o.log_prob(action_o).sum(dim=-1)
             action = action_o.unsqueeze(-1)        
         else:        
-            m_o = Beta(x[:, 0] + 1e-10, x[:, 1] + 1e-10)
+            alpha_param = x[:, 0] + 1e-10
+            beta_param = x[:, 1] + 1e-10
+            dirichlet_param = x[:, 2] + 1e-10
+            # Store actual parameters passed to both distributions
+            self.latest_beta_params = (alpha_param.detach().cpu().numpy(), beta_param.detach().cpu().numpy())
+            self.latest_dirichlet_params = dirichlet_param.detach().cpu().numpy()
+            
+            m_o = Beta(alpha_param, beta_param)
             action_o = m_o.rsample()
             # Rebalancing desired distribution
-            m_reb = Dirichlet(x[:, 2] + 1e-10)
+            m_reb = Dirichlet(dirichlet_param)
             action_reb = m_reb.rsample()              
             log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_reb.log_prob(action_reb)
             action = torch.cat((action_o.unsqueeze(-1), action_reb.unsqueeze(-1)), -1)       
         return action, log_prob
+    
+    def get_distribution_params(self):
+        """Return the latest distribution parameters used"""
+        params = {}
+        if hasattr(self, 'latest_beta_params') and self.latest_beta_params is not None:
+            params['beta_params'] = self.latest_beta_params
+        if hasattr(self, 'latest_dirichlet_params') and self.latest_dirichlet_params is not None:
+            params['dirichlet_params'] = self.latest_dirichlet_params
+        return params
 
 
 class GNNOrigin(nn.Module):
@@ -118,7 +146,10 @@ class GNNOrigin(nn.Module):
         x = x.reshape(-1, self.act_dim, self.in_channels)
         x = F.leaky_relu(self.lin1(x))
         x = F.leaky_relu(self.lin2(x))
-        x = F.softplus(self.lin3(x))
+        # Constrain network outputs to prevent explosion of concentration parameters
+        x = self.lin3(x)
+        x = torch.clamp(x, min=-5.0, max=5.0)  # Limit raw outputs
+        x = F.softplus(x) + 1e-3  # Add small offset for numerical stability
         concentration = x.squeeze(-1)
         if deterministic:
             if self.mode == 0:
