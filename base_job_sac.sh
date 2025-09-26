@@ -11,4 +11,4 @@
 
 source /zhome/7a/c/204061/Documents/thesis/rl-pricing-amod/thesis_env/bin/activate
 
-python main_a2c.py --mode 1 --cplexpath "/apps/cplex/cplex1210/opl/bin/x86-64_linux/" --cuda --max_episodes 20000
+python main_a2c2.py --mode 2 --cuda --max_episodes 16000
