@@ -83,5 +83,5 @@ class GNNActor(nn.Module):
                 m_reb = Dirichlet(concentration[:,:,-1] + 1e-10)
                 action_reb = m_reb.rsample()              
                 log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_reb.log_prob(action_reb)
-                action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_reb.squeeze(0).unsqueeze(-1)),-1)       
+                action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_reb.squeeze(0).unsqueeze(-1)),-1)   
         return action, log_prob

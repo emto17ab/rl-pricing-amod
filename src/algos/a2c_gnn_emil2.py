@@ -206,7 +206,9 @@ class A2C(nn.Module):
         # Forward pass through critic network to get state value estimate
         value = self.critic(state)
         
-        self.saved_actions.append(SavedAction(logprob, value))
+        # Only save actions for training (when not deterministic)
+        if not deterministic:
+            self.saved_actions.append(SavedAction(logprob, value))
     
         action_list = a.detach().cpu().numpy().tolist()
         

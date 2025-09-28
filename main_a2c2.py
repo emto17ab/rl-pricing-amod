@@ -379,8 +379,10 @@ if not args.test:
             best_reward = episode_reward
         model.save_checkpoint(path=f"ckpt/{args.checkpoint_path}_running.pth")
         if i_episode % 100 == 0:
+                model.eval()
                 test_reward, test_served_demand, test_rebalancing_cost = model.test_agent(
                     10, env, args.cplexpath, args.directory)
+                model.train()
                 if test_reward >= best_reward_test:
                     best_reward_test = test_reward
                     model.save_checkpoint(
@@ -437,7 +439,7 @@ else:
     epochs = trange(test_episodes)  # epoch iterator
     best_reward = -np.inf  # set best reward
     best_reward_test = -np.inf  # set best reward
-    model.train()  # set model in train mode
+    model.eval()  # set model in evaluation mode for testing
 
      # Initialize lists for logging
     log = {"test_reward": [], "test_served_demand": [], "test_reb_cost": []}
