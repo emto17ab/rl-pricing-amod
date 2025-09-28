@@ -6,6 +6,8 @@ from torch_geometric.data import Data
 from src.algos.layers2 import GNNCritic, GNNActor
 import torch.nn.functional as F
 from collections import namedtuple
+from src.algos.reb_flow_solver import solveRebFlow
+from src.misc.utils import dictsum, nestdictsum
 
 SavedAction = namedtuple('SavedAction', ['log_prob', 'value'])
 
@@ -194,12 +196,12 @@ class A2C(nn.Module):
         return state
     
     # Combines select action and forward steps of actor and critic
-    def select_action(self, obs):
+    def select_action(self, obs, deterministic=False):
         # Parse the observation to get the graph data
         state = self.parse_obs(obs).to(self.device)
 
         # Forward pass through actor network to get action and log probability        
-        a, logprob = self.actor(state)
+        a, logprob = self.actor(state, deterministic=deterministic)
         
         # Forward pass through critic network to get state value estimate
         value = self.critic(state)
@@ -297,3 +299,88 @@ class A2C(nn.Module):
     
     def log(self, log_dict, path='log.pth'):
         torch.save(log_dict, path)
+
+    def test_agent(self, test_episodes, env, cplexpath, directory):
+        epochs = range(test_episodes)  # epoch iterator
+        episode_reward = []
+        episode_served_demand = []
+        episode_rebalancing_cost = []
+        for _ in epochs:
+            eps_reward = 0
+            eps_served_demand = 0
+            eps_rebalancing_cost = 0
+            obs = env.reset()
+            action_rl = [0]*env.nregion
+            actions = []
+            done = False
+            while not done:
+
+                if env.mode == 0:
+                    obs, paxreward, done, info, _, _ = env.match_step_simple()
+                    eps_reward += paxreward
+            
+                    action_rl = self.select_action(obs, deterministic=True)  # Choose an action
+                    actions.append(action_rl)
+
+                    # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
+                    desiredAcc = {env.region[i]: int(action_rl[i] *dictsum(env.acc,env.time+1))for i in range(len(env.region))}
+
+                    # solve minimum rebalancing distance problem (Step 3 in paper)
+                    rebAction = solveRebFlow(
+                        env,
+                        "scenario_san_francisco4",
+                        desiredAcc,
+                        cplexpath,
+                        directory, 
+                    )
+
+                    # Take rebalancing action in environment
+                    _, rebreward, done, _, _, _ = env.reb_step(rebAction)
+                    eps_reward += rebreward
+                    
+                elif env.mode == 1:
+                    obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+                    eps_reward += paxreward
+                    action_rl = self.select_action(obs, deterministic=True)  # Choose an action
+                    env.matching_update()
+
+                elif env.mode == 2:
+                    obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+                    eps_reward += paxreward
+
+                    action_rl = self.select_action(obs, deterministic=True)  # Choose an action)
+
+                    # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
+                    desiredAcc = {
+                        env.region[i]: int(
+                            action_rl[i][-1] * dictsum(env.acc, env.time + 1))
+                        for i in range(len(env.region))
+                    }
+
+                    # solve minimum rebalancing distance problem (Step 3 in paper)
+                    rebAction = solveRebFlow(
+                        env,
+                        "scenario_san_francisco4",
+                        desiredAcc,
+                        cplexpath,
+                        directory, 
+                    )
+
+                    # Take rebalancing action in environment
+                    _, rebreward, done, info, _, _ = env.reb_step(rebAction)
+                    eps_reward += rebreward 
+                else:
+                    raise ValueError("Only mode 0, 1, and 2 are allowed")  
+                   
+                eps_served_demand += info["served_demand"]
+                eps_rebalancing_cost += info["rebalancing_cost"]
+                
+            episode_reward.append(eps_reward)
+            episode_served_demand.append(eps_served_demand)
+            episode_rebalancing_cost.append(eps_rebalancing_cost)
+
+        return (
+            np.mean(episode_reward),
+            np.mean(episode_served_demand),
+            np.mean(episode_rebalancing_cost),
+        )

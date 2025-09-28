@@ -43,7 +43,7 @@ class GNNActor(nn.Module):
         else:
             self.lin3 = nn.Linear(hidden_size, 3)
 
-    def forward(self, data):
+    def forward(self, data, deterministic=False):
         out = F.relu(self.conv1(data.x, data.edge_index))
         x = out + data.x
         x = x.reshape(-1, self.act_dim, self.in_channels)
@@ -51,23 +51,37 @@ class GNNActor(nn.Module):
         x = F.leaky_relu(self.lin2(x))
         x = F.softplus(self.lin3(x))
         concentration = x.squeeze(-1)
-      
-        if self.mode == 0:
-            m = Dirichlet(concentration + 1e-20)
-            action = m.rsample()
-            log_prob = m.log_prob(action)
-            action = action.squeeze(0).unsqueeze(-1)
-        elif self.mode == 1:
-            m_o = Beta(concentration[:,:,0] + 1e-10, concentration[:,:,1] + 1e-10)
-            action_o = m_o.rsample()
-            log_prob = m_o.log_prob(action_o).sum(dim=-1)
-            action = action_o.squeeze(0).unsqueeze(-1)       
-        else:        
-            m_o = Beta(concentration[:,:,0] + 1e-10, concentration[:,:,1] + 1e-10)
-            action_o = m_o.rsample()
-            # Rebalancing desired distribution
-            m_reb = Dirichlet(concentration[:,:,-1] + 1e-10)
-            action_reb = m_reb.rsample()              
-            log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_reb.log_prob(action_reb)
-            action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_reb.squeeze(0).unsqueeze(-1)),-1)       
+
+        if deterministic:
+            if self.mode == 0:
+                action = (concentration) / (concentration.sum() + 1e-20)
+            elif self.mode == 1:
+                action_o = (concentration[:,:,0])/(concentration[:,:,0] + concentration[:,:,1] + 1e-10)
+                action_o[action_o<0] = 0
+                action = action_o.squeeze(0).unsqueeze(-1)
+            else:
+                action_o = (concentration[:,:,0])/(concentration[:,:,0] + concentration[:,:,1] + 1e-10)
+                action_o[action_o<0] = 0
+                action_reb = (concentration[:,:,2]) / (concentration[:,:,2].sum() + 1e-10)
+                action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_reb.squeeze(0).unsqueeze(-1)),-1)
+            log_prob = None
+        else:
+            if self.mode == 0:
+                m = Dirichlet(concentration + 1e-20)
+                action = m.rsample()
+                log_prob = m.log_prob(action)
+                action = action.squeeze(0).unsqueeze(-1)
+            elif self.mode == 1:
+                m_o = Beta(concentration[:,:,0] + 1e-10, concentration[:,:,1] + 1e-10)
+                action_o = m_o.rsample()
+                log_prob = m_o.log_prob(action_o).sum(dim=-1)
+                action = action_o.squeeze(0).unsqueeze(-1)       
+            else:        
+                m_o = Beta(concentration[:,:,0] + 1e-10, concentration[:,:,1] + 1e-10)
+                action_o = m_o.rsample()
+                # Rebalancing desired distribution
+                m_reb = Dirichlet(concentration[:,:,-1] + 1e-10)
+                action_reb = m_reb.rsample()              
+                log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_reb.log_prob(action_reb)
+                action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_reb.squeeze(0).unsqueeze(-1)),-1)       
         return action, log_prob
