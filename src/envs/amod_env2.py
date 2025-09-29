@@ -388,16 +388,16 @@ class AMoD:
             elif t+1 in self.acc[region]:
                 total += self.acc[region][t+1]
         
-        # Count vehicles with passengers (all future arrivals)
+        # Count vehicles with passengers (all current and future arrivals)
         for (i, j), time_dict in self.paxFlow.items():
             for time_step, flow in time_dict.items():
-                if time_step > t:  # Future arrivals (vehicles in transit)
+                if time_step >= t:  # Current and future arrivals (vehicles in transit)
                     total += flow
         
-        # Count rebalancing vehicles (all future arrivals)
+        # Count rebalancing vehicles (all current and future arrivals)
         for (i, j), time_dict in self.rebFlow.items():
             for time_step, flow in time_dict.items():
-                if time_step > t:  # Future arrivals (vehicles in transit)
+                if time_step >= t:  # Current and future arrivals (vehicles in transit)
                     total += flow
         
         return total

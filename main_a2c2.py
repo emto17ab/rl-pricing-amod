@@ -379,11 +379,11 @@ if not args.test:
         total_vehicles = env.get_total_vehicles()
 
         # Calculate vehicle discrepancy
-
         vehicle_discrepancy = abs(total_vehicles - initial_vehicles)
+        
         # Add training metrics to wandb
         wandb.log({
-        "episode": i_episode,
+        "episode": i_episode + 1,
         "episode_reward": episode_reward,
         "episode_served_demand": episode_served_demand,
         "episode_rebalancing_cost": episode_rebalancing_cost,
