@@ -372,6 +372,40 @@ class AMoD:
         ext_done = [done]*self.nregion
         return self.obs, self.reward, done, self.info, self.ext_reward, ext_done
 
+    def get_total_vehicles(self):
+        """
+        Calculate total number of vehicles in the system at current time.
+        Includes: available vehicles + vehicles with passengers + rebalancing vehicles
+        """
+        t = self.time
+        total = 0
+        
+        # Count available vehicles at all regions for CURRENT time
+        for region in self.region:
+            # Try current time first, then fallback to t+1
+            if t in self.acc[region]:
+                total += self.acc[region][t]
+            elif t+1 in self.acc[region]:
+                total += self.acc[region][t+1]
+        
+        # Count vehicles with passengers (all future arrivals)
+        for (i, j), time_dict in self.paxFlow.items():
+            for time_step, flow in time_dict.items():
+                if time_step > t:  # Future arrivals (vehicles in transit)
+                    total += flow
+        
+        # Count rebalancing vehicles (all future arrivals)
+        for (i, j), time_dict in self.rebFlow.items():
+            for time_step, flow in time_dict.items():
+                if time_step > t:  # Future arrivals (vehicles in transit)
+                    total += flow
+        
+        return total
+
+    def get_initial_vehicles(self):
+        """Get the initial number of vehicles in the system"""
+        return sum(self.G.nodes[n]['accInit'] for n in self.G.nodes)
+
     def reset(self):
         # reset the episode
         self.acc = defaultdict(dict)
