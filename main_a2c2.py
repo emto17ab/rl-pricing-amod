@@ -8,6 +8,11 @@ from src.misc.utils import dictsum, nestdictsum
 import copy, os
 from src.algos.reb_flow_solver import solveRebFlow
 import json, pickle
+import wandb
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
 
 # Define calibrated simulation parameters
 demand_ratio = {'san_francisco': 2, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1.8,
@@ -212,6 +217,14 @@ args = parser.parse_args()
 args.cuda = args.cuda and torch.cuda.is_available()
 device = torch.device("cuda" if args.cuda else "cpu")
 
+# Set up weights and biases
+wandb.login(key=os.getenv('WANDB_API_KEY'))
+
+run = wandb.init(
+    project="thesis",
+    config=args,
+)
+
 # Set city
 city = args.city
 
@@ -270,6 +283,9 @@ if not args.test:
     epoch_value2_list = []
 
     price_history = []
+
+    # Get initial vehicles
+    initial_vehicles = env.get_initial_vehicles()
 
     for i_episode in epochs:
         obs = env.reset()  # initialize environment
@@ -359,6 +375,28 @@ if not args.test:
 
         grad_norms = model.training_step()  # update model after episode and get metrics
 
+        # Get total vehicles for verification
+        total_vehicles = env.get_total_vehicles()
+
+        # Calculate vehicle discrepancy
+
+        vehicle_discrepancy = abs(total_vehicles - initial_vehicles)
+        # Add training metrics to wandb
+        wandb.log({
+        "episode": i_episode,
+        "episode_reward": episode_reward,
+        "episode_served_demand": episode_served_demand,
+        "episode_rebalancing_cost": episode_rebalancing_cost,
+        "episode_waiting_time": episode_waiting/episode_served_demand if episode_served_demand > 0 else 0,
+        "actor_grad_norm": grad_norms['actor_grad_norm'],
+        "critic_grad_norm": grad_norms['critic_grad_norm'],
+        "actor_loss": grad_norms['actor_loss'],
+        "critic_loss": grad_norms['critic_loss'],
+        "total_vehicles": total_vehicles,
+        "initial_vehicles": initial_vehicles,
+        "vehicle_discrepancy": vehicle_discrepancy
+        })
+
         # Keep metrics
         epoch_reward_list.append(episode_reward)
         epoch_demand_list.append(env.arrivals)
@@ -383,12 +421,20 @@ if not args.test:
                 test_reward, test_served_demand, test_rebalancing_cost = model.test_agent(
                     10, env, args.cplexpath, args.directory)
                 model.train()
+
+                # Log test results
+                wandb.log({
+                "test_reward": test_reward,
+                "test_served_demand": test_served_demand, 
+                "test_rebalancing_cost": test_rebalancing_cost
+                })
+
                 if test_reward >= best_reward_test:
                     best_reward_test = test_reward
                     model.save_checkpoint(
                         path=f"ckpt/{args.checkpoint_path}_test.pth")
     
-
+    wandb.finish()
     metricPath = f"{args.directory}/train_logs/"
     if not os.path.exists(metricPath):
         os.makedirs(metricPath)
