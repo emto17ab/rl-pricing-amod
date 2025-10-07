@@ -45,8 +45,6 @@ class AMoD:
 
         # Demand of Nodes
         self.demand = defaultdict(dict)  # Nested dictionary, Demand at node, key: (i,j) - (origin, destination), key: t - time, with value of demand
-        self.depDemand = dict()  # Nested dictionary, Departure demand, key: i - region, key: t - time, all demand departing from region i at time t
-        self.arrDemand = dict()  # Nested dictionary, Arrival demand, key: i - region, key: t - time, all demand arriving at region i at time t
 
         # Multi-agent passenger tracking: passenger[agent_id][region][time] = [passenger_objects] 
         self.agent_passenger = {agent_id: dict() for agent_id in self.agents} 
@@ -58,10 +56,6 @@ class AMoD:
         for agent_id in self.agents:
             for i in self.region:
                 self.agent_passenger[agent_id][i] = defaultdict(list)
-
-        for i in self.region:
-            self.depDemand[i] = defaultdict(int)
-            self.arrDemand[i] = defaultdict(int)
 
         # Multi-agent pricing: price[agent_id][(i,j)][t] = price
         self.agent_price = {agent_id: defaultdict(dict) for agent_id in self.agents} # Set the price for each agent, origin-destination pair and time
@@ -121,8 +115,8 @@ class AMoD:
         for i, j in self.G.edges:
             self.G.edges[i, j]['time'] = self.rebTime[i, j][self.time]
             for agent_id in self.agents:
-                self.agent_rebFlow[agent_id][i, j] = defaultdict(int)
-                self.agent_rebFlow_ori[agent_id][i, j] = defaultdict(int)
+                self.agent_rebFlow[agent_id][i, j] = defaultdict(float)
+                self.agent_rebFlow_ori[agent_id][i, j] = defaultdict(float)
 
         # Initialize passenger flows and waiting lists for each agent and O-D pair
         # For each origin-destination pair with demand:
@@ -130,7 +124,7 @@ class AMoD:
         # - Initialize passenger waiting list (paxWait) per agent
         for i, j in self.demand:
             for agent_id in self.agents:
-                self.agent_paxFlow[agent_id][i, j] = defaultdict(int)
+                self.agent_paxFlow[agent_id][i, j] = defaultdict(float)
                 self.agent_paxWait[agent_id][i, j] = []
 
         # Initialize vehicle counts for each agent and region
@@ -140,7 +134,7 @@ class AMoD:
         for agent_id in self.agents:
             for n in self.region:
                 self.agent_acc[agent_id][n][0] = self.G.nodes[n]['accInit']
-                self.agent_dacc[agent_id][n] = defaultdict(int)
+                self.agent_dacc[agent_id][n] = defaultdict(float)
 
 
         # scenario.tstep: number of steps as one timestep
@@ -152,7 +146,7 @@ class AMoD:
         # Initialize agent demand for each O-D pair
         for agent_id in self.agents:
             for i, j in self.demand:
-                self.agent_demand[agent_id][i, j] = defaultdict(int)
+                self.agent_demand[agent_id][i, j] = defaultdict(float)
 
         # Multi-agent demand tracking: servedDemand[agent_id][(i,j)][t] = passengers served
         self.agent_servedDemand = {agent_id: defaultdict(dict) for agent_id in self.agents}
@@ -163,8 +157,8 @@ class AMoD:
         # Initialize served and unserved demand tracking for each agent and O-D pair
         for agent_id in self.agents:
             for i, j in self.demand:
-                self.agent_servedDemand[agent_id][i, j] = defaultdict(int)
-                self.agent_unservedDemand[agent_id][i, j] = defaultdict(int)
+                self.agent_servedDemand[agent_id][i, j] = defaultdict(float)
+                self.agent_unservedDemand[agent_id][i, j] = defaultdict(float)
 
         self.N = len(self.region)  # total number of cells
 
@@ -182,9 +176,6 @@ class AMoD:
                                     'rebalancing_cost', 'operating_cost', 'served_waiting', 
                                     'rejected_demand', 'rejection_rate'], 0) 
                     for agent_id in self.agents}
-
-        # Multi-agent rewards: reward[agent_id] = scalar reward value
-        self.agent_reward = {agent_id: 0 for agent_id in self.agents}
 
         # Multi-agent external rewards (operating costs): ext_reward[agent_id] = np.array of external rewards per region
         self.ext_reward_agents = {a: np.zeros(self.nregion) for a in [0, 1]}
@@ -387,6 +378,159 @@ class AMoD:
 
         return self.obs, paxreward, done, self.agent_info, self.ext_reward_agents, ext_done
 
+    def matching_update(self):
+        """Update properties if there is no rebalancing after matching"""
+        t = self.time
+        # Update acc. Assuming arriving vehicle will only be availbe for the next timestamp.
+        for k in range(len(self.edges)):
+            i, j = self.edges[k]
+            for agent_id in [0, 1]:
+                if (i, j) in self.agent_paxFlow[agent_id] and t in self.agent_paxFlow[agent_id][i, j]:
+                    self.agent_acc[agent_id][j][t+1] += self.agent_paxFlow[agent_id][i, j][t]
+        self.time += 1
+
+    def reb_step(self, rebAction_agents):
+        # Set the time
+        t = self.time
+        
+        # Set the counter for rewards
+        rebreward = {0: 0, 1: 0}
+
+        # Set the counter for operating costs
+        self.ext_reward_agents = {a: np.zeros(self.nregion) for a in [0, 1]}
+    
+        # Initialize the info_agents dictionary
+        for agent_id in [0, 1]:
+            self.agent_info[agent_id]['rebalancing_cost'] = 0
+
+        # Loop through agents
+        for agent_id in [0, 1]:
+            
+            rebAction = rebAction_agents[agent_id]
+    
+            # Loop through the edges for rebalancing
+            for k in range(len(self.edges)):
+                i, j = self.edges[k]
+
+                # Update rebalancing actions and flows
+                # Ensure rebalancing does not exceed available vehicles
+                rebAction[k] = min(self.agent_acc[agent_id][i][t+1], rebAction[k])
+
+                # Calculate rebalancing time
+                reb_time = self.rebTime[i, j][t]
+
+                # Set the inflow of vechiles for rebalancing
+                self.agent_rebFlow[agent_id][i, j][t + reb_time] = rebAction[k]
+                self.agent_rebFlow_ori[agent_id][i, j][t] = rebAction[k]
+    
+                # Update the vehicle counts based on rebalancing actions
+                self.agent_acc[agent_id][i][t+1] -= rebAction[k]
+                self.agent_dacc[agent_id][j][t + reb_time] += rebAction[k]
+
+                # Calculate rebalancing costs for the agent
+                rebalancing_cost = self.rebTime[i, j][t] * self.beta * rebAction[k]
+                rebreward[agent_id] -= rebalancing_cost
+                self.ext_reward_agents[agent_id][i] -= rebalancing_cost
+
+                # Track rebalancing costs in agent_info
+                self.agent_info[agent_id]['rebalancing_cost'] += rebalancing_cost
+    
+        # Vehicle arrivals from past rebalancing and passenger trips
+        for agent_id in [0, 1]:
+            for k in range(len(self.edges)):
+                i, j = self.edges[k]
+                if (i, j) in self.agent_rebFlow[agent_id] and t in self.agent_rebFlow[agent_id][i, j]:
+                    self.agent_acc[agent_id][j][t+1] += self.agent_rebFlow[agent_id][i, j][t]
+                if (i, j) in self.agent_paxFlow[agent_id] and t in self.agent_paxFlow[agent_id][i, j]:
+                    self.agent_acc[agent_id][j][t+1] += self.agent_paxFlow[agent_id][i, j][t]
+    
+        # Increment time step
+        self.time += 1
+    
+        self.obs = {
+            0: (self.agent_acc[0], self.time, self.agent_dacc[0], self.agent_demand[0]),
+            1: (self.agent_acc[1], self.time, self.agent_dacc[1], self.agent_demand[1])
+        }
+    
+        # Update rebalancing time on edges
+        for i, j in self.G.edges:
+            self.G.edges[i, j]['time'] = self.rebTime[i, j][self.time]
+    
+        # Check if the episode is done
+        done = (self.tf == t + 1)
+        ext_done = [done] * self.nregion
+    
+        return self.obs, rebreward, done, self.agent_info, self.ext_reward_agents, ext_done
+
+    def get_total_vehicles(self, agent_id=None):
+        """
+        Calculate total number of vehicles in the system at current time for each agent.
+        Includes: available vehicles + vehicles with passengers + rebalancing vehicles
+        
+        Args:
+            agent_id: If provided, return total for specific agent. If None, return dict with totals for all agents.
+        
+        Returns:
+            If agent_id is None: dict with {agent_id: total_vehicles}
+            If agent_id is provided: int with total vehicles for that agent
+        """
+        t = self.time
+        
+        if agent_id is not None:
+            # Calculate total for specific agent
+            total = 0
+            
+            # Count available vehicles at all regions for CURRENT time
+            for region in self.region:
+                # Try current time first, then fallback to t+1
+                if t in self.agent_acc[agent_id][region]:
+                    total += self.agent_acc[agent_id][region][t]
+                elif t+1 in self.agent_acc[agent_id][region]:
+                    total += self.agent_acc[agent_id][region][t+1]
+            
+            # Count vehicles with passengers (all current and future arrivals)
+            for (i, j), time_dict in self.agent_paxFlow[agent_id].items():
+                for time_step, flow in time_dict.items():
+                    if time_step >= t:  # Current and future arrivals (vehicles in transit)
+                        total += flow
+            
+            # Count rebalancing vehicles (all current and future arrivals)
+            for (i, j), time_dict in self.agent_rebFlow[agent_id].items():
+                for time_step, flow in time_dict.items():
+                    if time_step >= t:  # Current and future arrivals (vehicles in transit)
+                        total += flow
+            
+            return total
+        else:
+            # Calculate totals for all agents
+            totals = {}
+            for agent_id in self.agents:
+                total = 0
+                
+                # Count available vehicles at all regions for CURRENT time
+                for region in self.region:
+                    # Try current time first, then fallback to t+1
+                    if t in self.agent_acc[agent_id][region]:
+                        total += self.agent_acc[agent_id][region][t]
+                    elif t+1 in self.agent_acc[agent_id][region]:
+                        total += self.agent_acc[agent_id][region][t+1]
+                
+                # Count vehicles with passengers (all current and future arrivals)
+                for (i, j), time_dict in self.agent_paxFlow[agent_id].items():
+                    for time_step, flow in time_dict.items():
+                        if time_step >= t:  # Current and future arrivals (vehicles in transit)
+                            total += flow
+                
+                # Count rebalancing vehicles (all current and future arrivals)
+                for (i, j), time_dict in self.agent_rebFlow[agent_id].items():
+                    for time_step, flow in time_dict.items():
+                        if time_step >= t:  # Current and future arrivals (vehicles in transit)
+                            total += flow
+                
+                totals[agent_id] = total
+            
+            return totals
+
     def get_initial_vehicles(self):
         """Get the initial number of vehicles in the system"""
         return sum(self.G.nodes[n]['accInit'] for n in self.G.nodes)
@@ -439,7 +583,7 @@ class AMoD:
                 self.agent_price[agent_id][i, j][t] = p
                 # Initialize agent demand
                 if (i, j) not in self.agent_demand[agent_id]:
-                    self.agent_demand[agent_id][i, j] = defaultdict(int)
+                    self.agent_demand[agent_id][i, j] = defaultdict(float)
             
             # Track region-level demand
             if t not in self.regionDemand[i]:
@@ -478,8 +622,6 @@ class AMoD:
                                     'rejected_demand', 'rejection_rate'], 0) 
                     for agent_id in self.agents}
         
-        # Reset multi-agent rewards
-        self.agent_reward = {agent_id: 0 for agent_id in self.agents}
         
         # Create observations for each agent
         self.agent_obs = {agent_id: (self.agent_acc[agent_id], self.time, 
@@ -620,7 +762,7 @@ class Scenario:
             self.nregion = len(self.G)
 
             for i, j in self.demand_input:
-                self.demandTime[i, j] = defaultdict(int)
+                self.demandTime[i, j] = defaultdict(float)
                 self.rebTime[i, j] = 1
            
             # Creates nregion × nregion numpy array of zeros (default) for time index t. The code will accumulate demand volumes into array cells [o,d]
