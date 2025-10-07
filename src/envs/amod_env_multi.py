@@ -1,0 +1,860 @@
+from collections import defaultdict
+from sklearn.neighbors import KNeighborsRegressor
+import numpy as np
+import subprocess
+import os
+import networkx as nx
+from src.misc.utils2 import mat2str
+from src.misc.helper_functions2 import demand_update
+from src.envs.structures2 import generate_passenger
+from copy import deepcopy
+import json
+import random
+
+class AMoD:
+    # initialization
+    # updated to take scenario and beta (cost for rebalancing) as input
+    def __init__(self, scenario, mode, beta, jitter, max_wait, choice_price_mult, seed):
+        # Setting the scenario
+        self.scenario = deepcopy(scenario)
+
+        # Setting the mode of the simulation
+        self.mode = mode  # Mode of rebalancing (0:manul, 1:pricing, 2:both. default 1)
+        self.jitter = jitter # Jitter for zero demand
+
+        # Setting the maximum passenger waiting time
+        self.max_wait = max_wait # Maximum passenger waiting time
+
+        # Setting up the road graph
+        self.G = scenario.G  # Road Graph: node - region, edge - connection of regions, node attr: 'accInit', edge attr: 'time'
+
+        # Set trip times and rebalancing times
+        self.demandTime = self.scenario.demandTime # Nested dictionary, Travel time for demand, key: (i,j) - (origin, destination), key: t - time, with value of travel time
+        self.rebTime = self.scenario.rebTime # Nested dictionary, Travel time for rebalancing, key: (i,j) - (origin, destination), key: t - time, with value of travel time
+
+        # Set the simulation time, the time step and the final time
+        self.time = 0  # current time
+        self.tf = scenario.tf  # final time
+        self.tstep = scenario.tstep
+
+        # Set available agents
+        self.agents = [0, 1] # List of available agents
+
+        # Set the regions in the simulation
+        self.region = list(self.G)  # set of regions
+
+        # Demand of Nodes
+        self.demand = defaultdict(dict)  # Nested dictionary, Demand at node, key: (i,j) - (origin, destination), key: t - time, with value of demand
+        self.depDemand = dict()  # Nested dictionary, Departure demand, key: i - region, key: t - time, all demand departing from region i at time t
+        self.arrDemand = dict()  # Nested dictionary, Arrival demand, key: i - region, key: t - time, all demand arriving at region i at time t
+
+        # Multi-agent passenger tracking: passenger[agent_id][region][time] = [passenger_objects] 
+        self.agent_passenger = {agent_id: dict() for agent_id in self.agents} 
+        
+        # Multi-agent passenger queue: queue[agent_id][region] = [passenger_objects]
+        self.agent_queue = {agent_id: defaultdict(list) for agent_id in self.agents}
+
+        # Initialize passenger tracking and demand for each agent and region
+        for agent_id in self.agents:
+            for i in self.region:
+                self.agent_passenger[agent_id][i] = defaultdict(list)
+
+        for i in self.region:
+            self.depDemand[i] = defaultdict(int)
+            self.arrDemand[i] = defaultdict(int)
+
+        # Multi-agent pricing: price[agent_id][(i,j)][t] = price
+        self.agent_price = {agent_id: defaultdict(dict) for agent_id in self.agents} # Set the price for each agent, origin-destination pair and time
+
+        # Total arrivals for each agent: arrivals[agent_id] = total number of added passengers
+        self.agent_arrivals = {agent_id: 0 for agent_id in self.agents}
+
+        # Initialize demand and pricing from scenario data
+        # For each trip attribute (origin i, destination j, time t, demand d, base price p):
+        # - Store O-D specific demand for matching
+        # - Set initial prices for both agents (they can adjust independently later)
+        # - Accumulate departure demand (total passengers leaving region i at time t)
+        # - Accumulate arrival demand (total passengers arriving at region i at time t+travel_time)
+        for i, j, t, d, p in scenario.tripAttr:
+            self.demand[i, j][t] = d
+            # Initialize price for each agent
+            for agent_id in self.agents:
+                self.agent_price[agent_id][i, j][t] = p
+            self.depDemand[i][t] += d
+            self.arrDemand[i][t+self.demandTime[i, j][t]] += d
+
+        # Multi-agent vehicle tracking
+        # acc[agent_id][region][time] = number of available vehicles for agent in region at time
+        self.agent_acc = {agent_id: defaultdict(dict) for agent_id in self.agents}
+        # dacc[agent_id][region][time] = number of vehicles arriving at region at time for agent
+        self.agent_dacc = {agent_id: defaultdict(dict) for agent_id in self.agents}
+
+        # Multi-agent rebalancing flows: rebFlow[agent_id][(i,j)][t] = number of rebalancing vehicles
+        self.agent_rebFlow = {agent_id: defaultdict(dict) for agent_id in self.agents}
+        self.agent_rebFlow_ori = {agent_id: defaultdict(dict) for agent_id in self.agents}
+
+        # Multi-agent passenger flows: paxFlow[agent_id][(i,j)][t] = number of vehicles with passengers
+        self.agent_paxFlow = {agent_id: defaultdict(dict) for agent_id in self.agents}
+
+        # Multi-agent passenger wait lists: paxWait[agent_id][(i,j)] = [waiting passengers for this agent]
+        self.agent_paxWait = {agent_id: defaultdict(list) for agent_id in self.agents}
+
+        # Initialize graph structure and flow tracking
+        self.edges = []  # set of rebalancing edges
+        self.nregion = len(scenario.G)  # number of regions
+
+        # Build complete edge list including self-loops (staying in same region)
+        for i in self.G:
+            self.edges.append((i, i))  # self-loop for staying in region
+            for e in self.G.out_edges(i):
+                self.edges.append(e)  # edges to adjacent regions
+        self.edges = list(set(self.edges))
+
+        # Count outgoing edges per region (for action space dimensionality)
+        self.nedge = [len(self.G.out_edges(n))+1 for n in self.region]
+
+        # Initialize rebalancing flows for each agent and edge
+        # For each edge in the graph:
+        # - Set travel time from rebTime lookup
+        # - Initialize empty vehicle flow tracking (rebFlow) for both agents
+        # - Initialize backup flow tracking (rebFlow_ori) for both agents
+        for i, j in self.G.edges:
+            self.G.edges[i, j]['time'] = self.rebTime[i, j][self.time]
+            for agent_id in self.agents:
+                self.agent_rebFlow[agent_id][i, j] = defaultdict(int)
+                self.agent_rebFlow_ori[agent_id][i, j] = defaultdict(int)
+
+        # Initialize passenger flows and waiting lists for each agent and O-D pair
+        # For each origin-destination pair with demand:
+        # - Initialize occupied vehicle flow tracking (paxFlow) per agent
+        # - Initialize passenger waiting list (paxWait) per agent
+        for i, j in self.demand:
+            for agent_id in self.agents:
+                self.agent_paxFlow[agent_id][i, j] = defaultdict(int)
+                self.agent_paxWait[agent_id][i, j] = []
+
+        # Initialize vehicle counts for each agent and region
+        # For each agent and region:
+        # - Set initial available vehicles (acc) from scenario's accInit
+        # - Initialize arriving vehicles tracking (dacc) to zero
+        for agent_id in self.agents:
+            for n in self.region:
+                self.agent_acc[agent_id][n][0] = self.G.nodes[n]['accInit']
+                self.agent_dacc[agent_id][n] = defaultdict(int)
+
+
+        # scenario.tstep: number of steps as one timestep
+        self.beta = beta * scenario.tstep # Cost for rebalancing per time unit in simulation time
+
+        # Multi-agent demand tracking: demand[agent_id][(i,j)][t] = total demand for this agent
+        self.agent_demand = {agent_id: defaultdict(dict) for agent_id in self.agents}
+        
+        # Initialize agent demand for each O-D pair
+        for agent_id in self.agents:
+            for i, j in self.demand:
+                self.agent_demand[agent_id][i, j] = defaultdict(int)
+
+        # Multi-agent demand tracking: servedDemand[agent_id][(i,j)][t] = passengers served
+        self.agent_servedDemand = {agent_id: defaultdict(dict) for agent_id in self.agents}
+        # Multi-agent unserved tracking: unservedDemand[agent_id][(i,j)][t] = passengers rejected
+        self.agent_unservedDemand = {agent_id: defaultdict(dict) for agent_id in self.agents}
+
+
+        # Initialize served and unserved demand tracking for each agent and O-D pair
+        for agent_id in self.agents:
+            for i, j in self.demand:
+                self.agent_servedDemand[agent_id][i, j] = defaultdict(int)
+                self.agent_unservedDemand[agent_id][i, j] = defaultdict(int)
+
+        self.N = len(self.region)  # total number of cells
+
+        # Multi-agent info tracking: info[agent_id] = {metrics}
+        # Tracks performance metrics for each agent independently:
+        # - revenue: total revenue from served passengers
+        # - served_demand: number of passengers successfully served
+        # - unserved_demand: number of passengers rejected or timed out
+        # - rebalancing_cost: cost of moving empty vehicles
+        # - operating_cost: total operational costs
+        # - served_waiting: cumulative waiting time of served passengers
+        # - rejected_demand: number of passengers explicitly rejected
+        # - rejection_rate: ratio of rejected to total demand
+        self.agent_info = {agent_id: dict.fromkeys(['revenue', 'served_demand', 'unserved_demand',
+                                    'rebalancing_cost', 'operating_cost', 'served_waiting', 
+                                    'rejected_demand', 'rejection_rate'], 0) 
+                    for agent_id in self.agents}
+
+        # Multi-agent rewards: reward[agent_id] = scalar reward value
+        self.agent_reward = {agent_id: 0 for agent_id in self.agents}
+
+        # Multi-agent external rewards (operating costs): ext_reward[agent_id] = np.array of external rewards per region
+        self.ext_reward_agents = {a: np.zeros(self.nregion) for a in [0, 1]}
+
+        # Multi-agent observations: obs[agent_id] = (acc, time, dacc, demand)
+        # Each agent observes:
+        # - acc: their own vehicle distribution across regions
+        # - time: current simulation time (shared)
+        # - dacc: their own vehicles arriving at regions
+        # - demand: passenger demand (shared, agents compete for it)
+        self.agent_obs = {agent_id: (self.agent_acc[agent_id], self.time, 
+                            self.agent_dacc[agent_id], self.demand) 
+            for agent_id in self.agents}
+    
+        self.choice_price_mult = choice_price_mult
+
+        self.seed = seed
+    
+    def match_step_simple(self, price = None):
+        t = self.time
+        paxreward = {0: 0, 1: 0}
+        
+        # Reset agent_info for this timestep
+        for agent_id in self.agents:
+            for key in self.agent_info[agent_id]:
+                self.agent_info[agent_id][key] = 0
+
+        total_original_demand = 0
+        total_rejected_demand = 0
+
+        for n in self.region:
+            # Update current queue
+            for j in self.G[n]:
+                d = self.demand[n, j][t]
+                p = self.agent_price[0][n, j][t] # Baseline price just based on one of agents
+
+                if price is not None and (np.sum(price) != 0):
+                    for agent_id in self.agents:
+                        if isinstance(price[agent_id][0], list):
+                            if len(price[agent_id][0]) == len(price[agent_id]):
+                                p = 2 * self.agent_price[agent_id][n, j][t] * price[agent_id][n][j]
+                            else:
+                                p = 2 * self.agent_price[agent_id][n, j][t] * price[agent_id][n][0]
+                        else:
+                            p = self.agent_price[agent_id][n, j][t] * price[agent_id][n] * 2
+
+                        if p <= 1e-6:
+                            p = self.jitter
+                        self.agent_price[agent_id][n, j][t] = p
+
+                ####################### Choice Model Implementation #################
+                d_original = d  # before applying choice model
+
+                 #--Choice Model--
+                
+                pr0 = self.agent_price[0][n, j][t]
+                pr1 = self.agent_price[1][n, j][t]
+                
+                travel_time = self.demandTime[n, j][t]
+                
+                travel_time_in_hours = travel_time / 60
+                U_reject = 0 
+                
+                supply0 = self.agent_acc[0][n][t]
+                supply1 = self.agent_acc[1][n][t]
+                
+                exp_utilities = []
+                labels = []
+
+                wage = 25
+
+                if wage < 0:
+                    wage = 1e-3
+                
+                income_effect = 25 / wage
+
+                if supply0 > 0:
+                    U_0 = 13.5 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr0
+                    exp_utilities.append(np.exp(U_0))
+                    labels.append("agent0")
+                
+                if supply1 > 0:
+                    U_1 = 13.5 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr1
+                    exp_utilities.append(np.exp(U_1))
+                    labels.append("agent1")
+                
+                exp_utilities.append(np.exp(U_reject))
+                labels.append("reject")
+
+                Probabilities = np.array(exp_utilities) / np.sum(exp_utilities)
+                labels_array = np.array(labels)
+
+                d0 = d1 = dr = 0
+
+                if d_original > 0:
+                    for _ in range(d_original):
+                        choice = np.random.choice(labels_array, p=Probabilities)
+                        if choice == "agent0":
+                            d0 += 1
+                        elif choice == "agent1":
+                            d1 += 1
+                        elif choice == "reject":
+                            dr += 1
+
+                self.agent_demand[0][(n, j)][t] += d0
+                self.agent_demand[1][(n, j)][t] += d1
+
+                pax0, self.agent_arrivals[0] = generate_passenger((n, j, t, d0, pr0), self.max_wait, self.agent_arrivals[0])
+                pax1, self.agent_arrivals[1] = generate_passenger((n, j, t, d1, pr1), self.max_wait, self.agent_arrivals[1])
+
+                self.agent_passenger[0][n][t].extend(pax0)
+                self.agent_passenger[1][n][t].extend(pax1)
+
+                random.Random(self.seed).shuffle(self.agent_passenger[0][n][t])
+                random.Random(self.seed).shuffle(self.agent_passenger[1][n][t])
+
+                total_original_demand += d_original
+                total_rejected_demand += dr
+
+                self.demand[n, j][t] = d0 + d1
+            
+            for agent_id in [0, 1]:
+                accCurrent = self.agent_acc[agent_id][n][t]
+
+                # Add new entering passengers to this agent's queue
+                new_enterq = [pax for pax in self.agent_passenger[agent_id][n][t] if pax.enter()]
+                queueCurrent = self.agent_queue[agent_id][n] + new_enterq
+                self.agent_queue[agent_id][n] = queueCurrent
+
+                matched_leave_index = []
+
+                for i, pax in enumerate(queueCurrent):
+                    if accCurrent != 0:
+                        accept = pax.match(t)
+                        if accept:
+                            # Store matched passenger index for removal from queue
+                            matched_leave_index.append(i)
+                            
+                            # Remove an available vehicle
+                            accCurrent -= 1
+                            
+                            # Add passenger to agent passenger flow
+                            arr_t = t + self.demandTime[pax.origin, pax.destination][t]
+                            self.agent_paxFlow[agent_id][pax.origin, pax.destination][arr_t] += 1
+                            
+                            # Set agents wait time
+                            wait_t = pax.wait_time
+                            self.agent_paxWait[agent_id][pax.origin, pax.destination].append(wait_t)
+
+                            # Add passenger to agent's arriving passengers at destination
+                            self.agent_dacc[agent_id][pax.destination][arr_t] += 1
+
+                            # Update served demand tracking
+                            self.agent_servedDemand[agent_id][pax.origin, pax.destination][t] += 1
+
+                            trip_cost = self.demandTime[pax.origin, pax.destination][t] * self.beta
+                            # Calculate reward components as price minus operating cost
+                            paxreward[agent_id] += pax.price - trip_cost
+
+                            # Update the operating costs
+                            self.ext_reward_agents[agent_id][n] += max(0, trip_cost)
+
+                            self.agent_info[agent_id]['revenue'] += pax.price
+                            self.agent_info[agent_id]['served_demand'] += 1
+                            self.agent_info[agent_id]['operating_cost'] += trip_cost
+                            self.agent_info[agent_id]['served_waiting'] += wait_t
+                        else:
+                            if pax.unmatched_update():
+                                matched_leave_index.append(i)
+                                self.agent_unservedDemand[agent_id][pax.origin, pax.destination][t] += 1
+                                self.agent_info[agent_id]['unserved_demand'] += 1
+                    else:
+                        if pax.unmatched_update():
+                            matched_leave_index.append(i)
+                            self.agent_unservedDemand[agent_id][pax.origin, pax.destination][t] += 1
+                            self.agent_info[agent_id]['unserved_demand'] += 1
+
+                # Removes matched or leaving passengers from the queue
+                self.agent_queue[agent_id][n] = [
+                    queueCurrent[i] for i in range(len(queueCurrent)) if i not in matched_leave_index
+                ]
+                # Update available vehicles after matching
+                self.agent_acc[agent_id][n][t+1] = accCurrent
+            
+        done = (self.tf == t+1)
+        ext_done = [done]*self.nregion
+
+        self.obs = {
+            0: (self.agent_acc[0], self.time, self.agent_dacc[0], self.agent_demand[0]),
+            1: (self.agent_acc[1], self.time, self.agent_dacc[1], self.agent_demand[1])
+        }
+
+        rejection_rate = (
+            total_rejected_demand / total_original_demand if total_original_demand > 0 else 0
+        )
+
+        for agent_id in [0, 1]:
+            self.agent_info[agent_id]['rejection_rate'] = rejection_rate
+            self.agent_info[agent_id]['rejected_demand'] += total_rejected_demand
+
+        return self.obs, paxreward, done, self.agent_info, self.ext_reward_agents, ext_done
+
+    def get_initial_vehicles(self):
+        """Get the initial number of vehicles in the system"""
+        return sum(self.G.nodes[n]['accInit'] for n in self.G.nodes)
+
+    def reset(self):
+        """Reset the episode for multi-agent environment"""
+        
+        # Reset multi-agent vehicle tracking
+        self.agent_acc = {agent_id: defaultdict(dict) for agent_id in self.agents}
+        self.agent_dacc = {agent_id: defaultdict(dict) for agent_id in self.agents}
+        
+        # Reset multi-agent flow tracking
+        self.agent_rebFlow = {agent_id: defaultdict(dict) for agent_id in self.agents}
+        self.agent_rebFlow_ori = {agent_id: defaultdict(dict) for agent_id in self.agents}
+        self.agent_paxFlow = {agent_id: defaultdict(dict) for agent_id in self.agents}
+        self.agent_paxWait = {agent_id: defaultdict(list) for agent_id in self.agents}
+        
+        # Reset multi-agent passenger tracking
+        self.agent_passenger = {agent_id: dict() for agent_id in self.agents}
+        self.agent_queue = {agent_id: defaultdict(list) for agent_id in self.agents}
+        
+        # Initialize passenger tracking for each agent and region
+        for agent_id in self.agents:
+            for i in self.region:
+                self.agent_passenger[agent_id][i] = defaultdict(list)
+        
+        # Reset edge list
+        self.edges = []
+        for i in self.G:
+            self.edges.append((i, i))
+            for e in self.G.out_edges(i):
+                self.edges.append(e)
+        self.edges = list(set(self.edges))
+        
+        # Reset demand and pricing
+        self.demand = defaultdict(dict)
+        self.agent_demand = {agent_id: defaultdict(dict) for agent_id in self.agents}
+        self.agent_price = {agent_id: defaultdict(dict) for agent_id in self.agents}
+        self.agent_arrivals = {agent_id: 0 for agent_id in self.agents}
+        
+        # Get new random demand
+        tripAttr = self.scenario.get_random_demand(reset=True)
+        self.regionDemand = defaultdict(dict)
+        
+        # Trip attribute (origin, destination, time of request, demand, price)
+        for i, j, t, d, p in tripAttr:
+            self.demand[i, j][t] = d
+            # Set initial price for both agents
+            for agent_id in self.agents:
+                self.agent_price[agent_id][i, j][t] = p
+                # Initialize agent demand
+                if (i, j) not in self.agent_demand[agent_id]:
+                    self.agent_demand[agent_id][i, j] = defaultdict(int)
+            
+            # Track region-level demand
+            if t not in self.regionDemand[i]:
+                self.regionDemand[i][t] = 0
+            self.regionDemand[i][t] += d
+        
+        # Reset time
+        self.time = 0
+        
+        # Initialize flows for each agent and edge
+        for i, j in self.G.edges:
+            for agent_id in self.agents:
+                self.agent_rebFlow[agent_id][i, j] = defaultdict(float)
+                self.agent_rebFlow_ori[agent_id][i, j] = defaultdict(float)
+                self.agent_paxFlow[agent_id][i, j] = defaultdict(float)
+                self.agent_paxWait[agent_id][i, j] = []
+        
+        # Initialize vehicle counts for each agent and region
+        for n in self.G:
+            for agent_id in self.agents:
+                self.agent_acc[agent_id][n][0] = self.G.nodes[n]['accInit']
+                self.agent_dacc[agent_id][n] = defaultdict(float)
+        
+        # Initialize served and unserved demand tracking
+        self.agent_servedDemand = {agent_id: defaultdict(dict) for agent_id in self.agents}
+        self.agent_unservedDemand = {agent_id: defaultdict(dict) for agent_id in self.agents}
+        
+        for agent_id in self.agents:
+            for i, j in self.demand:
+                self.agent_servedDemand[agent_id][i, j] = defaultdict(float)
+                self.agent_unservedDemand[agent_id][i, j] = defaultdict(float)
+        
+        # Reset multi-agent info tracking
+        self.agent_info = {agent_id: dict.fromkeys(['revenue', 'served_demand', 'unserved_demand',
+                                    'rebalancing_cost', 'operating_cost', 'served_waiting', 
+                                    'rejected_demand', 'rejection_rate'], 0) 
+                    for agent_id in self.agents}
+        
+        # Reset multi-agent rewards
+        self.agent_reward = {agent_id: 0 for agent_id in self.agents}
+        
+        # Create observations for each agent
+        self.agent_obs = {agent_id: (self.agent_acc[agent_id], self.time, 
+                            self.agent_dacc[agent_id], self.demand) 
+            for agent_id in self.agents}
+        
+        return self.agent_obs
+
+    
+
+class Scenario:
+    def __init__(self, N1=2, N2=4, tf=60, sd=None, ninit=5, tripAttr=None, demand_input=None, demand_ratio=None, supply_ratio=1,
+                 trip_length_preference=0.25, grid_travel_time=1, fix_price=True, alpha=0.2, json_file=None, json_hr=9, json_tstep=3, varying_time=False, json_regions=None, impute=False):
+        # trip_length_preference: positive - more shorter trips, negative - more longer trips
+        # grid_travel_time: travel time between grids
+        # demand_input： list - total demand out of each region,
+        #          float/int - total demand out of each region satisfies uniform distribution on [0, demand_input]
+        #          dict/defaultdict - total demand between pairs of regions
+        # demand_input will be converted to a variable static_demand to represent the demand between each pair of nodes
+        # static_demand will then be sampled according to a Poisson distributionjson_tstep
+        # alpha: parameter for uniform distribution of demand levels - [1-alpha, 1+alpha] * demand_input
+        self.sd = sd
+        if sd != None:
+            np.random.seed(self.sd)
+        if json_file == None:
+            self.varying_time = varying_time
+            self.is_json = False
+            self.alpha = alpha
+            self.trip_length_preference = trip_length_preference
+            self.grid_travel_time = grid_travel_time
+            self.demand_input = demand_input
+            self.fix_price = fix_price
+            self.N1 = N1
+            self.N2 = N2
+            self.G = nx.complete_graph(N1*N2)
+            self.G = self.G.to_directed()
+            self.demandTime = defaultdict(dict)  # traveling time between nodes
+            self.rebTime = defaultdict(dict)
+            self.edges = list(self.G.edges) + [(i, i) for i in self.G.nodes]
+            self.tstep = json_tstep
+            for i, j in self.edges:
+                for t in range(tf*2):
+                    self.demandTime[i, j][t] = (
+                        (abs(i//N1-j//N1) + abs(i % N1-j % N1))*grid_travel_time)
+                    self.rebTime[i, j][t] = (
+                        (abs(i//N1-j//N1) + abs(i % N1-j % N1))*grid_travel_time)
+
+            for n in self.G.nodes:
+                # initial number of vehicles at station
+                self.G.nodes[n]['accInit'] = int(ninit)
+            self.tf = tf
+            self.demand_ratio = defaultdict(list)
+
+            # demand mutiplier over time
+            if demand_ratio == None or type(demand_ratio) == list or type(demand_ratio) == dict:
+                for i, j in self.edges:
+                    if type(demand_ratio) == list:
+                        self.demand_ratio[i, j] = list(np.interp(range(0, tf), np.arange(
+                            0, tf+1, tf/(len(demand_ratio)-1)), demand_ratio))+[demand_ratio[-1]]*tf
+                    elif type(demand_ratio) == dict:
+                        self.demand_ratio[i, j] = list(np.interp(range(0, tf), np.arange(0, tf+1, tf/(len(demand_ratio[i]) - 1)), demand_ratio[i]))+[demand_ratio[i][-1]]*tf
+                    else:
+                        self.demand_ratio[i, j] = [1]*(tf+tf)
+            else:
+                for i, j in self.edges:
+                    if (i, j) in demand_ratio:
+                        self.demand_ratio[i, j] = list(np.interp(range(0, tf), np.arange(
+                            0, tf+1, tf/(len(demand_ratio[i, j])-1)), demand_ratio[i, j]))+[1]*tf
+                    else:
+                        self.demand_ratio[i, j] = list(np.interp(range(0, tf), np.arange(
+                            0, tf+1, tf/(len(demand_ratio['default'])-1)), demand_ratio['default']))+[1]*tf
+            if self.fix_price:  # fix price
+                self.p = defaultdict(dict)
+                for i, j in self.edges:
+                    self.p[i, j] = (np.random.rand()*2+1) * \
+                        (self.demandTime[i, j][0]+1)
+            if tripAttr != None:  # given demand as a defaultdict(dict)
+                self.tripAttr = deepcopy(tripAttr)
+            else:
+                self.tripAttr = self.get_random_demand()  # randomly generated demand
+        else:
+            # Set the varying time (default False)
+            self.varying_time = varying_time
+            
+            # Since we are in this branch, we are reading a json file
+            self.is_json = True
+
+            # Read json file
+            with open(json_file, "r") as file:
+                data = json.load(file)
+
+            # Stores the time-step size (presumably in minutes) into self.tstep. This value is used when binning timestamps into discrete time indices.
+            self.tstep = json_tstep
+
+            # Number of latitude and longitude divisions in the grid
+            self.N1 = data["nlat"]
+            self.N2 = data["nlon"]
+
+            #  Will hold aggregated demand per OD per time bin. 
+            #  It's a defaultdict(dict): keys are OD tuples (o,d) and values will be dicts mapping time indices → demand volumes.
+            self.demand_input = defaultdict(dict)
+
+            # See if the data has regions specified
+            self.json_regions = json_regions
+
+            # Create a directed graph representing the regions and their connections.
+            if json_regions != None:
+                self.G = nx.complete_graph(json_regions)
+            elif 'region' in data:
+                self.G = nx.complete_graph(data['region'])
+            else:
+                self.G = nx.complete_graph(self.N1*self.N2)
+            
+            self.G = self.G.to_directed()
+
+            # Will hold aggregated/averaged prices per OD per time bin (p[(o,d)][t])
+            self.p = defaultdict(dict)
+
+            # No randomness is added to demand input. Hence demand is fixed. If alpha = 0.2 demand_input will fluctuate within [0.8, 1.2] * demand_input 
+            self.alpha = 0
+
+            # Creates stucture for travel time per OD per time bin (demandTime[(o,d)][t])
+            self.demandTime = defaultdict(dict)
+
+            # Creates structure for rebalancing time per OD per time bin (rebTime[(o,d)][t])
+            self.rebTime = defaultdict(dict)
+
+            # Multiply hour by minutes to get the starting time in minutes after midnight
+            self.json_start = json_hr * 60
+
+            # Sets the number of steps per episode (default 20). Hence for each time step we generate a demand, travel time, rebalancing time, and price profile.
+            self.tf = tf
+
+            # Add edges from each node to itself (self-loops)
+            self.edges = list(self.G.edges) + [(i, i) for i in self.G.nodes]
+
+            # Sets the number of regions based on the graph's nodes (# of regions = # of nodes)
+            self.nregion = len(self.G)
+
+            for i, j in self.demand_input:
+                self.demandTime[i, j] = defaultdict(int)
+                self.rebTime[i, j] = 1
+           
+            # Creates nregion × nregion numpy array of zeros (default) for time index t. The code will accumulate demand volumes into array cells [o,d]
+            matrix_demand = defaultdict(lambda: np.zeros((self.nregion,self.nregion)))
+
+            # Similarly stores aggregated (volume-weighted) price sums for each time index.
+            matrix_price_ori = defaultdict(lambda: np.zeros((self.nregion,self.nregion)))
+            # Loops over the data demand file
+            for item in data["demand"]:
+                # Sets the variables
+                # t= time stamp (in minutes after midnight)
+                # o= origin region
+                # d= destination region
+                # v= demand
+                # tt= travel time (in minutes)
+                # p= price (in dollars)
+                t, o, d, v, tt, p = item["time_stamp"], item["origin"], item[
+                    "destination"], item["demand"], item["travel_time"], item["price"]
+                
+                # If json_regions was provided and this OD pair is not in that list, the record is skipped.
+                if json_regions != None and (o not in json_regions or d not in json_regions):
+                    continue
+                
+                # If this OD (o,d) has not been seen before, initialize three dicts for it:
+                if (o, d) not in self.demand_input:
+                    self.demand_input[o, d], self.p[o, d], self.demandTime[o, d] = defaultdict(
+                        float), defaultdict(float), defaultdict(float)
+
+                # Set ALL demand, price, and traveling time for OD. 
+
+                # First a time index is calculated by subtracting the starting time (self.json_start) from the timestamp t
+                # and dividing by the time step size (json_tstep). This bins the timestamp into discrete time indices.
+
+                # The demand is incremented for specific OD and time index by the demand volume v, scaled by a demand_ratio factor.
+                self.demand_input[o, d][(
+                    t-self.json_start)//json_tstep] += v*demand_ratio
+
+                # The price p is accumulated in a volume-weighted manner (p*v) for the same OD and time index. 
+                # This is not just summing prices: it's building a demand-weighted sum. Later we divide by total demand to get average price.
+                self.p[o, d][(t-self.json_start) //
+                             json_tstep] += p*v*demand_ratio
+
+                # Same as price. Accumulates travel times weighted by demand volume. 
+                # Also divide by json_tstep (normalizing since demand is aggregated over that bin length) to get average travel time per unit time.
+                self.demandTime[o, d][(t-self.json_start) //
+                                      json_tstep] += tt*v*demand_ratio/json_tstep
+
+
+                # At time bin k, matrix_demand[k][o,d] = total number of demand from o to d
+                matrix_demand[(t-self.json_start) //
+                                      json_tstep][o,d] += v*demand_ratio
+
+                # At time bin k, matrix_price_ori[k][o,d] = total price (weighted by demand) from o to d
+                # Later divided by matrix_demand to get average observed price per OD/time bin             
+                matrix_price_ori[(t-self.json_start) //
+                                      json_tstep][o,d] += p*v*demand_ratio
+
+            
+            # Price and traveling time will be averaged by demand after
+            # Loop over all Edges in the graph
+            for o, d in self.edges:
+                # Loop over all time indices from 0 to tf*2
+                for t in range(0, tf*2):
+
+                    # See if there was any demand recorded for this OD at this time index
+                    if t in self.demand_input[o, d]:
+                        # Divide the accumulated p * v sum by total v to get volume-weighted average price at that bin
+                        self.p[o, d][t] /= self.demand_input[o, d][t]
+
+                        # Similarly compute average travel time and ensure it is an integer of at least 1 minute
+                        self.demandTime[o, d][t] /= self.demand_input[o, d][t]
+                        self.demandTime[o, d][t] = max(
+                            int(round(self.demandTime[o, d][t])), 1)
+
+                        # Compute the matrix-based average price for that time slice
+                        matrix_price_ori[t][o,d] /= matrix_demand[t][o,d]
+                    
+                    # If not set it to zero
+                    else:
+                        self.demand_input[o, d][t] = 0
+                        self.p[o, d][t] = 0
+                        self.demandTime[o, d][t] = 0
+
+            # Creates a matrix matrix_reb (nregion × nregion) initialized to zeros to store baseline rebalancing times per OD.
+            matrix_reb = np.zeros((self.nregion,self.nregion))
+
+            # Loops over the rebalancing time data in the JSON file
+            for item in data["rebTime"]:
+
+                # Extracts the relevant fields
+                # hr= the hour associated with the rebalancing time
+                # o= origin region
+                # d= destination region
+                # rt= rebalancing time (in minutes)
+                hr, o, d, rt = item["time_stamp"], item["origin"], item["destination"], item["reb_time"]
+
+                # Skips the record if it doesn't belong to json_regions (if that filter exists)
+                if json_regions != None and (o not in json_regions or d not in json_regions):
+                    continue
+
+                # If varying time is true (default False
+                # Each JSON rebTime record with hour hr is mapped to the time bins that cover that hour (a sliding window). 
+                # Effect: rebalancing time is written only into the bins that correspond to the actual hour hr in the JSON 
+                # (so rebTime varies across the timeline according to the timestamps in the file). 
+                if varying_time:
+                    t0 = int((hr*60 - self.json_start)//json_tstep)
+                    t1 = int((hr*60 + 60 - self.json_start)//json_tstep)
+                    for t in range(t0, t1):
+                        self.rebTime[o, d][t] = max(
+                            int(round(rt/json_tstep)), 1)
+                else:
+                    if hr == json_hr:
+                        for t in range(0, tf+1):
+                            self.rebTime[o, d][t] = max(
+                                int(round(rt/json_tstep)), 1)
+                            matrix_reb[o,d] = rt/json_tstep
+            
+            # KNN regression for each time step
+            if impute:
+                # Create dictionary to store the regresors
+                knn = defaultdict(lambda: KNeighborsRegressor(n_neighbors=3))
+                # Loop over time steps
+                for t in matrix_price_ori.keys():
+                    reb = matrix_reb
+                    price = matrix_price_ori[t]
+                    X = []
+                    y = []
+                    # Loop over all region pairs to construct training set
+                    for i in range(self.nregion):
+                        for j in range(self.nregion):
+                            # if the price is not zero use it as training data for the regressor
+                            if price[i,j] != 0:
+                                X.append(reb[i,j])
+                                y.append(price[i,j])
+                    X_train = np.array(X).reshape(-1, 1)
+                    y_train = np.array(y)
+
+                    # Fit the regressor for that time point
+                    knn[t].fit(X_train, y_train)
+
+                # Test point
+                for o, d in self.edges:
+                    for t in range(0, tf*2):
+                        # If there is no price for specific time point, and a regressor exists for that time point, use it 
+                        # to impute the price at that time point.s
+                        if self.p[o,d][t]==0 and t in knn.keys():
+                            
+                            knn_regressor = knn[t]
+
+                            X_test = np.array([[matrix_reb[o,d]]])
+
+                            # Predict the value for the test point
+                            y_pred = knn_regressor.predict(X_test)[0]
+                            self.p[o,d][t] = float(y_pred)
+
+            # Initial vehicle distribution
+            # Data contains hour and total number of vechiles in network
+            for item in data["totalAcc"]:
+                hr, acc = item["hour"], item["acc"]
+                if hr == json_hr+int(round(json_tstep/2*tf/60)):
+                    # Loop over all nodes
+                    for n in self.G.nodes:
+                        # Distribute number of vehicles uniformly across nodes
+                        self.G.nodes[n]['accInit'] = int(supply_ratio*acc/len(self.G))
+
+
+            self.tripAttr = self.get_random_demand()
+
+    def get_random_demand(self, reset=False):
+        # generate demand and price
+        # reset = True means that the function is called in the reset() method of AMoD enviroment,
+        #   assuming static demand is already generated
+        # reset = False means that the function is called when initializing the demand
+
+        demand = defaultdict(dict)
+        price = defaultdict(dict)
+        tripAttr = []
+
+        # converting demand_input to static_demand
+        # skip this when resetting the demand
+        # if not reset:
+        if self.is_json:
+            for t in range(0, self.tf*2):
+                for i, j in self.edges:
+                    if (i, j) in self.demand_input and t in self.demand_input[i, j]:
+                        demand[i, j][t] = np.random.poisson(
+                            self.demand_input[i, j][t])
+                        price[i, j][t] = self.p[i, j][t]
+                    else:
+                        demand[i, j][t] = 0
+                        price[i, j][t] = 0
+                    tripAttr.append((i, j, t, demand[i, j][t], price[i, j][t]))
+        else:
+            self.static_demand = dict()
+            region_rand = (np.random.rand(len(self.G))*self.alpha *
+                            2+1-self.alpha)  # multiplyer of demand
+            if type(self.demand_input) in [float, int, list, np.array]:
+
+                if type(self.demand_input) in [float, int]:
+                    self.region_demand = region_rand * self.demand_input
+                else:  # demand in the format of each region
+                    self.region_demand = region_rand * \
+                        np.array(self.demand_input)
+                for i in self.G.nodes:
+                    J = [j for _, j in self.G.out_edges(i)]
+                    prob = np.array(
+                        [np.math.exp(-self.rebTime[i, j][0]*self.trip_length_preference) for j in J])
+                    prob = prob/sum(prob)
+                    for idx in range(len(J)):
+                        # allocation of demand to OD pairs
+                        self.static_demand[i, J[idx]
+                                            ] = self.region_demand[i] * prob[idx]
+            elif type(self.demand_input) in [dict, defaultdict]:
+                for i, j in self.edges:
+                    self.static_demand[i, j] = self.demand_input[i, j] if (
+                        i, j) in self.demand_input else self.demand_input['default']
+
+                    self.static_demand[i, j] *= region_rand[i]
+            else:
+                raise Exception(
+                    "demand_input should be number, array-like, or dictionary-like values")
+
+            # generating demand and prices
+            if self.fix_price:
+                p = self.p
+            for t in range(0, self.tf*2):
+                for i, j in self.edges:
+                    demand[i, j][t] = np.random.poisson(
+                        self.static_demand[i, j]*self.demand_ratio[i, j][t])
+                    if self.fix_price:
+                        price[i, j][t] = p[i, j]
+                    else:
+                        price[i, j][t] = min(3, np.random.exponential(
+                            2)+1)*self.demandTime[i, j][t]
+                    tripAttr.append((i, j, t, demand[i, j][t], price[i, j][t]))
+
+        return tripAttr

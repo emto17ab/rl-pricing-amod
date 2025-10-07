@@ -1,0 +1,118 @@
+_wandb:
+    value:
+        cli_version: 0.22.0
+        e:
+            m254goo4krzizs40j0owofr3dpd7hstr:
+                args:
+                    - --mode
+                    - "2"
+                    - --cuda
+                    - --max_episodes
+                    - "18000"
+                    - --checkpoint_path
+                    - base_case_mode2_single_agent_18k
+                codePath: main_a2c2.py
+                codePathLocal: main_a2c2.py
+                cpu_count: 24
+                cpu_count_logical: 24
+                cudaVersion: "13.0"
+                disk:
+                    /:
+                        total: "76817485824"
+                        used: "7649546240"
+                email: emilkraghtoft@gmail.com
+                executable: /zhome/7a/c/204061/Documents/thesis/rl-pricing-amod/thesis_env/bin/python
+                git:
+                    commit: 32e0aa9e9d4456d92b3356f375029e7c44de8050
+                    remote: https://github.com/emto17ab/rl-pricing-amod.git
+                gpu: Tesla V100-PCIE-16GB
+                gpu_count: 1
+                gpu_nvidia:
+                    - architecture: Volta
+                      cudaCores: 5120
+                      memoryTotal: "17179869184"
+                      name: Tesla V100-PCIE-16GB
+                      uuid: GPU-bec89142-1d0e-97da-660c-b2bb79954afd
+                host: n-62-20-6
+                memory:
+                    total: "201902125056"
+                os: Linux-6.1.153-1.el9.elrepo.x86_64-x86_64-with-glibc2.34
+                program: /work3/s233791/rl-pricing-amod/main_a2c2.py
+                python: CPython 3.10.18
+                root: /work3/s233791/rl-pricing-amod
+                startedAt: "2025-09-29T11:06:58.294352Z"
+                writerId: m254goo4krzizs40j0owofr3dpd7hstr
+        m: []
+        python_version: 3.10.18
+        t:
+            "1":
+                - 1
+                - 5
+                - 53
+                - 77
+            "2":
+                - 1
+                - 5
+                - 53
+                - 77
+            "3":
+                - 2
+                - 16
+            "4": 3.10.18
+            "5": 0.22.0
+            "12": 0.22.0
+            "13": linux-x86_64
+batch_size:
+    value: 100
+beta:
+    value: 0.5
+checkpoint_path:
+    value: base_case_mode2_single_agent_18k
+city:
+    value: san_francisco
+clip:
+    value: 500
+cplexpath:
+    value: /apps/cplex/cplex1210/opl/bin/x86-64_linux/
+cuda:
+    value: true
+demand_ratio:
+    value: 1
+directory:
+    value: saved_files
+gamma:
+    value: 0.97
+hidden_size:
+    value: 256
+impute:
+    value: 0
+jitter:
+    value: 1
+json_hr:
+    value: 7
+json_tstep:
+    value: 3
+load:
+    value: false
+look_ahead:
+    value: 6
+max_episodes:
+    value: 18000
+max_steps:
+    value: 20
+maxt:
+    value: 2
+mode:
+    value: 2
+p_lr:
+    value: 0.001
+q_lr:
+    value: 0.001
+scale_factor:
+    value: 0.01
+seed:
+    value: 10
+supply_ratio:
+    value: 1
+test:
+    value: false

@@ -1,0 +1,118 @@
+_wandb:
+    value:
+        cli_version: 0.22.0
+        e:
+            odmuipt8aluambvf2hu4vxo2tgeuwqo8:
+                args:
+                    - --num_agents
+                    - "2"
+                    - --mode
+                    - "2"
+                    - --agent_mode
+                    - "2"
+                    - --max_episodes
+                    - "5"
+                    - --max_steps
+                    - "5"
+                    - --city
+                    - san_francisco
+                codePath: main_a2c2_multiagent.py
+                codePathLocal: main_a2c2_multiagent.py
+                cpu_count: 16
+                cpu_count_logical: 16
+                disk:
+                    /:
+                        total: "76817485824"
+                        used: "8556568576"
+                email: emilkraghtoft@gmail.com
+                executable: /zhome/7a/c/204061/Documents/thesis/rl-pricing-amod/thesis_env/bin/python
+                git:
+                    commit: 32e0aa9e9d4456d92b3356f375029e7c44de8050
+                    remote: https://github.com/emto17ab/rl-pricing-amod.git
+                host: hpclogin1
+                memory:
+                    total: "810200051712"
+                os: Linux-6.1.149-1.el9.elrepo.x86_64-x86_64-with-glibc2.34
+                program: /work3/s233791/rl-pricing-amod/main_a2c2_multiagent.py
+                python: CPython 3.10.18
+                root: /work3/s233791/rl-pricing-amod
+                startedAt: "2025-10-06T07:48:01.084485Z"
+                writerId: odmuipt8aluambvf2hu4vxo2tgeuwqo8
+        m: []
+        python_version: 3.10.18
+        t:
+            "1":
+                - 1
+                - 5
+                - 53
+                - 77
+            "2":
+                - 1
+                - 5
+                - 53
+                - 77
+            "3":
+                - 2
+                - 16
+            "4": 3.10.18
+            "5": 0.22.0
+            "12": 0.22.0
+            "13": linux-x86_64
+agent_mode:
+    value: 2
+batch_size:
+    value: 100
+beta:
+    value: 0.5
+checkpoint_path:
+    value: A2C
+city:
+    value: san_francisco
+clip:
+    value: 500
+cplexpath:
+    value: /apps/cplex/cplex1210/opl/bin/x86-64_linux/
+cuda:
+    value: false
+demand_ratio:
+    value: 1
+directory:
+    value: saved_files
+gamma:
+    value: 0.97
+hidden_size:
+    value: 256
+impute:
+    value: 0
+jitter:
+    value: 1
+json_hr:
+    value: 7
+json_tstep:
+    value: 3
+load:
+    value: false
+look_ahead:
+    value: 6
+max_episodes:
+    value: 5
+max_steps:
+    value: 5
+maxt:
+    value: 2
+mode:
+    value: 2
+num_agents:
+    value: 2
+p_lr:
+    value: 0.001
+q_lr:
+    value: 0.001
+scale_factor:
+    value: 0.01
+seed:
+    value: 10
+supply_ratio:
+    value: 1
+test:
+    value: false
