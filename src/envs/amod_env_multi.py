@@ -74,8 +74,6 @@ class AMoD:
             # Initialize price for each agent
             for agent_id in self.agents:
                 self.agent_price[agent_id][i, j][t] = p
-            self.depDemand[i][t] += d
-            self.arrDemand[i][t+self.demandTime[i, j][t]] += d
 
         # Multi-agent vehicle tracking
         # acc[agent_id][region][time] = number of available vehicles for agent in region at time
@@ -128,12 +126,12 @@ class AMoD:
                 self.agent_paxWait[agent_id][i, j] = []
 
         # Initialize vehicle counts for each agent and region
-        # For each agent and region:
-        # - Set initial available vehicles (acc) from scenario's accInit
-        # - Initialize arriving vehicles tracking (dacc) to zero
+        # Use agent-specific vehicle distributions from scenario (already split and distributed)
         for agent_id in self.agents:
             for n in self.region:
-                self.agent_acc[agent_id][n][0] = self.G.nodes[n]['accInit']
+                # Use agent-specific accInit values from scenario
+                acc_key = f'accInit_agent{agent_id}'
+                self.agent_acc[agent_id][n][0] = self.G.nodes[n][acc_key]
                 self.agent_dacc[agent_id][n] = defaultdict(float)
 
 
@@ -532,8 +530,11 @@ class AMoD:
             return totals
 
     def get_initial_vehicles(self):
-        """Get the initial number of vehicles in the system"""
-        return sum(self.G.nodes[n]['accInit'] for n in self.G.nodes)
+        """Get the initial number of vehicles in the system (total across both agents)"""
+        return sum(
+            self.G.nodes[n]['accInit_agent0'] + self.G.nodes[n]['accInit_agent1']
+            for n in self.G.nodes
+        )
 
     def reset(self):
         """Reset the episode for multi-agent environment"""
@@ -602,9 +603,12 @@ class AMoD:
                 self.agent_paxWait[agent_id][i, j] = []
         
         # Initialize vehicle counts for each agent and region
-        for n in self.G:
-            for agent_id in self.agents:
-                self.agent_acc[agent_id][n][0] = self.G.nodes[n]['accInit']
+        # Use agent-specific vehicle distributions from scenario (same as __init__)
+        for agent_id in self.agents:
+            for n in self.G:
+                # Use agent-specific accInit values from scenario
+                acc_key = f'accInit_agent{agent_id}'
+                self.agent_acc[agent_id][n][0] = self.G.nodes[n][acc_key]
                 self.agent_dacc[agent_id][n] = defaultdict(float)
         
         # Initialize served and unserved demand tracking
@@ -669,9 +673,28 @@ class Scenario:
                     self.rebTime[i, j][t] = (
                         (abs(i//N1-j//N1) + abs(i % N1-j % N1))*grid_travel_time)
 
-            for n in self.G.nodes:
-                # initial number of vehicles at station
-                self.G.nodes[n]['accInit'] = int(ninit)
+            # Total fleet = ninit vehicles per node
+            total_fleet = ninit * len(self.G.nodes)
+            
+            # Split fleet between two agents (round down)
+            fleet_per_agent = int(total_fleet // 2)
+            
+            # Distribute each agent's fleet evenly across nodes
+            num_nodes = len(self.G.nodes)
+            base_vehicles_per_node = fleet_per_agent // num_nodes
+            remainder = fleet_per_agent % num_nodes
+            
+            # Create list of nodes and shuffle for random remainder assignment
+            nodes_list = list(self.G.nodes)
+            random.seed(sd)
+            random.shuffle(nodes_list)
+            
+            # Assign vehicles to each node for both agents
+            for idx, n in enumerate(nodes_list):
+                vehicles_for_agent = base_vehicles_per_node + (1 if idx < remainder else 0)
+                self.G.nodes[n]['accInit_agent0'] = vehicles_for_agent
+                self.G.nodes[n]['accInit_agent1'] = vehicles_for_agent
+            
             self.tf = tf
             self.demand_ratio = defaultdict(list)
 
@@ -919,14 +942,32 @@ class Scenario:
                             self.p[o,d][t] = float(y_pred)
 
             # Initial vehicle distribution
-            # Data contains hour and total number of vechiles in network
+            # Data contains hour and total number of vehicles in network
             for item in data["totalAcc"]:
                 hr, acc = item["hour"], item["acc"]
                 if hr == json_hr+int(round(json_tstep/2*tf/60)):
-                    # Loop over all nodes
-                    for n in self.G.nodes:
-                        # Distribute number of vehicles uniformly across nodes
-                        self.G.nodes[n]['accInit'] = int(supply_ratio*acc/len(self.G))
+                    # Total fleet with supply ratio applied
+                    total_fleet = supply_ratio * acc
+                    
+                    # Split fleet between two agents (round down to ensure integers)
+                    fleet_per_agent = int(total_fleet // 2)
+                    
+                    # Distribute each agent's fleet evenly across nodes
+                    num_nodes = len(self.G)
+                    base_vehicles_per_node = fleet_per_agent // num_nodes
+                    remainder = fleet_per_agent % num_nodes
+                    
+                    # Create list of nodes and shuffle for random remainder assignment
+                    nodes_list = list(self.G.nodes)
+                    random.seed(sd)  # Use scenario seed for reproducibility
+                    random.shuffle(nodes_list)
+                    
+                    # Assign vehicles to each node for both agents
+                    for idx, n in enumerate(nodes_list):
+                        # Each agent gets base amount, plus 1 extra if within remainder
+                        vehicles_for_agent = base_vehicles_per_node + (1 if idx < remainder else 0)
+                        self.G.nodes[n]['accInit_agent0'] = vehicles_for_agent
+                        self.G.nodes[n]['accInit_agent1'] = vehicles_for_agent
 
 
             self.tripAttr = self.get_random_demand()
