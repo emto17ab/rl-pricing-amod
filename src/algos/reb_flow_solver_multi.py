@@ -11,7 +11,7 @@ from collections import defaultdict
 from src.misc.utils import mat2str
 
 
-def solveRebFlow(env, res_path, desiredAcc, CPLEXPATH, directory, agent_id):
+def solveRebFlow(env, res_path, desiredAcc, CPLEXPATH, directory, agent_id, max_episodes, mode):
     t = env.time
 
     # Format desired and current availability tuples
@@ -22,7 +22,7 @@ def solveRebFlow(env, res_path, desiredAcc, CPLEXPATH, directory, agent_id):
     edgeAttr = [(i, j, env.G.edges[i, j]['time']) for i, j in env.G.edges]
 
     modPath = os.getcwd().replace('\\', '/')+'/src/cplex_mod/'
-    OPTPath = os.getcwd().replace('\\', '/') + '/' + directory + '/cplex_logs/rebalancing/'+res_path + '/'
+    OPTPath = os.getcwd().replace('\\', '/') + '/' + directory + f'/cplex_logs/rebalancing/{res_path}_mode{mode}_{max_episodes}/'
     
     # Ensure directory creation is atomic and handle race conditions
     try:

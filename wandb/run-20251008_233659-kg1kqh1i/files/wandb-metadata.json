@@ -1,0 +1,40 @@
+{
+  "os":  "Linux-6.1.149-1.el9.elrepo.x86_64-x86_64-with-glibc2.34",
+  "python":  "CPython 3.10.18",
+  "startedAt":  "2025-10-08T21:36:59.936498Z",
+  "args":  [
+    "--max_episodes",
+    "1",
+    "--max_steps",
+    "5",
+    "--mode",
+    "2",
+    "--city",
+    "san_francisco",
+    "--batch_size",
+    "10"
+  ],
+  "program":  "/work3/s233791/rl-pricing-amod/main_a2c_multi_agent.py",
+  "codePath":  "main_a2c_multi_agent.py",
+  "codePathLocal":  "main_a2c_multi_agent.py",
+  "git":  {
+    "remote":  "https://github.com/emto17ab/rl-pricing-amod.git",
+    "commit":  "18d8d8a79602b8837067066befbf89553b9b42e7"
+  },
+  "email":  "emilkraghtoft@gmail.com",
+  "root":  "/work3/s233791/rl-pricing-amod",
+  "host":  "hpclogin1",
+  "executable":  "/zhome/7a/c/204061/Documents/thesis/rl-pricing-amod/thesis_env/bin/python",
+  "cpu_count":  16,
+  "cpu_count_logical":  16,
+  "disk":  {
+    "/":  {
+      "total":  "76817485824",
+      "used":  "8423251968"
+    }
+  },
+  "memory":  {
+    "total":  "810200051712"
+  },
+  "writerId":  "omo9crcph38s66hs612ihshoa63aapn9"
+}
