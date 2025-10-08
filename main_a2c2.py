@@ -552,7 +552,7 @@ else:
 
                 # Take rebalancing action in environment
                 _, rebreward, done, _, _, _ = env.reb_step(rebAction)
-                eps_reward += rebreward
+                episode_reward += rebreward
                 
             elif env.mode == 1:
                 obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)

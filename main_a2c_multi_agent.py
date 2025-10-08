@@ -14,6 +14,112 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
+def test_agents(model_agents, test_episodes, env, cplexpath, directory):
+        epochs = range(test_episodes)  # epoch iterator
+        episode_reward = []
+        episode_served_demand = []
+        episode_rebalancing_cost = []
+        for _ in epochs:
+            eps_reward = {0: 0, 1: 0}
+            eps_served_demand = {0: 0, 1: 0}
+            eps_rebalancing_cost = {0: 0, 1: 0}
+            obs = env.reset()
+            action_rl = [0]*env.nregion
+            done = False
+            while not done:
+                if env.mode == 0:
+                    # Make Match Step
+                    obs, paxreward, done, info, _, _ = env.match_step_simple()
+
+                    # Update episode reward
+                    eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
+
+                    action_rl = {a: model_agents[a].select_action(obs[a], deterministic=True) for a in [0, 1]}
+
+                    desiredAcc = {
+                            a: {
+                                env.region[i]: int(action_rl[a][i] * dictsum(env.agent_acc[a], env.time + 1))
+                                for i in range(env.nregion)
+                            }
+                            for a in [0, 1]
+                        }
+
+                    rebAction = {
+                            a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], cplexpath, directory, a)
+                            for a in [0, 1]
+                    }
+                    
+                    _, rebreward, done, info, _, _ = env.reb_step(rebAction)
+                    eps_reward = {a: eps_reward[a] + rebreward[a] for a in [0, 1]}
+                    
+                    
+                elif env.mode == 1:
+                    obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+
+                    eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
+
+                    action_rl = {a: model_agents[a].select_action(obs[a], deterministic=True) for a in [0,1]}
+
+                    # Matching update (global step)
+                    env.matching_update()
+                
+                elif env.mode == 2:
+                    # --- Matching step ---
+                    obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+                    
+                    eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
+
+                    action_rl = {a: model_agents[a].select_action(obs[a], deterministic=True) for a in [0,1]}
+
+                    # --- Desired Acc computation ---
+                    desiredAcc = {
+                        a: {
+                            env.region[i]: int(action_rl[a][i][-1] * dictsum(env.agent_acc[a], env.time + 1))
+                            for i in range(env.nregion)
+                        } for a in [0, 1]
+                    }
+                    
+                    
+                    # --- Rebalancing step ---
+                    rebAction = {
+                        a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], cplexpath, directory, a)
+                        for a in [0, 1]
+                    }
+                
+                    _, rebreward, done, info, _, _ = env.reb_step(rebAction)
+                
+                    eps_reward = {a: eps_reward[a] + rebreward[a] for a in [0, 1]}
+                else:
+                    raise ValueError("Only mode 0, 1, and 2 are allowed")  
+                   
+                for a in [0, 1]:
+                    eps_served_demand[a] += info[a]["served_demand"]
+                    eps_rebalancing_cost[a] += info[a]["rebalancing_cost"]
+                
+            episode_reward.append(eps_reward)
+            episode_served_demand.append(eps_served_demand)
+            episode_rebalancing_cost.append(eps_rebalancing_cost)
+
+        # Calculate means for each agent
+        mean_reward = {
+            0: np.mean([ep[0] for ep in episode_reward]),
+            1: np.mean([ep[1] for ep in episode_reward])
+        }
+        mean_served_demand = {
+            0: np.mean([ep[0] for ep in episode_served_demand]),
+            1: np.mean([ep[1] for ep in episode_served_demand])
+        }
+        mean_rebalancing_cost = {
+            0: np.mean([ep[0] for ep in episode_rebalancing_cost]),
+            1: np.mean([ep[1] for ep in episode_rebalancing_cost])
+        }
+        
+        return (
+            mean_reward,
+            mean_served_demand,
+            mean_rebalancing_cost,
+        )
+
 # Define calibrated simulation parameters
 demand_ratio = {'san_francisco': 2, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1.8,
                 'nyc_man_south': 1.8, 'nyc_brooklyn': 9, 'porto': 4, 'rome': 1.8, 'shenzhen_baoan': 2.5,
@@ -35,6 +141,14 @@ parser = argparse.ArgumentParser(description="SAC-GNN")
 parser.add_argument(
     "--seed", type=int, default=10, metavar="S", help="random seed (default: 10)"
 )
+
+parser.add_argument(
+    "--model_type",
+    type=str,
+    default="running", 
+    help="Defines the type of model (default: running)",
+)
+
 parser.add_argument(
     "--demand_ratio",
     type=float,
@@ -234,287 +348,544 @@ run = wandb.init(
 
 # Set city
 city = args.city
+if not args.test:
+    # Create the scenario
+    scenario = Scenario(
+                json_file=f"data/scenario_{city}.json",
+                demand_ratio=demand_ratio[city],
+                json_hr=json_hr[city],
+                sd=args.seed,
+                json_tstep=args.json_tstep,
+                tf=args.max_steps,
+                impute=args.impute,
+                supply_ratio=args.supply_ratio)
 
-# Create the scenario
-scenario = Scenario(
-            json_file=f"data/scenario_{city}.json",
-            demand_ratio=demand_ratio[city],
-            json_hr=json_hr[city],
-            sd=args.seed,
-            json_tstep=args.json_tstep,
-            tf=args.max_steps,
-            impute=args.impute,
-            supply_ratio=args.supply_ratio)
+    # Create the environment
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed)
 
-# Create the environment
-env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed)
+    model_agents = {
+            a: A2C(
+                env=env,
+                input_size= args.look_ahead + 5, # 5 features + time encoding
+                hidden_size=args.hidden_size,
+                device=device,
+                p_lr=args.p_lr,
+                q_lr=args.q_lr,
+                T = args.look_ahead,
+                scale_factor = args.scale_factor,
+                json_file=f"data/scenario_{city}.json",
+                mode=args.mode,
+                clip=args.clip,
+                gamma=args.gamma,
+                agent_id = a 
+            )
+            for a in [0, 1]
+        }
 
-model_agents = {
-        a: A2C(
-            env=env,
-            input_size= args.look_ahead + 5, # 5 features + time encoding
-            hidden_size=args.hidden_size,
-            device=device,
-            p_lr=args.p_lr,
-            q_lr=args.q_lr,
-            T = args.look_ahead,
-            scale_factor = args.scale_factor,
-            json_file=f"data/scenario_{city}.json",
-            mode=args.mode,
-            clip=args.clip,
-            gamma=args.gamma,
-            agent_id = a 
-        )
-        for a in [0, 1]
-    }
+    if args.load:
+        print("load checkpoint")
+        for agent_id in [0, 1]:
+            checkpoint_path = f"ckpt/{args.checkpoint_path}_agent{agent_id+1}_running.pth"
+            model_agents[agent_id].load_checkpoint(path=checkpoint_path)
+            print(f"Loaded checkpoint for agent {agent_id} from {checkpoint_path}")
+        print("Loaded models from checkpoint successfully")
 
-if args.load:
-    print("load checkpoint")
+    train_episodes = args.max_episodes  # set max number of training episodes
+    epochs = trange(train_episodes)  # epoch iterator
+
+    best_reward = -np.inf  # set best training reward
+    best_reward_test = -np.inf  # set best test reward
+
     for agent_id in [0, 1]:
-        checkpoint_path = f"ckpt/{args.checkpoint_path}_agent{agent_id+1}_running.pth"
+        model_agents[agent_id].train()
+
+    # Check metrics
+    epoch_demand_list = []
+    epoch_reward_list = []
+    epoch_waiting_list = []
+    epoch_servedrate_list = []
+    epoch_rebalancing_cost = []
+
+    # Get initial vehicles
+    initial_vehicles = env.get_initial_vehicles()
+
+    for i_episode in epochs:
+        obs = env.reset()  # initialize environment
+
+        action_rl = {
+                a: [0.0] * env.nregion for a in [0, 1]
+            }
+        
+        # Save original demand for reference
+        demand_ori = nestdictsum(env.demand)
+
+        if i_episode == train_episodes - 1:
+            export = {"demand_ori":copy.deepcopy(env.demand)}
+
+        episode_reward = {0: 0, 1: 0}
+        episode_served_demand = {0: 0, 1: 0}
+        episode_unserved_demand = {0: 0, 1: 0}
+        episode_rebalancing_cost = {0: 0, 1: 0}
+        episode_rejected_demand = {0: 0, 1: 0}
+        episode_total_revenue = {0: 0, 1: 0}
+        episode_total_operating_cost = {0: 0, 1: 0}
+        episode_waiting = {0: 0, 1: 0}
+        episode_rejection_rates = {0: [], 1: []}
+
+        done = False
+        step = 0
+
+        while not done:
+            if env.mode == 0:
+                # Make Match Step
+                obs, paxreward, done, info, _, _ = env.match_step_simple()
+
+                # Update episode reward
+                episode_reward = {a: episode_reward[a] + paxreward[a] for a in [0, 1]}
+
+                action_rl = {a: model_agents[a].select_action(obs[a]) for a in [0,1]}
+
+                desiredAcc = {
+                        a: {
+                            env.region[i]: int(action_rl[a][i] * dictsum(env.agent_acc[a], env.time + 1))
+                            for i in range(env.nregion)
+                        }
+                        for a in [0, 1]
+                    }
+
+                rebAction = {
+                        a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a)
+                        for a in [0, 1]
+                }
+                
+                new_obs, rebreward, done, info, _, _ = env.reb_step(rebAction)
+                episode_reward = {a: episode_reward[a] + rebreward[a] for a in [0, 1]}
+                
+                for agent_id in [0, 1]:
+                    model_agents[agent_id].rewards.append(paxreward[agent_id] + rebreward[agent_id])
+
+            elif env.mode == 1:
+                obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+
+                episode_reward = {a: episode_reward[a] + paxreward[a] for a in [0, 1]}
+
+                for agent_id in [0, 1]:
+                    model_agents[agent_id].rewards.append(paxreward[agent_id])
+
+                action_rl = {a: model_agents[a].select_action(obs[a]) for a in [0,1]}
+
+                # Matching update (global step)
+                env.matching_update()
+            
+            elif env.mode == 2:
+                # --- Matching step ---
+                obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+                
+                episode_reward = {a: episode_reward[a] + paxreward[a] for a in [0, 1]}
+
+                action_rl = {a: model_agents[a].select_action(obs[a]) for a in [0,1]}
+                    
+                # --- Desired Acc computation ---
+                desiredAcc = {
+                    a: {
+                        env.region[i]: int(action_rl[a][i][-1] * dictsum(env.agent_acc[a], env.time + 1))
+                        for i in range(env.nregion)
+                    } for a in [0, 1]
+                }
+                
+                
+                # --- Rebalancing step ---
+                rebAction = {
+                    a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a)
+                    for a in [0, 1]
+                }
+            
+                new_obs, rebreward, done, info, _, _ = env.reb_step(rebAction)
+            
+                episode_reward = {a: episode_reward[a] + rebreward[a] for a in [0, 1]}
+                for agent_id in [0, 1]:
+                    model_agents[agent_id].rewards.append(paxreward[agent_id] + rebreward[agent_id])
+            else:
+                raise ValueError("Only mode 0, 1, and 2 are allowed")
+
+            for a in [0, 1]:
+                    episode_served_demand[a] += info[a]["served_demand"]
+                    episode_unserved_demand[a] += info[a]["unserved_demand"]
+                    episode_rebalancing_cost[a] += info[a]["rebalancing_cost"]
+                    episode_total_revenue[a] += info[a]["revenue"]
+                    episode_rejected_demand[a] += info[a]["rejected_demand"]
+                    episode_total_operating_cost[a] += info[a]["operating_cost"]
+                    episode_waiting[a] += info[a]["served_waiting"]
+                    episode_rejection_rates[a].append(info[a]["rejection_rate"])
+        
+            step += 1
+        
+        # Update both agent models after episode and collect training metrics
+        grad_norms = {}
+        for a in [0, 1]:
+            grad_norms[a] = model_agents[a].training_step()  # update model after episode and get metrics
+
+        # Get total vehicles for verification (returns dict with {agent_id: total_vehicles})
+        total_vehicles = env.get_total_vehicles()
+
+        # Calculate vehicle discrepancy: initial vehicles minus sum of both agents' vehicles
+        total_vehicles_both_agents = total_vehicles[0] + total_vehicles[1]
+        vehicle_discrepancy = abs(initial_vehicles - total_vehicles_both_agents)
+
+        # Add training metrics to wandb
+        wandb.log({
+        "episode": i_episode + 1,
+        # Agent 0 metrics
+        "agent0/episode_reward": episode_reward[0],
+        "agent0/episode_served_demand": episode_served_demand[0],
+        "agent0/episode_rebalancing_cost": episode_rebalancing_cost[0],
+        "agent0/episode_waiting_time": episode_waiting[0]/episode_served_demand[0] if episode_served_demand[0] > 0 else 0,
+        "agent0/total_revenue": episode_total_revenue[0],
+        "agent0/total_operating_cost": episode_total_operating_cost[0],
+        "agent0/rejected_demand": episode_rejected_demand[0],
+        "agent0/actor_grad_norm": grad_norms[0]["actor_grad_norm"],
+        "agent0/critic_grad_norm": grad_norms[0]["critic_grad_norm"],
+        "agent0/actor_loss": grad_norms[0]["actor_loss"],
+        "agent0/critic_loss": grad_norms[0]["critic_loss"],
+        # Agent 1 metrics
+        "agent1/episode_reward": episode_reward[1],
+        "agent1/episode_served_demand": episode_served_demand[1],
+        "agent1/episode_rebalancing_cost": episode_rebalancing_cost[1],
+        "agent1/episode_waiting_time": episode_waiting[1]/episode_served_demand[1] if episode_served_demand[1] > 0 else 0,
+        "agent1/total_revenue": episode_total_revenue[1],
+        "agent1/total_operating_cost": episode_total_operating_cost[1],
+        "agent1/rejected_demand": episode_rejected_demand[1],
+        "agent1/actor_grad_norm": grad_norms[1]["actor_grad_norm"],
+        "agent1/critic_grad_norm": grad_norms[1]["critic_grad_norm"],
+        "agent1/actor_loss": grad_norms[1]["actor_loss"],
+        "agent1/critic_loss": grad_norms[1]["critic_loss"],
+        # Combined metrics
+        "combined/total_reward": episode_reward[0] + episode_reward[1],
+        "combined/total_served_demand": episode_served_demand[0] + episode_served_demand[1],
+        "combined/total_rebalancing_cost": episode_rebalancing_cost[0] + episode_rebalancing_cost[1],
+        # Vehicle tracking
+        "vehicles/agent0_total": total_vehicles[0],
+        "vehicles/agent1_total": total_vehicles[1],
+        "vehicles/combined_total": total_vehicles_both_agents,
+        "vehicles/initial": initial_vehicles,
+        "vehicles/discrepancy": vehicle_discrepancy
+        })
+
+        # Keep metrics for both agents
+        epoch_reward_list.append(episode_reward)  # This is already a dict {0: reward0, 1: reward1}
+        
+        # Track total arrivals per agent
+        total_arrivals = {0: env.agent_arrivals[0], 1: env.agent_arrivals[1]}
+        epoch_demand_list.append(total_arrivals)
+
+        # Calculate waiting time per agent (handle division by zero)
+        epoch_waiting_list.append({
+            0: episode_waiting[0]/episode_served_demand[0] if episode_served_demand[0] > 0 else 0,
+            1: episode_waiting[1]/episode_served_demand[1] if episode_served_demand[1] > 0 else 0
+        })
+        # Calculate served rate per agent (handle division by zero)
+        epoch_servedrate_list.append({
+            0: episode_served_demand[0]/env.agent_arrivals[0] if env.agent_arrivals[0] > 0 else 0,
+            1: episode_served_demand[1]/env.agent_arrivals[1] if env.agent_arrivals[1] > 0 else 0
+        })
+        epoch_rebalancing_cost.append(episode_rebalancing_cost)  # This is already a dict {0: cost0, 1: cost1}
+
+        # Update progress bar with metrics from both agents
+        total_reward = episode_reward[0] + episode_reward[1]
+        epochs.set_description(
+            f"Episode {i_episode+1} | "
+            f"Total Reward: {total_reward:.2f} | "
+            f"Agent0: R={episode_reward[0]:.2f}, AGrad={grad_norms[0]['actor_grad_norm']:.2f}, CGrad={grad_norms[0]['critic_grad_norm']:.2f}, ALoss={grad_norms[0]['actor_loss']:.2f}, CLoss={grad_norms[0]['critic_loss']:.2f} | "
+            f"Agent1: R={episode_reward[1]:.2f}, AGrad={grad_norms[1]['actor_grad_norm']:.2f}, CGrad={grad_norms[1]['critic_grad_norm']:.2f}, ALoss={grad_norms[1]['actor_loss']:.2f}, CLoss={grad_norms[1]['critic_loss']:.2f}"
+        )
+        
+        # Checkpoint best performing models (based on combined reward)
+        if total_reward >= best_reward:
+            for agent_id in [0, 1]:
+                model_agents[agent_id].save_checkpoint(
+                    path=f"ckpt/{args.checkpoint_path}_agent{agent_id+1}_sample.pth")
+            best_reward = total_reward
+        
+        # Save running checkpoints for both agents
+        for agent_id in [0, 1]:
+            model_agents[agent_id].save_checkpoint(
+                path=f"ckpt/{args.checkpoint_path}_agent{agent_id+1}_running.pth")
+        
+        if i_episode % 100 == 0:
+            for agent_id in [0, 1]:
+                model_agents[agent_id].eval()
+            test_reward, test_served_demand, test_rebalancing_cost = test_agents(
+                    model_agents=model_agents, test_episodes=10, env=env, cplexpath=args.cplexpath, directory=args.directory)
+            for agent_id in [0, 1]:
+                model_agents[agent_id].train()
+
+            test_reward = test_reward[0] + test_reward[1]
+            if test_reward >= best_reward_test:
+                        best_reward_test = test_reward
+                        model_agents[0].save_checkpoint(
+                            path=f"ckpt/{args.checkpoint_path}_agent1_test.pth")
+                        model_agents[1].save_checkpoint(
+                            path=f"ckpt/{args.checkpoint_path}_agent2_test.pth")
+
+    # Training loop finished - save all metrics
+    wandb.finish()
+
+    metricPath = f"{args.directory}/train_logs/"
+    if not os.path.exists(metricPath):
+        os.makedirs(metricPath)
+
+    # Save metrics for multi-agent setting
+    # epoch_reward_list, epoch_waiting_list, epoch_servedrate_list, epoch_rebalancing_cost, epoch_actor_loss, and epoch_critic_loss are lists of dicts
+    np.save(
+        f"{args.directory}/train_logs/{city}_rewards_waiting_mode{args.mode}_{train_episodes}.npy", 
+        np.array([epoch_reward_list, epoch_waiting_list, epoch_servedrate_list, epoch_demand_list, epoch_rebalancing_cost], dtype=object)
+    )
+
+    # Save export data with multi-agent structure
+    export["avail_distri"] = env.agent_acc  # Multi-agent vehicle distribution
+    export["demand_scaled"] = env.demand
+    with open(f"{args.directory}/train_logs/{city}_export_mode{args.mode}_{train_episodes}.pickle", 'wb') as f:
+        pickle.dump(export, f)
+
+    print(f"\nTraining completed! Metrics saved to {metricPath}")
+
+else:
+    scenario = Scenario(
+                json_file=f"data/scenario_{city}.json",
+                demand_ratio=demand_ratio[city],
+                json_hr=json_hr[city],
+                sd=args.seed,
+                json_tstep=args.json_tstep,
+                tf=args.max_steps,
+                impute=args.impute,
+                supply_ratio=args.supply_ratio)
+
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed)
+
+    model_agents = {
+            a: A2C(
+                env=env,
+                input_size= args.look_ahead + 5, # 5 features + time encoding
+                hidden_size=args.hidden_size,
+                device=device,
+                p_lr=args.p_lr,
+                q_lr=args.q_lr,
+                T = args.look_ahead,
+                scale_factor = args.scale_factor,
+                json_file=f"data/scenario_{city}.json",
+                mode=args.mode,
+                clip=args.clip,
+                gamma=args.gamma,
+                agent_id = a 
+            )
+            for a in [0, 1]
+        }
+
+    print("load models")
+    for agent_id in [0, 1]:
+        checkpoint_path = f"ckpt/{args.checkpoint_path}_agent{agent_id+1}_{args.model_type}.pth"
         model_agents[agent_id].load_checkpoint(path=checkpoint_path)
         print(f"Loaded checkpoint for agent {agent_id} from {checkpoint_path}")
     print("Loaded models from checkpoint successfully")
 
-train_episodes = args.max_episodes  # set max number of training episodes
-epochs = trange(train_episodes)  # epoch iterator
-
-best_reward = -np.inf  # set best training reward
-best_reward_test = -np.inf  # set best test reward
-
-for agent_id in [0, 1]:
-    model_agents[agent_id].train()
-
-# Check metrics
-epoch_demand_list = []
-epoch_reward_list = []
-epoch_waiting_list = []
-epoch_servedrate_list = []
-epoch_rebalancing_cost = []
-
-# Get initial vehicles
-initial_vehicles = env.get_initial_vehicles()
-
-for i_episode in epochs:
-    obs = env.reset()  # initialize environment
-
-    action_rl = {
-            a: [0.0] * env.nregion for a in [0, 1]
-        }
+    best_reward = -np.inf  # set best reward
+    best_reward_test = -np.inf  # set best reward
+    for agent_id in [0, 1]:
+        model_agents[agent_id].eval()
     
-    # Save original demand for reference
-    demand_ori = nestdictsum(env.demand)
+    # Initialize lists for logging
+    log = {"test_reward": [], "test_served_demand": [], "test_reb_cost": []}
+    
+    epoch_reward_list = []
+    epoch_demand_list = []
+    epoch_rebalancing_cost = []
+    epoch_waiting_list = []
+    epoch_queue_length_list = []
+    epoch_arrivals_list = []
+    epoch_rebalancing_list = []
+    epoch_price_mean_list = []
 
-    if i_episode == train_episodes - 1:
-        export = {"demand_ori":copy.deepcopy(env.demand)}
+    for episode in range(10):
+        eps_reward = {0: 0, 1: 0}
+        eps_demand = {0: 0, 1: 0}
+        eps_rebalancing_cost = {0: 0, 1: 0}
+        eps_waiting = {0: 0, 1: 0}
+        eps_queue_length = {0: 0, 1: 0}
+        eps_arrivals = {0: 0, 1: 0}
+        eps_rebalancing = {0: 0, 1: 0}
+        actions_price = {0: [], 1: []}
+        
+        obs = env.reset()
 
-    episode_reward = {0: 0, 1: 0}
-    episode_served_demand = {0: 0, 1: 0}
-    episode_unserved_demand = {0: 0, 1: 0}
-    episode_rebalancing_cost = {0: 0, 1: 0}
-    episode_rejected_demand = {0: 0, 1: 0}
-    episode_total_revenue = {0: 0, 1: 0}
-    episode_total_operating_cost = {0: 0, 1: 0}
-    episode_waiting = {0: 0, 1: 0}
-    episode_rejection_rates = {0: [], 1: []}
+        action_rl = [0]*env.nregion        
+        done = False
 
-    done = False
-    step = 0
+        while not done:
+            if env.mode == 0:
+                # Make Match Step
+                obs, paxreward, done, info, _, _ = env.match_step_simple()
 
-    while not done:
-        if env.mode == 0:
-            # Make Match Step
-            obs, paxreward, done, info, _, _ = env.match_step_simple()
+                # Update episode reward
+                eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
 
-            # Update episode reward
-            episode_reward = {a: episode_reward[a] + paxreward[a] for a in [0, 1]}
+                action_rl = {a: model_agents[a].select_action(obs[a], deterministic=True) for a in [0, 1]}
 
-            action_rl = {a: model_agents[a].select_action(obs[a]) for a in [0,1]}
-
-            desiredAcc = {
-                    a: {
-                        env.region[i]: int(action_rl[a][i] * dictsum(env.agent_acc[a], env.time + 1))
-                        for i in range(env.nregion)
+                desiredAcc = {
+                        a: {
+                            env.region[i]: int(action_rl[a][i] * dictsum(env.agent_acc[a], env.time + 1))
+                            for i in range(env.nregion)
+                        }
+                        for a in [0, 1]
                     }
-                    for a in [0, 1]
-                }
 
-            rebAction = {
+                rebAction = {
+                        a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a)
+                        for a in [0, 1]
+                }
+                
+                _, rebreward, done, info, _, _ = env.reb_step(rebAction)
+                eps_reward = {a: eps_reward[a] + rebreward[a] for a in [0, 1]}
+                
+                
+            elif env.mode == 1:
+                obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+
+                eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
+
+                action_rl = {a: model_agents[a].select_action(obs[a], deterministic=True) for a in [0,1]}
+                
+                # Track prices during episode (mode 1: action_rl is price scalar)
+                for a in [0, 1]:
+                    actions_price[a].append(np.mean(2 * np.array(action_rl[a])))
+
+                # Matching update (global step)
+                env.matching_update()
+            
+            elif env.mode == 2:
+                # --- Matching step ---
+                obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+                
+                eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
+
+                action_rl = {a: model_agents[a].select_action(obs[a], deterministic=True) for a in [0,1]}
+                
+                # Track prices during episode (mode 2: action_rl[:,0] is price scalar)
+                for a in [0, 1]:
+                    actions_price[a].append(np.mean(2 * np.array(action_rl[a])[:, 0]))
+
+                # --- Desired Acc computation ---
+                desiredAcc = {
+                    a: {
+                        env.region[i]: int(action_rl[a][i][-1] * dictsum(env.agent_acc[a], env.time + 1))
+                        for i in range(env.nregion)
+                    } for a in [0, 1]
+                }
+                
+                
+                # --- Rebalancing step ---
+                rebAction = {
                     a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a)
                     for a in [0, 1]
-            }
+                }
             
-            new_obs, rebreward, done, info, _, _ = env.reb_step(rebAction)
-            episode_reward = {a: episode_reward[a] + rebreward[a] for a in [0, 1]}
+                _, rebreward, done, info, _, _ = env.reb_step(rebAction)
             
-            for agent_id in [0, 1]:
-                model_agents[agent_id].rewards.append(paxreward[agent_id] + rebreward[agent_id])
-
-        elif env.mode == 1:
-            obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
-
-            episode_reward = {a: episode_reward[a] + paxreward[a] for a in [0, 1]}
-
-            for agent_id in [0, 1]:
-                model_agents[agent_id].rewards.append(paxreward[agent_id])
-
-            action_rl = {a: model_agents[a].select_action(obs[a]) for a in [0,1]}
-
-            # Matching update (global step)
-            env.matching_update()
+                eps_reward = {a: eps_reward[a] + rebreward[a] for a in [0, 1]}
+            else:
+                raise ValueError("Only mode 0, 1, and 2 are allowed")
         
-        elif env.mode == 2:
-            # --- Matching step ---
-            obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
-            
-            episode_reward = {a: episode_reward[a] + paxreward[a] for a in [0, 1]}
-
-            action_rl = {a: model_agents[a].select_action(obs[a]) for a in [0,1]}
-                   
-            # --- Desired Acc computation ---
-            desiredAcc = {
-                a: {
-                    env.region[i]: int(action_rl[a][i][-1] * dictsum(env.agent_acc[a], env.time + 1))
-                    for i in range(env.nregion)
-                } for a in [0, 1]
-            }
-            
-            
-            # --- Rebalancing step ---
-            rebAction = {
-                a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a)
-                for a in [0, 1]
-            }
+            for a in [0, 1]:
+                eps_demand[a] += info[a]["served_demand"]
+                eps_rebalancing_cost[a] += info[a]["rebalancing_cost"]
+                eps_waiting[a] += info[a]["served_waiting"]/eps_demand[a] if eps_demand[a] > 0 else 0
         
-            new_obs, rebreward, done, info, _, _ = env.reb_step(rebAction)
-        
-            episode_reward = {a: episode_reward[a] + rebreward[a] for a in [0, 1]}
-            for agent_id in [0, 1]:
-                model_agents[agent_id].rewards.append(paxreward[agent_id] + rebreward[agent_id])
-        else:
-            raise ValueError("Only mode 0, 1, and 2 are allowed")
-
+        # After episode ends, capture episode-level metrics
+        # Queue length: mean queue length across all regions for each agent (computed at episode end)
         for a in [0, 1]:
-                episode_served_demand[a] += info[a]["served_demand"]
-                episode_unserved_demand[a] += info[a]["unserved_demand"]
-                episode_rebalancing_cost[a] += info[a]["rebalancing_cost"]
-                episode_total_revenue[a] += info[a]["revenue"]
-                episode_rejected_demand[a] += info[a]["rejected_demand"]
-                episode_total_operating_cost[a] += info[a]["operating_cost"]
-                episode_waiting[a] += info[a]["served_waiting"]
-                episode_rejection_rates[a].append(info[a]["rejection_rate"])
+            eps_queue_length[a] = np.mean([len(env.agent_queue[a][i]) for i in env.agent_queue[a].keys()]) if len(env.agent_queue[a].keys()) > 0 else 0
+            reb_od = 0
+            for (o, d), flow in env.agent_rebFlow[a].items():
+                reb_od += sum(flow.values())
+            eps_rebalancing[a] = reb_od
+        
+        # Arrivals: total arrivals for the episode (tracked by environment)
+        eps_arrivals = {0: env.agent_arrivals[0], 1: env.agent_arrivals[1]}
+        
+        # Price mean: average price across all steps for each agent (mode 1 and 2 only)
+        eps_price_mean = {0: 0, 1: 0}
+        if env.mode != 0:
+            for a in [0, 1]:
+                eps_price_mean[a] = np.mean(actions_price[a]) if len(actions_price[a]) > 0 else 0
+        
+        # Append episode results to epoch lists
+        epoch_reward_list.append(eps_reward) # Done
+        epoch_demand_list.append(eps_demand) # Done
+        epoch_rebalancing_cost.append(eps_rebalancing_cost) # Done
+        epoch_waiting_list.append(eps_waiting) # Done
+        epoch_queue_length_list.append(eps_queue_length) # Done
+        epoch_arrivals_list.append(eps_arrivals) # Done
+        epoch_rebalancing_list.append(eps_rebalancing) # Done
+        epoch_price_mean_list.append(eps_price_mean) # Done
+
+    # After all episodes, compute statistics across episodes for multi-agent case
+    # Extract values for each agent across all episodes
+    rewards_agent0 = [ep[0] for ep in epoch_reward_list]
+    rewards_agent1 = [ep[1] for ep in epoch_reward_list]
+    demands_agent0 = [ep[0] for ep in epoch_demand_list]
+    demands_agent1 = [ep[1] for ep in epoch_demand_list]
+    costs_agent0 = [ep[0] for ep in epoch_rebalancing_cost]
+    costs_agent1 = [ep[1] for ep in epoch_rebalancing_cost]
+    waiting_agent0 = [ep[0] for ep in epoch_waiting_list]
+    waiting_agent1 = [ep[1] for ep in epoch_waiting_list]
+    queue_agent0 = [ep[0] for ep in epoch_queue_length_list]
+    queue_agent1 = [ep[1] for ep in epoch_queue_length_list]
+    arrivals_agent0 = [ep[0] for ep in epoch_arrivals_list]
+    arrivals_agent1 = [ep[1] for ep in epoch_arrivals_list]
     
-        step += 1
+    # Combined totals
+    rewards_total = [ep[0] + ep[1] for ep in epoch_reward_list]
+    demands_total = [ep[0] + ep[1] for ep in epoch_demand_list]
+    costs_total = [ep[0] + ep[1] for ep in epoch_rebalancing_cost]
+    arrivals_total = [ep[0] + ep[1] for ep in epoch_arrivals_list]
     
-    # Update both agent models after episode and collect training metrics
-    grad_norms = {}
-    for a in [0, 1]:
-        grad_norms[a] = model_agents[a].training_step()  # update model after episode and get metrics
-
-    # Get total vehicles for verification (returns dict with {agent_id: total_vehicles})
-    total_vehicles = env.get_total_vehicles()
-
-    # Calculate vehicle discrepancy: initial vehicles minus sum of both agents' vehicles
-    total_vehicles_both_agents = total_vehicles[0] + total_vehicles[1]
-    vehicle_discrepancy = abs(initial_vehicles - total_vehicles_both_agents)
-
-    # Add training metrics to wandb
-    wandb.log({
-    "episode": i_episode + 1,
-    # Agent 0 metrics
-    "agent0/episode_reward": episode_reward[0],
-    "agent0/episode_served_demand": episode_served_demand[0],
-    "agent0/episode_rebalancing_cost": episode_rebalancing_cost[0],
-    "agent0/episode_waiting_time": episode_waiting[0]/episode_served_demand[0] if episode_served_demand[0] > 0 else 0,
-    "agent0/total_revenue": episode_total_revenue[0],
-    "agent0/total_operating_cost": episode_total_operating_cost[0],
-    "agent0/rejected_demand": episode_rejected_demand[0],
-    "agent0/actor_grad_norm": grad_norms[0]["actor_grad_norm"],
-    "agent0/critic_grad_norm": grad_norms[0]["critic_grad_norm"],
-    "agent0/actor_loss": grad_norms[0]["actor_loss"],
-    "agent0/critic_loss": grad_norms[0]["critic_loss"],
-    # Agent 1 metrics
-    "agent1/episode_reward": episode_reward[1],
-    "agent1/episode_served_demand": episode_served_demand[1],
-    "agent1/episode_rebalancing_cost": episode_rebalancing_cost[1],
-    "agent1/episode_waiting_time": episode_waiting[1]/episode_served_demand[1] if episode_served_demand[1] > 0 else 0,
-    "agent1/total_revenue": episode_total_revenue[1],
-    "agent1/total_operating_cost": episode_total_operating_cost[1],
-    "agent1/rejected_demand": episode_rejected_demand[1],
-    "agent1/actor_grad_norm": grad_norms[1]["actor_grad_norm"],
-    "agent1/critic_grad_norm": grad_norms[1]["critic_grad_norm"],
-    "agent1/actor_loss": grad_norms[1]["actor_loss"],
-    "agent1/critic_loss": grad_norms[1]["critic_loss"],
-    # Combined metrics
-    "combined/total_reward": episode_reward[0] + episode_reward[1],
-    "combined/total_served_demand": episode_served_demand[0] + episode_served_demand[1],
-    "combined/total_rebalancing_cost": episode_rebalancing_cost[0] + episode_rebalancing_cost[1],
-    # Vehicle tracking
-    "vehicles/agent0_total": total_vehicles[0],
-    "vehicles/agent1_total": total_vehicles[1],
-    "vehicles/combined_total": total_vehicles_both_agents,
-    "vehicles/initial": initial_vehicles,
-    "vehicles/discrepancy": vehicle_discrepancy
-    })
-
-    # Keep metrics for both agents
-    epoch_reward_list.append(episode_reward)  # This is already a dict {0: reward0, 1: reward1}
+    print("\n" + "="*80)
+    print("TEST RESULTS SUMMARY")
+    print("="*80)
     
-    # Track total arrivals per agent
-    total_arrivals = {0: env.agent_arrivals[0], 1: env.agent_arrivals[1]}
-    epoch_demand_list.append(total_arrivals)
-
-    # Calculate waiting time per agent (handle division by zero)
-    epoch_waiting_list.append({
-        0: episode_waiting[0]/episode_served_demand[0] if episode_served_demand[0] > 0 else 0,
-        1: episode_waiting[1]/episode_served_demand[1] if episode_served_demand[1] > 0 else 0
-    })
-    # Calculate served rate per agent (handle division by zero)
-    epoch_servedrate_list.append({
-        0: episode_served_demand[0]/env.agent_arrivals[0] if env.agent_arrivals[0] > 0 else 0,
-        1: episode_served_demand[1]/env.agent_arrivals[1] if env.agent_arrivals[1] > 0 else 0
-    })
-    epoch_rebalancing_cost.append(episode_rebalancing_cost)  # This is already a dict {0: cost0, 1: cost1}
-
-    # Update progress bar with metrics from both agents
-    total_reward = episode_reward[0] + episode_reward[1]
-    epochs.set_description(
-        f"Episode {i_episode+1} | "
-        f"Total Reward: {total_reward:.2f} | "
-        f"Agent0: R={episode_reward[0]:.2f}, AGrad={grad_norms[0]['actor_grad_norm']:.2f}, CGrad={grad_norms[0]['critic_grad_norm']:.2f}, ALoss={grad_norms[0]['actor_loss']:.2f}, CLoss={grad_norms[0]['critic_loss']:.2f} | "
-        f"Agent1: R={episode_reward[1]:.2f}, AGrad={grad_norms[1]['actor_grad_norm']:.2f}, CGrad={grad_norms[1]['critic_grad_norm']:.2f}, ALoss={grad_norms[1]['actor_loss']:.2f}, CLoss={grad_norms[1]['critic_loss']:.2f}"
-    )
+    print("\nAgent 0 Metrics:")
+    print(f"  Rewards (mean, std): {np.mean(rewards_agent0):.2f}, {np.std(rewards_agent0):.2f}")
+    print(f"  Served demand (mean, std): {np.mean(demands_agent0):.2f}, {np.std(demands_agent0):.2f}")
+    print(f"  Rebalancing cost (mean, std): {np.mean(costs_agent0):.2f}, {np.std(costs_agent0):.2f}")
+    print(f"  Waiting time (mean, std): {np.mean(waiting_agent0):.2f}, {np.std(waiting_agent0):.2f}")
+    print(f"  Queue length (mean, std): {np.mean(queue_agent0):.2f}, {np.std(queue_agent0):.2f}")
+    print(f"  Arrivals (mean, std): {np.mean(arrivals_agent0):.2f}, {np.std(arrivals_agent0):.2f}")
     
-    # Checkpoint best performing models (based on combined reward)
-    if total_reward >= best_reward:
-        for agent_id in [0, 1]:
-            model_agents[agent_id].save_checkpoint(
-                path=f"ckpt/{args.checkpoint_path}_agent{agent_id+1}_sample.pth")
-        best_reward = total_reward
+    print("\nAgent 1 Metrics:")
+    print(f"  Rewards (mean, std): {np.mean(rewards_agent1):.2f}, {np.std(rewards_agent1):.2f}")
+    print(f"  Served demand (mean, std): {np.mean(demands_agent1):.2f}, {np.std(demands_agent1):.2f}")
+    print(f"  Rebalancing cost (mean, std): {np.mean(costs_agent1):.2f}, {np.std(costs_agent1):.2f}")
+    print(f"  Waiting time (mean, std): {np.mean(waiting_agent1):.2f}, {np.std(waiting_agent1):.2f}")
+    print(f"  Queue length (mean, std): {np.mean(queue_agent1):.2f}, {np.std(queue_agent1):.2f}")
+    print(f"  Arrivals (mean, std): {np.mean(arrivals_agent1):.2f}, {np.std(arrivals_agent1):.2f}")
     
-    # Save running checkpoints for both agents
-    for agent_id in [0, 1]:
-        model_agents[agent_id].save_checkpoint(
-            path=f"ckpt/{args.checkpoint_path}_agent{agent_id+1}_running.pth")
-
-# Training loop finished - save all metrics
-wandb.finish()
-
-metricPath = f"{args.directory}/train_logs/"
-if not os.path.exists(metricPath):
-    os.makedirs(metricPath)
-
-# Save metrics for multi-agent setting
-# epoch_reward_list, epoch_waiting_list, epoch_servedrate_list, epoch_rebalancing_cost, epoch_actor_loss, and epoch_critic_loss are lists of dicts
-np.save(
-    f"{args.directory}/train_logs/{city}_rewards_waiting_mode{args.mode}_{train_episodes}.npy", 
-    np.array([epoch_reward_list, epoch_waiting_list, epoch_servedrate_list, epoch_demand_list, epoch_rebalancing_cost], dtype=object)
-)
-
-# Save export data with multi-agent structure
-export["avail_distri"] = env.agent_acc  # Multi-agent vehicle distribution
-export["demand_scaled"] = env.demand
-with open(f"{args.directory}/train_logs/{city}_export_mode{args.mode}_{train_episodes}.pickle", 'wb') as f:
-    pickle.dump(export, f)
-
-print(f"\nTraining completed! Metrics saved to {metricPath}")
+    print("\nCombined Metrics:")
+    print(f"  Total rewards (mean, std): {np.mean(rewards_total):.2f}, {np.std(rewards_total):.2f}")
+    print(f"  Total served demand (mean, std): {np.mean(demands_total):.2f}, {np.std(demands_total):.2f}")
+    print(f"  Total rebalancing cost (mean, std): {np.mean(costs_total):.2f}, {np.std(costs_total):.2f}")
+    print(f"  Total arrivals (mean, std): {np.mean(arrivals_total):.2f}, {np.std(arrivals_total):.2f}")
+    
+    # Only show rebalancing trips for modes 0 and 2 (not mode 1)
+    if args.mode != 1:
+        reb_agent0 = [ep[0] for ep in epoch_rebalancing_list]
+        reb_agent1 = [ep[1] for ep in epoch_rebalancing_list]
+        reb_total = [ep[0] + ep[1] for ep in epoch_rebalancing_list]
+        print(f"  Agent 0 rebalancing trips (mean, std): {np.mean(reb_agent0):.2f}, {np.std(reb_agent0):.2f}")
+        print(f"  Agent 1 rebalancing trips (mean, std): {np.mean(reb_agent1):.2f}, {np.std(reb_agent1):.2f}")
+        print(f"  Total rebalancing trips (mean, std): {np.mean(reb_total):.2f}, {np.std(reb_total):.2f}")
+    
+    # Only show price scalar for modes 1 and 2 (not mode 0)
+    if args.mode != 0:
+        price_agent0 = [ep[0] for ep in epoch_price_mean_list]
+        price_agent1 = [ep[1] for ep in epoch_price_mean_list]
+        print(f"  Agent 0 price scalar (mean, std): {np.mean(price_agent0):.2f}, {np.std(price_agent0):.2f}")
+        print(f"  Agent 1 price scalar (mean, std): {np.mean(price_agent1):.2f}, {np.std(price_agent1):.2f}")
