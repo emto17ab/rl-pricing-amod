@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-def test_agents(model_agents, test_episodes, env, cplexpath, directory):
+def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_episodes, mode):
         epochs = range(test_episodes)  # epoch iterator
         episode_reward = []
         episode_served_demand = []
@@ -45,7 +45,7 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory):
                         }
 
                     rebAction = {
-                            a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], cplexpath, directory, a)
+                            a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], cplexpath, directory, a, max_episodes, mode)
                             for a in [0, 1]
                     }
                     
@@ -82,7 +82,7 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory):
                     
                     # --- Rebalancing step ---
                     rebAction = {
-                        a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], cplexpath, directory, a)
+                        a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], cplexpath, directory, a, max_episodes, mode)
                         for a in [0, 1]
                     }
                 
@@ -454,7 +454,7 @@ if not args.test:
                     }
 
                 rebAction = {
-                        a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a)
+                        a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode)
                         for a in [0, 1]
                 }
                 
@@ -496,7 +496,7 @@ if not args.test:
                 
                 # --- Rebalancing step ---
                 rebAction = {
-                    a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a)
+                    a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode)
                     for a in [0, 1]
                 }
             
@@ -615,7 +615,7 @@ if not args.test:
             for agent_id in [0, 1]:
                 model_agents[agent_id].eval()
             test_reward, test_served_demand, test_rebalancing_cost = test_agents(
-                    model_agents=model_agents, test_episodes=10, env=env, cplexpath=args.cplexpath, directory=args.directory)
+                    model_agents=model_agents, test_episodes=10, env=env, cplexpath=args.cplexpath, directory=args.directory, max_episodes=args.max_episodes, mode=args.mode)
             for agent_id in [0, 1]:
                 model_agents[agent_id].train()
 
@@ -739,7 +739,7 @@ else:
                     }
 
                 rebAction = {
-                        a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a)
+                        a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode)
                         for a in [0, 1]
                 }
                 
@@ -784,7 +784,7 @@ else:
                 
                 # --- Rebalancing step ---
                 rebAction = {
-                    a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a)
+                    a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode)
                     for a in [0, 1]
                 }
             
