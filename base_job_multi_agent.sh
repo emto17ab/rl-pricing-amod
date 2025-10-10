@@ -1,13 +1,13 @@
 #!/bin/bash
 #BSUB -q hpc
-#BSUB -J base_case_mode2_dual_agent_24k
+#BSUB -J base_case_mode2_dual_agent_24k_v2
 #BSUB -n 4
 #BSUB -R "span[hosts=1]"
 #BSUB -R "rusage[mem=8GB]"
 #BSUB -W 24:00
-#BSUB -o logs/base_case_mode2_dual_agent_24k_%J.out
-#BSUB -e logs/base_case_mode2_dual_agent_24k_%J.err
+#BSUB -o logs/base_case_mode2_dual_agent_24k_v2_%J.out
+#BSUB -e logs/base_case_mode2_dual_agent_24k_v2_%J.err
 
 source /work3/s233791/rl-pricing-amod/thesis_env/bin/activate
 
-python main_a2c_multi_agent.py --mode 2 --max_episodes 24000 --checkpoint_path base_case_mode2_dual_agent_24k
+python main_a2c_multi_agent.py --mode 2 --max_episodes 24000 --clip 10 --checkpoint_path base_case_mode2_dual_agent_24k_v2
