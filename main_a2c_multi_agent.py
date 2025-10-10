@@ -431,6 +431,7 @@ if not args.test:
         episode_total_operating_cost = {0: 0, 1: 0}
         episode_waiting = {0: 0, 1: 0}
         episode_rejection_rates = {0: [], 1: []}
+        actions_price = {0: [], 1: []}  # Track price scalars during episode
 
         done = False
         step = 0
@@ -473,6 +474,10 @@ if not args.test:
                     model_agents[agent_id].rewards.append(paxreward[agent_id])
 
                 action_rl = {a: model_agents[a].select_action(obs[a]) for a in [0,1]}
+                
+                # Track prices during episode (mode 1: action_rl is price scalar)
+                for a in [0, 1]:
+                    actions_price[a].append(np.mean(2 * np.array(action_rl[a])))
 
                 # Matching update (global step)
                 env.matching_update()
@@ -484,6 +489,10 @@ if not args.test:
                 episode_reward = {a: episode_reward[a] + paxreward[a] for a in [0, 1]}
 
                 action_rl = {a: model_agents[a].select_action(obs[a]) for a in [0,1]}
+                
+                # Track prices during episode (mode 2: action_rl[:,0] is price scalar)
+                for a in [0, 1]:
+                    actions_price[a].append(np.mean(2 * np.array(action_rl[a])[:, 0]))
                     
                 # --- Desired Acc computation ---
                 desiredAcc = {
@@ -532,12 +541,19 @@ if not args.test:
         total_vehicles_both_agents = total_vehicles[0] + total_vehicles[1]
         vehicle_discrepancy = abs(initial_vehicles - total_vehicles_both_agents)
 
+        # Calculate mean price scalar per agent (for modes 1 and 2)
+        mean_price_scalar = {0: 0, 1: 0}
+        if env.mode != 0:
+            for a in [0, 1]:
+                mean_price_scalar[a] = np.mean(actions_price[a]) if len(actions_price[a]) > 0 else 0
+
         # Add training metrics to wandb
-        wandb.log({
+        log_dict = {
         "episode": i_episode + 1,
         # Agent 0 metrics
         "agent0/episode_reward": episode_reward[0],
         "agent0/episode_served_demand": episode_served_demand[0],
+        "agent0/episode_unserved_demand": episode_unserved_demand[0],
         "agent0/episode_rebalancing_cost": episode_rebalancing_cost[0],
         "agent0/episode_waiting_time": episode_waiting[0]/episode_served_demand[0] if episode_served_demand[0] > 0 else 0,
         "agent0/total_revenue": episode_total_revenue[0],
@@ -550,6 +566,7 @@ if not args.test:
         # Agent 1 metrics
         "agent1/episode_reward": episode_reward[1],
         "agent1/episode_served_demand": episode_served_demand[1],
+        "agent1/episode_unserved_demand": episode_unserved_demand[1],
         "agent1/episode_rebalancing_cost": episode_rebalancing_cost[1],
         "agent1/episode_waiting_time": episode_waiting[1]/episode_served_demand[1] if episode_served_demand[1] > 0 else 0,
         "agent1/total_revenue": episode_total_revenue[1],
@@ -562,6 +579,7 @@ if not args.test:
         # Combined metrics
         "combined/total_reward": episode_reward[0] + episode_reward[1],
         "combined/total_served_demand": episode_served_demand[0] + episode_served_demand[1],
+        "combined/total_unserved_demand": episode_unserved_demand[0] + episode_unserved_demand[1],
         "combined/total_rebalancing_cost": episode_rebalancing_cost[0] + episode_rebalancing_cost[1],
         # Vehicle tracking
         "vehicles/agent0_total": total_vehicles[0],
@@ -569,7 +587,14 @@ if not args.test:
         "vehicles/combined_total": total_vehicles_both_agents,
         "vehicles/initial": initial_vehicles,
         "vehicles/discrepancy": vehicle_discrepancy
-        })
+        }
+        
+        # Add price scalar metrics only for modes 1 and 2
+        if env.mode != 0:
+            log_dict["agent0/mean_price_scalar"] = mean_price_scalar[0]
+            log_dict["agent1/mean_price_scalar"] = mean_price_scalar[1]
+        
+        wandb.log(log_dict)
 
         # Keep metrics for both agents
         epoch_reward_list.append(episode_reward)  # This is already a dict {0: reward0, 1: reward1}
@@ -887,5 +912,7 @@ else:
     if args.mode != 0:
         price_agent0 = [ep[0] for ep in epoch_price_mean_list]
         price_agent1 = [ep[1] for ep in epoch_price_mean_list]
+        print(price_agent0)
+        print(price_agent1)
         print(f"  Agent 0 price scalar (mean, std): {np.mean(price_agent0):.2f}, {np.std(price_agent0):.2f}")
         print(f"  Agent 1 price scalar (mean, std): {np.mean(price_agent1):.2f}, {np.std(price_agent1):.2f}")
