@@ -14,7 +14,7 @@ import random
 class AMoD:
     # initialization
     # updated to take scenario and beta (cost for rebalancing) as input
-    def __init__(self, scenario, mode, beta, jitter, max_wait, choice_price_mult, seed):
+    def __init__(self, scenario, mode, beta, jitter, max_wait, choice_price_mult, seed, fix_agent=2):
         # Setting the scenario
         self.scenario = deepcopy(scenario)
 
@@ -24,6 +24,9 @@ class AMoD:
 
         # Setting the maximum passenger waiting time
         self.max_wait = max_wait # Maximum passenger waiting time
+        
+        # Setting which agent to fix (0=fix agent 0, 1=fix agent 1, 2=no fixing)
+        self.fix_agent = fix_agent
 
         # Setting up the road graph
         self.G = scenario.G  # Road Graph: node - region, edge - connection of regions, node attr: 'accInit', edge attr: 'time'
@@ -127,11 +130,15 @@ class AMoD:
 
         # Initialize vehicle counts for each agent and region
         # Use agent-specific vehicle distributions from scenario (already split and distributed)
+        # Store initial distribution for fixed agent rebalancing
+        self.agent_initial_acc = {agent_id: {} for agent_id in self.agents}
         for agent_id in self.agents:
             for n in self.region:
                 # Use agent-specific accInit values from scenario
                 acc_key = f'accInit_agent{agent_id}'
-                self.agent_acc[agent_id][n][0] = self.G.nodes[n][acc_key]
+                initial_count = self.G.nodes[n][acc_key]
+                self.agent_acc[agent_id][n][0] = initial_count
+                self.agent_initial_acc[agent_id][n] = initial_count  # Store for fixed agent
                 self.agent_dacc[agent_id][n] = defaultdict(float)
 
 
@@ -191,6 +198,9 @@ class AMoD:
         self.choice_price_mult = choice_price_mult
 
         self.seed = seed
+        
+        # Trip assignment tracking: stores detailed data for each trip
+        self.trip_assignments = []
     
     def match_step_simple(self, price = None):
         t = self.time
@@ -208,20 +218,31 @@ class AMoD:
             # Update current queue
             for j in self.G[n]:
                 d = self.demand[n, j][t]
-                p = self.agent_price[0][n, j][t] # Baseline price just based on one of agents
-
-                if price is not None and (np.sum(price) != 0):
+                
+                # Apply node-level price scaling if provided by the agent
+                # price[agent_id] is a list of scalars, one per region/node
+                # price[agent_id][n] is the price scalar for node n (from Beta distribution)
+                # Skip price update if price is None or all zeros (first step of episode). Then it just applies baseline prices.
+                if price is not None and np.sum([np.sum(price[a]) for a in self.agents]) != 0:
                     for agent_id in self.agents:
-                        if isinstance(price[agent_id][0], list):
-                            if len(price[agent_id][0]) == len(price[agent_id]):
-                                p = 2 * self.agent_price[agent_id][n, j][t] * price[agent_id][n][j]
-                            else:
-                                p = 2 * self.agent_price[agent_id][n, j][t] * price[agent_id][n][0]
-                        else:
-                            p = self.agent_price[agent_id][n, j][t] * price[agent_id][n] * 2
-
+                        # Get baseline price for this O-D pair
+                        baseline_price = self.agent_price[agent_id][n, j][t]
+                        
+                        # Apply node-level price scalar (from action_rl)
+                        # price[agent_id][n] is a scalar between 0 and 1 from Beta distribution
+                        # In mode 1: price[agent_id][n] is directly the scalar
+                        # In mode 2: price[agent_id][n] is [price_scalar, reb_scalar], so we take [0]
+                        price_scalar = price[agent_id][n]
+                        if isinstance(price_scalar, (list, np.ndarray)):
+                            price_scalar = price_scalar[0]
+                        
+                        # Multiply by 2 to allow range [0, 2×baseline]
+                        p = 2 * baseline_price * price_scalar
+                        
+                        # Ensure minimum price (avoid zero prices)
                         if p <= 1e-6:
                             p = self.jitter
+                        
                         self.agent_price[agent_id][n, j][t] = p
 
                 ####################### Choice Model Implementation #################
@@ -237,29 +258,34 @@ class AMoD:
                 travel_time_in_hours = travel_time / 60
                 U_reject = 0 
                 
-                supply0 = self.agent_acc[0][n][t]
-                supply1 = self.agent_acc[1][n][t]
-                
                 exp_utilities = []
                 labels = []
 
                 wage = 25
 
-                if wage < 0:
-                    wage = 1e-3
-                
                 income_effect = 25 / wage
 
-                if supply0 > 0:
-                    U_0 = 13.5 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr0
+                # Compute utilities for all agents
+                U_0 = 13.5 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr0
+                U_1 = 13.5 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr1
+                
+                # Build choice set based on which agents are active
+                if self.fix_agent == 0:
+                    # Agent 0 is fixed, only include agent 1 and reject
+                    exp_utilities.append(np.exp(U_1))
+                    labels.append("agent1")
+                elif self.fix_agent == 1:
+                    # Agent 1 is fixed, only include agent 0 and reject
                     exp_utilities.append(np.exp(U_0))
                     labels.append("agent0")
-                
-                if supply1 > 0:
-                    U_1 = 13.5 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr1
+                else:
+                    # Normal operation: include both agents
+                    exp_utilities.append(np.exp(U_0))
+                    labels.append("agent0")
                     exp_utilities.append(np.exp(U_1))
                     labels.append("agent1")
                 
+                # Always include reject option
                 exp_utilities.append(np.exp(U_reject))
                 labels.append("reject")
 
@@ -268,6 +294,7 @@ class AMoD:
 
                 d0 = d1 = dr = 0
 
+                # Use choice model with appropriate choice set
                 if d_original > 0:
                     for _ in range(d_original):
                         choice = np.random.choice(labels_array, p=Probabilities)
@@ -277,6 +304,37 @@ class AMoD:
                             d1 += 1
                         elif choice == "reject":
                             dr += 1
+                    
+                    # Log trip assignment details
+                    prob_dict = {}
+                    utility_dict = {}
+                    for idx, label in enumerate(labels):
+                        prob_dict[label] = Probabilities[idx]
+                        if label == "agent0":
+                            utility_dict[label] = U_0
+                        elif label == "agent1":
+                            utility_dict[label] = U_1
+                        elif label == "reject":
+                            utility_dict[label] = U_reject
+                    
+                    self.trip_assignments.append({
+                        'time': t,
+                        'origin': n,
+                        'destination': j,
+                        'travel_time': travel_time,
+                        'price_agent0': pr0,
+                        'price_agent1': pr1,
+                        'utility_agent0': U_0,
+                        'utility_agent1': U_1,
+                        'utility_reject': U_reject,
+                        'prob_agent0': prob_dict.get("agent0", 0.0),
+                        'prob_agent1': prob_dict.get("agent1", 0.0),
+                        'prob_reject': prob_dict.get("reject", 0.0),
+                        'demand_agent0': d0,
+                        'demand_agent1': d1,
+                        'demand_rejected': dr,
+                        'total_demand': d_original
+                    })
 
                 self.agent_demand[0][(n, j)][t] += d0
                 self.agent_demand[1][(n, j)][t] += d1
@@ -385,6 +443,13 @@ class AMoD:
             for agent_id in [0, 1]:
                 if (i, j) in self.agent_paxFlow[agent_id] and t in self.agent_paxFlow[agent_id][i, j]:
                     self.agent_acc[agent_id][j][t+1] += self.agent_paxFlow[agent_id][i, j][t]
+        
+        # For fixed agents, reset vehicle distribution to initial state
+        if self.fix_agent in [0, 1]:
+            fixed_agent_id = self.fix_agent
+            for n in self.region:
+                self.agent_acc[fixed_agent_id][n][t+1] = self.agent_initial_acc[fixed_agent_id][n]
+        
         self.time += 1
 
     def reb_step(self, rebAction_agents):
@@ -441,6 +506,12 @@ class AMoD:
                     self.agent_acc[agent_id][j][t+1] += self.agent_rebFlow[agent_id][i, j][t]
                 if (i, j) in self.agent_paxFlow[agent_id] and t in self.agent_paxFlow[agent_id][i, j]:
                     self.agent_acc[agent_id][j][t+1] += self.agent_paxFlow[agent_id][i, j][t]
+        
+        # For fixed agents, reset vehicle distribution to initial state
+        if self.fix_agent in [0, 1]:
+            fixed_agent_id = self.fix_agent
+            for n in self.region:
+                self.agent_acc[fixed_agent_id][n][t+1] = self.agent_initial_acc[fixed_agent_id][n]
     
         # Increment time step
         self.time += 1
@@ -475,7 +546,7 @@ class AMoD:
         t = self.time
         
         if agent_id is not None:
-            # Calculate total for specific agent
+            # Calculate total vehicles for the agent
             total = 0
             
             # Count available vehicles at all regions for CURRENT time
@@ -503,6 +574,12 @@ class AMoD:
             # Calculate totals for all agents
             totals = {}
             for agent_id in self.agents:
+                # For fixed agents, just return the total from initial distribution
+                if self.fix_agent == agent_id:
+                    totals[agent_id] = sum(self.agent_initial_acc[agent_id].values())
+                    continue
+                
+                # Calculate total for active (non-fixed) agent
                 total = 0
                 
                 # Count available vehicles at all regions for CURRENT time
@@ -536,8 +613,17 @@ class AMoD:
             for n in self.G.nodes
         )
 
+    def get_trip_assignments(self):
+        """Get and clear the trip assignments log"""
+        trips = self.trip_assignments.copy()
+        self.trip_assignments = []
+        return trips
+    
     def reset(self):
         """Reset the episode for multi-agent environment"""
+        
+        # Reset trip assignments
+        self.trip_assignments = []
         
         # Reset multi-agent vehicle tracking
         self.agent_acc = {agent_id: defaultdict(dict) for agent_id in self.agents}
@@ -638,7 +724,7 @@ class AMoD:
 
 class Scenario:
     def __init__(self, N1=2, N2=4, tf=60, sd=None, ninit=5, tripAttr=None, demand_input=None, demand_ratio=None, supply_ratio=1,
-                 trip_length_preference=0.25, grid_travel_time=1, fix_price=True, alpha=0.2, json_file=None, json_hr=9, json_tstep=3, varying_time=False, json_regions=None, impute=False):
+                 trip_length_preference=0.25, grid_travel_time=1, fix_price=True, alpha=0.0, json_file=None, json_hr=9, json_tstep=3, varying_time=False, json_regions=None, impute=False):
         # trip_length_preference: positive - more shorter trips, negative - more longer trips
         # grid_travel_time: travel time between grids
         # demand_input： list - total demand out of each region,
@@ -764,7 +850,7 @@ class Scenario:
             self.p = defaultdict(dict)
 
             # No randomness is added to demand input. Hence demand is fixed. If alpha = 0.2 demand_input will fluctuate within [0.8, 1.2] * demand_input 
-            self.alpha = 0
+            self.alpha = alpha
 
             # Creates stucture for travel time per OD per time bin (demandTime[(o,d)][t])
             self.demandTime = defaultdict(dict)
@@ -975,7 +1061,7 @@ class Scenario:
     def get_random_demand(self, reset=False):
         # generate demand and price
         # reset = True means that the function is called in the reset() method of AMoD enviroment,
-        #   assuming static demand is already generated
+        # assuming static demand is already generated
         # reset = False means that the function is called when initializing the demand
 
         demand = defaultdict(dict)
@@ -1010,7 +1096,7 @@ class Scenario:
                 for i in self.G.nodes:
                     J = [j for _, j in self.G.out_edges(i)]
                     prob = np.array(
-                        [np.math.exp(-self.rebTime[i, j][0]*self.trip_length_preference) for j in J])
+                        [np.exp(-self.rebTime[i, j][0]*self.trip_length_preference) for j in J])
                     prob = prob/sum(prob)
                     for idx in range(len(J)):
                         # allocation of demand to OD pairs

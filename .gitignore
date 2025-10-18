@@ -3,6 +3,7 @@ ckpt/
 logs/
 saved_files/
 thesis_env/
+wandb/
 
 # Job script
 base_job.sh

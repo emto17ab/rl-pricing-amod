@@ -155,12 +155,12 @@ class A2C(nn.Module):
         return state
     
     # Combines select action and forward steps of actor and critic
-    def select_action(self, obs, deterministic=False):
+    def select_action(self, obs, deterministic=False, return_concentration=False):
         # Parse the observation to get the graph data
         state = self.parse_obs(obs).to(self.device)
 
         # Forward pass through actor network to get action and log probability        
-        a, logprob = self.actor(state, deterministic=deterministic)
+        a, logprob, concentration = self.actor(state, deterministic=deterministic)
         
         # Forward pass through critic network to get state value estimate
         value = self.critic(state)
@@ -169,10 +169,25 @@ class A2C(nn.Module):
         if not deterministic:
             self.saved_actions.append(SavedAction(logprob, value))
     
-        action_list = a.detach().cpu().numpy().tolist()
+        # Convert to numpy array
+        action_np = a.detach().cpu().numpy()
         
-        # Return the action to be executed in the environment
-        return action_list
+        # Handle different action shapes based on mode:
+        # Mode 0 & 1: shape [nregion, 1] -> flatten to [nregion]
+        # Mode 2: shape [nregion, 2] -> keep as 2D [[price, reb], ...]
+        if action_np.shape[-1] == 1:
+            # Mode 0 or 1: squeeze last dimension
+            action_list = action_np.squeeze(-1).tolist()
+        else:
+            # Mode 2: keep 2D structure
+            action_list = action_np.tolist()
+        
+        # Return the action and optionally concentration parameter
+        if return_concentration:
+            concentration_value = concentration.detach().cpu().numpy()
+            return action_list, concentration_value
+        else:
+            return action_list
 
     def training_step(self):
         R = 0
@@ -188,20 +203,34 @@ class A2C(nn.Module):
             returns.insert(0, R)
 
         returns = torch.tensor(returns).to(self.device)
+        
+        ############################## OBS TRYING WITHOUT NORMALIZATION ##############################
         returns = (returns - returns.mean()) / (returns.std() + self.eps)
+        ##############################################################################################
 
+
+        #advantages = [] # Added to try normalization of advantages
         for (log_prob, value), R in zip(saved_actions, returns):
             advantage = R - value.item()
+            #advantages.append(advantage) # Added to try normalization of advantages
 
             # calculate actor (policy) loss with entropy regularization
             policy_losses.append(-log_prob * advantage)
 
             # calculate critic (value) loss using L1 smooth loss
             value_losses.append(F.smooth_l1_loss(value, torch.tensor([R]).to(self.device)))
+        #advantages = torch.stack(advantages) # Added to try normalization of advantages
+        #advantages = (advantages - advantages.mean()) / (advantages.std() + self.eps) # Added to try normalization of advantages
+
+        # Added to test normalization of advantages
+        #for i, ((log_prob, value), R) in enumerate(zip(saved_actions, returns)):
+        #    policy_losses.append(-log_prob * advantages[i])
+        #    value_losses.append(F.smooth_l1_loss(value, R.unsqueeze(0)))
 
         # take gradient steps with clipping
         self.optimizers['a_optimizer'].zero_grad()
-        a_loss = torch.stack(policy_losses).sum()
+        #a_loss = torch.stack(policy_losses).sum()
+        a_loss = torch.stack(policy_losses).mean() # Added to try stabilization
         a_loss.backward()
 
         # Gradient clipping for actor
@@ -209,7 +238,8 @@ class A2C(nn.Module):
         self.optimizers['a_optimizer'].step()
         
         self.optimizers['c_optimizer'].zero_grad()
-        v_loss = torch.stack(value_losses).sum()
+        #v_loss = torch.stack(value_losses).sum()
+        v_loss = torch.stack(value_losses).mean() # Added to try stabilization
         v_loss.backward()
 
         # Gradient clipping for critic
