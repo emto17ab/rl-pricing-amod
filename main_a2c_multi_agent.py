@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_episodes, mode):
+def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_episodes, mode, fix_agent=2):
         epochs = range(test_episodes)  # epoch iterator
         episode_reward = []
         episode_served_demand = []
@@ -36,17 +36,23 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
 
                     action_rl = {a: model_agents[a].select_action(obs[a], deterministic=True) for a in [0, 1]}
 
-                    desiredAcc = {
-                            a: {
+                    # Compute desired accumulation for all agents
+                    desiredAcc = {}
+                    for a in [0, 1]:
+                        if a == fix_agent:
+                            # For fixed agent, set desiredAcc to initial distribution
+                            desiredAcc[a] = {env.region[i]: env.agent_initial_acc[a][env.region[i]] for i in range(env.nregion)}
+                        else:
+                            # For active agent, use action to determine desired distribution
+                            desiredAcc[a] = {
                                 env.region[i]: int(action_rl[a][i] * dictsum(env.agent_acc[a], env.time + 1))
                                 for i in range(env.nregion)
                             }
-                            for a in [0, 1]
-                        }
 
+                    # Compute rebalancing flows for both agents
                     rebAction = {
-                            a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], cplexpath, directory, a, max_episodes, mode)
-                            for a in [0, 1]
+                        a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], cplexpath, directory, a, max_episodes, mode)
+                        for a in [0, 1]
                     }
                     
                     _, rebreward, done, info, _, _ = env.reb_step(rebAction)
@@ -72,15 +78,21 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
                     action_rl = {a: model_agents[a].select_action(obs[a], deterministic=True) for a in [0,1]}
 
                     # --- Desired Acc computation ---
-                    desiredAcc = {
-                        a: {
-                            env.region[i]: int(action_rl[a][i][-1] * dictsum(env.agent_acc[a], env.time + 1))
-                            for i in range(env.nregion)
-                        } for a in [0, 1]
-                    }
-                    
+                    # Compute desired accumulation for all agents
+                    desiredAcc = {}
+                    for a in [0, 1]:
+                        if a == fix_agent:
+                            # For fixed agent, set desiredAcc to initial distribution
+                            desiredAcc[a] = {env.region[i]: env.agent_initial_acc[a][env.region[i]] for i in range(env.nregion)}
+                        else:
+                            # For active agent, use action to determine desired distribution
+                            desiredAcc[a] = {
+                                env.region[i]: int(action_rl[a][i][-1] * dictsum(env.agent_acc[a], env.time + 1))
+                                for i in range(env.nregion)
+                            }
                     
                     # --- Rebalancing step ---
+                    # Compute rebalancing flows for both agents
                     rebAction = {
                         a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], cplexpath, directory, a, max_episodes, mode)
                         for a in [0, 1]
@@ -263,7 +275,7 @@ parser.add_argument(
 
 parser.add_argument(
     "--clip",
-    type=int,
+    type=float,
     default=500,
     help="clip value for gradient clipping (default: 500)",
 )
@@ -331,6 +343,14 @@ parser.add_argument(
     help="Choice price multiplier (default: 1.0)",
 )
 
+parser.add_argument(
+    "--fix_agent",
+    type=int,
+    default=2,
+    choices=[0, 1, 2],
+    help="Fix agent behavior for testing: 0=fix agent 0, 1=fix agent 1, 2=no fixing (default: 2)",
+)
+
 # Parser arguments
 args = parser.parse_args()
 
@@ -361,7 +381,29 @@ if not args.test:
                 supply_ratio=args.supply_ratio)
 
     # Create the environment
-    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed)
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_agent=args.fix_agent)
+    
+    # Print fixed agent information
+    if args.fix_agent == 0:
+        print("=" * 80)
+        print("FIXED AGENT MODE: Agent 0 is FIXED")
+        print("- Agent 0 receives NO demand")
+        print("- Agent 0 vehicles reset to initial distribution each step")
+        print("- Agent 1 is LEARNING and receives ALL demand")
+        print("=" * 80)
+    elif args.fix_agent == 1:
+        print("=" * 80)
+        print("FIXED AGENT MODE: Agent 1 is FIXED")
+        print("- Agent 1 receives NO demand")
+        print("- Agent 1 vehicles reset to initial distribution each step")
+        print("- Agent 0 is LEARNING and receives ALL demand")
+        print("=" * 80)
+    else:
+        print("=" * 80)
+        print("NORMAL MODE: Both agents are active and learning")
+        print("- Demand is split via choice model")
+        print("- Both agents learn simultaneously")
+        print("=" * 80)
 
     model_agents = {
             a: A2C(
@@ -432,6 +474,20 @@ if not args.test:
         episode_waiting = {0: 0, 1: 0}
         episode_rejection_rates = {0: [], 1: []}
         actions_price = {0: [], 1: []}  # Track price scalars during episode
+        
+        # Track concentration parameters during episode (different structures per mode)
+        if env.mode == 0:
+            # Mode 0: Only Dirichlet for rebalancing
+            actions_concentration_dirichlet = {0: [], 1: []}
+        elif env.mode == 1:
+            # Mode 1: Only Beta (alpha, beta) for pricing
+            actions_concentration_alpha = {0: [], 1: []}
+            actions_concentration_beta = {0: [], 1: []}
+        else:  # mode 2
+            # Mode 2: Beta (alpha, beta) for pricing + Dirichlet for rebalancing
+            actions_concentration_alpha = {0: [], 1: []}
+            actions_concentration_beta = {0: [], 1: []}
+            actions_concentration_dirichlet = {0: [], 1: []}
 
         done = False
         step = 0
@@ -444,19 +500,35 @@ if not args.test:
                 # Update episode reward
                 episode_reward = {a: episode_reward[a] + paxreward[a] for a in [0, 1]}
 
-                action_rl = {a: model_agents[a].select_action(obs[a]) for a in [0,1]}
+                # Get actions and concentrations
+                action_conc = {a: model_agents[a].select_action(obs[a], return_concentration=True) for a in [0,1]}
+                action_rl = {a: action_conc[a][0] for a in [0,1]}
+                concentrations = {a: action_conc[a][1] for a in [0,1]}
+                
+                # Track concentration (mode 0: Dirichlet concentration for rebalancing)
+                # Shape: [nregion, 1]
+                for a in [0, 1]:
+                    actions_concentration_dirichlet[a].append(np.mean(concentrations[a]))
 
-                desiredAcc = {
-                        a: {
+                # Determine which agents are active (not fixed)
+                # Compute desired accumulation for all agents
+                desiredAcc = {}
+                for a in [0, 1]:
+                    if a == args.fix_agent:
+                        # For fixed agent, set desiredAcc to initial distribution
+                        # This will result in zero rebalancing (vehicles already at desired positions)
+                        desiredAcc[a] = {env.region[i]: env.agent_initial_acc[a][env.region[i]] for i in range(env.nregion)}
+                    else:
+                        # For active agent, use action to determine desired distribution
+                        desiredAcc[a] = {
                             env.region[i]: int(action_rl[a][i] * dictsum(env.agent_acc[a], env.time + 1))
                             for i in range(env.nregion)
                         }
-                        for a in [0, 1]
-                    }
 
+                # Compute rebalancing flows for both agents
                 rebAction = {
-                        a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode)
-                        for a in [0, 1]
+                    a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode)
+                    for a in [0, 1]
                 }
                 
                 new_obs, rebreward, done, info, _, _ = env.reb_step(rebAction)
@@ -473,11 +545,20 @@ if not args.test:
                 for agent_id in [0, 1]:
                     model_agents[agent_id].rewards.append(paxreward[agent_id])
 
-                action_rl = {a: model_agents[a].select_action(obs[a]) for a in [0,1]}
+                # Get actions and concentrations
+                action_conc = {a: model_agents[a].select_action(obs[a], return_concentration=True) for a in [0,1]}
+                action_rl = {a: action_conc[a][0] for a in [0,1]}
+                concentrations = {a: action_conc[a][1] for a in [0,1]}
                 
                 # Track prices during episode (mode 1: action_rl is price scalar)
                 for a in [0, 1]:
                     actions_price[a].append(np.mean(2 * np.array(action_rl[a])))
+                
+                # Track concentration (mode 1: Beta distribution - alpha and beta)
+                # Shape: [nregion, 2] where [:, 0] = alpha, [:, 1] = beta
+                for a in [0, 1]:
+                    actions_concentration_alpha[a].append(np.mean(concentrations[a][:, 0]))
+                    actions_concentration_beta[a].append(np.mean(concentrations[a][:, 1]))
 
                 # Matching update (global step)
                 env.matching_update()
@@ -488,22 +569,42 @@ if not args.test:
                 
                 episode_reward = {a: episode_reward[a] + paxreward[a] for a in [0, 1]}
 
-                action_rl = {a: model_agents[a].select_action(obs[a]) for a in [0,1]}
+                # Get actions and concentrations
+                action_conc = {a: model_agents[a].select_action(obs[a], return_concentration=True) for a in [0,1]}
+
+                action_rl = {a: action_conc[a][0] for a in [0,1]}
+                concentrations = {a: action_conc[a][1] for a in [0,1]}
+
+
                 
                 # Track prices during episode (mode 2: action_rl[:,0] is price scalar)
                 for a in [0, 1]:
                     actions_price[a].append(np.mean(2 * np.array(action_rl[a])[:, 0]))
+                
+                # Track concentration (mode 2: Beta + Dirichlet)
+                # Shape: [nregion, 3] where [:, 0] = alpha, [:, 1] = beta, [:, 2] = dirichlet
+                for a in [0, 1]:
+                    actions_concentration_alpha[a].append(np.mean(concentrations[a][:, 0]))
+                    actions_concentration_beta[a].append(np.mean(concentrations[a][:, 1]))
+                    actions_concentration_dirichlet[a].append(np.mean(concentrations[a][:, 2]))
                     
                 # --- Desired Acc computation ---
-                desiredAcc = {
-                    a: {
-                        env.region[i]: int(action_rl[a][i][-1] * dictsum(env.agent_acc[a], env.time + 1))
-                        for i in range(env.nregion)
-                    } for a in [0, 1]
-                }
-                
+                # Compute desired accumulation for all agents
+                desiredAcc = {}
+                for a in [0, 1]:
+                    if a == args.fix_agent:
+                        # For fixed agent, set desiredAcc to initial distribution
+                        # This will result in zero rebalancing (vehicles already at desired positions)
+                        desiredAcc[a] = {env.region[i]: env.agent_initial_acc[a][env.region[i]] for i in range(env.nregion)}
+                    else:
+                        # For active agent, use action to determine desired distribution
+                        desiredAcc[a] = {
+                            env.region[i]: int(action_rl[a][i][-1] * dictsum(env.agent_acc[a], env.time + 1))
+                            for i in range(env.nregion)
+                        }
                 
                 # --- Rebalancing step ---
+                # Compute rebalancing flows for both agents
                 rebAction = {
                     a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode)
                     for a in [0, 1]
@@ -546,6 +647,26 @@ if not args.test:
         if env.mode != 0:
             for a in [0, 1]:
                 mean_price_scalar[a] = np.mean(actions_price[a]) if len(actions_price[a]) > 0 else 0
+
+        # Calculate mean concentration parameters per agent (mode-specific)
+        if env.mode == 0:
+            mean_concentration_dirichlet = {0: 0, 1: 0}
+            for a in [0, 1]:
+                mean_concentration_dirichlet[a] = np.mean(actions_concentration_dirichlet[a]) if len(actions_concentration_dirichlet[a]) > 0 else 0
+        elif env.mode == 1:
+            mean_concentration_alpha = {0: 0, 1: 0}
+            mean_concentration_beta = {0: 0, 1: 0}
+            for a in [0, 1]:
+                mean_concentration_alpha[a] = np.mean(actions_concentration_alpha[a]) if len(actions_concentration_alpha[a]) > 0 else 0
+                mean_concentration_beta[a] = np.mean(actions_concentration_beta[a]) if len(actions_concentration_beta[a]) > 0 else 0
+        else:  # mode 2
+            mean_concentration_alpha = {0: 0, 1: 0}
+            mean_concentration_beta = {0: 0, 1: 0}
+            mean_concentration_dirichlet = {0: 0, 1: 0}
+            for a in [0, 1]:
+                mean_concentration_alpha[a] = np.mean(actions_concentration_alpha[a]) if len(actions_concentration_alpha[a]) > 0 else 0
+                mean_concentration_beta[a] = np.mean(actions_concentration_beta[a]) if len(actions_concentration_beta[a]) > 0 else 0
+                mean_concentration_dirichlet[a] = np.mean(actions_concentration_dirichlet[a]) if len(actions_concentration_dirichlet[a]) > 0 else 0
 
         # Add training metrics to wandb
         log_dict = {
@@ -593,6 +714,23 @@ if not args.test:
         if env.mode != 0:
             log_dict["agent0/mean_price_scalar"] = mean_price_scalar[0]
             log_dict["agent1/mean_price_scalar"] = mean_price_scalar[1]
+        
+        # Add concentration metrics (mode-specific)
+        if env.mode == 0:
+            log_dict["agent0/mean_concentration_dirichlet"] = mean_concentration_dirichlet[0]
+            log_dict["agent1/mean_concentration_dirichlet"] = mean_concentration_dirichlet[1]
+        elif env.mode == 1:
+            log_dict["agent0/mean_concentration_alpha"] = mean_concentration_alpha[0]
+            log_dict["agent0/mean_concentration_beta"] = mean_concentration_beta[0]
+            log_dict["agent1/mean_concentration_alpha"] = mean_concentration_alpha[1]
+            log_dict["agent1/mean_concentration_beta"] = mean_concentration_beta[1]
+        else:  # mode 2
+            log_dict["agent0/mean_concentration_alpha"] = mean_concentration_alpha[0]
+            log_dict["agent0/mean_concentration_beta"] = mean_concentration_beta[0]
+            log_dict["agent0/mean_concentration_dirichlet"] = mean_concentration_dirichlet[0]
+            log_dict["agent1/mean_concentration_alpha"] = mean_concentration_alpha[1]
+            log_dict["agent1/mean_concentration_beta"] = mean_concentration_beta[1]
+            log_dict["agent1/mean_concentration_dirichlet"] = mean_concentration_dirichlet[1]
         
         wandb.log(log_dict)
 
@@ -685,7 +823,28 @@ else:
                 impute=args.impute,
                 supply_ratio=args.supply_ratio)
 
-    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed)
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_agent=args.fix_agent)
+    
+    # Print fixed agent information
+    if args.fix_agent == 0:
+        print("=" * 80)
+        print("TEST MODE - FIXED AGENT: Agent 0 is FIXED")
+        print("- Agent 0 receives NO demand")
+        print("- Agent 0 vehicles reset to initial distribution each step")
+        print("- Agent 1 receives ALL demand")
+        print("=" * 80)
+    elif args.fix_agent == 1:
+        print("=" * 80)
+        print("TEST MODE - FIXED AGENT: Agent 1 is FIXED")
+        print("- Agent 1 receives NO demand")
+        print("- Agent 1 vehicles reset to initial distribution each step")
+        print("- Agent 0 receives ALL demand")
+        print("=" * 80)
+    else:
+        print("=" * 80)
+        print("TEST MODE - NORMAL: Both agents are active")
+        print("- Demand is split via choice model")
+        print("=" * 80)
 
     model_agents = {
             a: A2C(
@@ -729,7 +888,21 @@ else:
     epoch_arrivals_list = []
     epoch_rebalancing_list = []
     epoch_price_mean_list = []
+    
+    # Initialize concentration tracking lists based on mode
+    if env.mode == 0:
+        epoch_concentration_dirichlet_list = []
+    elif env.mode == 1:
+        epoch_concentration_alpha_list = []
+        epoch_concentration_beta_list = []
+    else:  # mode 2
+        epoch_concentration_alpha_list = []
+        epoch_concentration_beta_list = []
+        epoch_concentration_dirichlet_list = []
 
+    # Storage for trip data from last episode
+    trip_data_last_episode = []
+    
     for episode in range(10):
         eps_reward = {0: 0, 1: 0}
         eps_demand = {0: 0, 1: 0}
@@ -739,6 +912,17 @@ else:
         eps_arrivals = {0: 0, 1: 0}
         eps_rebalancing = {0: 0, 1: 0}
         actions_price = {0: [], 1: []}
+        
+        # Initialize concentration tracking for episode based on mode
+        if env.mode == 0:
+            actions_concentration_dirichlet = {0: [], 1: []}
+        elif env.mode == 1:
+            actions_concentration_alpha = {0: [], 1: []}
+            actions_concentration_beta = {0: [], 1: []}
+        else:  # mode 2
+            actions_concentration_alpha = {0: [], 1: []}
+            actions_concentration_beta = {0: [], 1: []}
+            actions_concentration_dirichlet = {0: [], 1: []}
         
         obs = env.reset()
 
@@ -753,19 +937,32 @@ else:
                 # Update episode reward
                 eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
 
-                action_rl = {a: model_agents[a].select_action(obs[a], deterministic=True) for a in [0, 1]}
+                # Get actions and concentrations
+                action_conc = {a: model_agents[a].select_action(obs[a], deterministic=True, return_concentration=True) for a in [0, 1]}
+                action_rl = {a: action_conc[a][0] for a in [0, 1]}
+                concentrations = {a: action_conc[a][1] for a in [0, 1]}
+                
+                # Track concentration (mode 0: Dirichlet for rebalancing)
+                for a in [0, 1]:
+                    actions_concentration_dirichlet[a].append(np.mean(concentrations[a]))
 
-                desiredAcc = {
-                        a: {
+                # Compute desired accumulation for all agents
+                desiredAcc = {}
+                for a in [0, 1]:
+                    if a == args.fix_agent:
+                        # For fixed agent, set desiredAcc to initial distribution
+                        desiredAcc[a] = {env.region[i]: env.agent_initial_acc[a][env.region[i]] for i in range(env.nregion)}
+                    else:
+                        # For active agent, use action to determine desired distribution
+                        desiredAcc[a] = {
                             env.region[i]: int(action_rl[a][i] * dictsum(env.agent_acc[a], env.time + 1))
                             for i in range(env.nregion)
                         }
-                        for a in [0, 1]
-                    }
 
+                # Compute rebalancing flows for both agents
                 rebAction = {
-                        a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode)
-                        for a in [0, 1]
+                    a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode)
+                    for a in [0, 1]
                 }
                 
                 _, rebreward, done, info, _, _ = env.reb_step(rebAction)
@@ -777,11 +974,19 @@ else:
 
                 eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
 
-                action_rl = {a: model_agents[a].select_action(obs[a], deterministic=True) for a in [0,1]}
+                # Get actions and concentrations
+                action_conc = {a: model_agents[a].select_action(obs[a], deterministic=True, return_concentration=True) for a in [0,1]}
+                action_rl = {a: action_conc[a][0] for a in [0,1]}
+                concentrations = {a: action_conc[a][1] for a in [0,1]}
                 
                 # Track prices during episode (mode 1: action_rl is price scalar)
                 for a in [0, 1]:
                     actions_price[a].append(np.mean(2 * np.array(action_rl[a])))
+                
+                # Track concentration (mode 1: Beta distribution - alpha and beta)
+                for a in [0, 1]:
+                    actions_concentration_alpha[a].append(np.mean(concentrations[a][:, 0]))
+                    actions_concentration_beta[a].append(np.mean(concentrations[a][:, 1]))
 
                 # Matching update (global step)
                 env.matching_update()
@@ -792,22 +997,37 @@ else:
                 
                 eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
 
-                action_rl = {a: model_agents[a].select_action(obs[a], deterministic=True) for a in [0,1]}
+                # Get actions and concentrations
+                action_conc = {a: model_agents[a].select_action(obs[a], deterministic=True, return_concentration=True) for a in [0,1]}
+                action_rl = {a: action_conc[a][0] for a in [0,1]}
+                concentrations = {a: action_conc[a][1] for a in [0,1]}
                 
                 # Track prices during episode (mode 2: action_rl[:,0] is price scalar)
                 for a in [0, 1]:
                     actions_price[a].append(np.mean(2 * np.array(action_rl[a])[:, 0]))
+                
+                # Track concentration (mode 2: Beta + Dirichlet)
+                for a in [0, 1]:
+                    actions_concentration_alpha[a].append(np.mean(concentrations[a][:, 0]))
+                    actions_concentration_beta[a].append(np.mean(concentrations[a][:, 1]))
+                    actions_concentration_dirichlet[a].append(np.mean(concentrations[a][:, 2]))
 
                 # --- Desired Acc computation ---
-                desiredAcc = {
-                    a: {
-                        env.region[i]: int(action_rl[a][i][-1] * dictsum(env.agent_acc[a], env.time + 1))
-                        for i in range(env.nregion)
-                    } for a in [0, 1]
-                }
-                
+                # Compute desired accumulation for all agents
+                desiredAcc = {}
+                for a in [0, 1]:
+                    if a == args.fix_agent:
+                        # For fixed agent, set desiredAcc to initial distribution
+                        desiredAcc[a] = {env.region[i]: env.agent_initial_acc[a][env.region[i]] for i in range(env.nregion)}
+                    else:
+                        # For active agent, use action to determine desired distribution
+                        desiredAcc[a] = {
+                            env.region[i]: int(action_rl[a][i][-1] * dictsum(env.agent_acc[a], env.time + 1))
+                            for i in range(env.nregion)
+                        }
                 
                 # --- Rebalancing step ---
+                # Compute rebalancing flows for both agents
                 rebAction = {
                     a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode)
                     for a in [0, 1]
@@ -842,6 +1062,26 @@ else:
             for a in [0, 1]:
                 eps_price_mean[a] = np.mean(actions_price[a]) if len(actions_price[a]) > 0 else 0
         
+        # Concentration mean: average concentration across all steps for each agent (mode-specific)
+        if env.mode == 0:
+            eps_concentration_dirichlet = {0: 0, 1: 0}
+            for a in [0, 1]:
+                eps_concentration_dirichlet[a] = np.mean(actions_concentration_dirichlet[a]) if len(actions_concentration_dirichlet[a]) > 0 else 0
+        elif env.mode == 1:
+            eps_concentration_alpha = {0: 0, 1: 0}
+            eps_concentration_beta = {0: 0, 1: 0}
+            for a in [0, 1]:
+                eps_concentration_alpha[a] = np.mean(actions_concentration_alpha[a]) if len(actions_concentration_alpha[a]) > 0 else 0
+                eps_concentration_beta[a] = np.mean(actions_concentration_beta[a]) if len(actions_concentration_beta[a]) > 0 else 0
+        else:  # mode 2
+            eps_concentration_alpha = {0: 0, 1: 0}
+            eps_concentration_beta = {0: 0, 1: 0}
+            eps_concentration_dirichlet = {0: 0, 1: 0}
+            for a in [0, 1]:
+                eps_concentration_alpha[a] = np.mean(actions_concentration_alpha[a]) if len(actions_concentration_alpha[a]) > 0 else 0
+                eps_concentration_beta[a] = np.mean(actions_concentration_beta[a]) if len(actions_concentration_beta[a]) > 0 else 0
+                eps_concentration_dirichlet[a] = np.mean(actions_concentration_dirichlet[a]) if len(actions_concentration_dirichlet[a]) > 0 else 0
+        
         # Append episode results to epoch lists
         epoch_reward_list.append(eps_reward) # Done
         epoch_demand_list.append(eps_demand) # Done
@@ -851,8 +1091,33 @@ else:
         epoch_arrivals_list.append(eps_arrivals) # Done
         epoch_rebalancing_list.append(eps_rebalancing) # Done
         epoch_price_mean_list.append(eps_price_mean) # Done
+        
+        # Append concentration results (mode-specific)
+        if env.mode == 0:
+            epoch_concentration_dirichlet_list.append(eps_concentration_dirichlet)
+        elif env.mode == 1:
+            epoch_concentration_alpha_list.append(eps_concentration_alpha)
+            epoch_concentration_beta_list.append(eps_concentration_beta)
+        else:  # mode 2
+            epoch_concentration_alpha_list.append(eps_concentration_alpha)
+            epoch_concentration_beta_list.append(eps_concentration_beta)
+            epoch_concentration_dirichlet_list.append(eps_concentration_dirichlet)
+        
+        # Capture trip data from the last episode
+        if episode == 9:  # Last episode (0-indexed, so episode 9 is the 10th)
+            trip_data_last_episode = env.get_trip_assignments()
 
     # After all episodes, compute statistics across episodes for multi-agent case
+    
+    # Save trip data from last episode to CSV
+    if trip_data_last_episode:
+        import pandas as pd
+        df_trips = pd.DataFrame(trip_data_last_episode)
+        trip_filename = f"{args.directory}/trip_data/trip_assignments_{city}_mode{args.mode}_fixagent{args.fix_agent}_episodes{args.max_episodes}.csv"
+        os.makedirs(f"{args.directory}/trip_data", exist_ok=True)
+        df_trips.to_csv(trip_filename, index=False)
+        print(f"\nTrip assignment data saved to {trip_filename}")
+        print(f"Total trips logged: {len(trip_data_last_episode)}")
     # Extract values for each agent across all episodes
     rewards_agent0 = [ep[0] for ep in epoch_reward_list]
     rewards_agent1 = [ep[1] for ep in epoch_reward_list]
@@ -916,3 +1181,36 @@ else:
         print(price_agent1)
         print(f"  Agent 0 price scalar (mean, std): {np.mean(price_agent0):.2f}, {np.std(price_agent0):.2f}")
         print(f"  Agent 1 price scalar (mean, std): {np.mean(price_agent1):.2f}, {np.std(price_agent1):.2f}")
+    
+    # Show concentration parameters (mode-specific)
+    print("\nConcentration Parameters:")
+    if args.mode == 0:
+        # Mode 0: Only Dirichlet for rebalancing
+        conc_dirichlet_agent0 = [ep[0] for ep in epoch_concentration_dirichlet_list]
+        conc_dirichlet_agent1 = [ep[1] for ep in epoch_concentration_dirichlet_list]
+        print(f"  Agent 0 Dirichlet concentration (mean, std): {np.mean(conc_dirichlet_agent0):.2f}, {np.std(conc_dirichlet_agent0):.2f}")
+        print(f"  Agent 1 Dirichlet concentration (mean, std): {np.mean(conc_dirichlet_agent1):.2f}, {np.std(conc_dirichlet_agent1):.2f}")
+    elif args.mode == 1:
+        # Mode 1: Beta (alpha, beta) for pricing
+        conc_alpha_agent0 = [ep[0] for ep in epoch_concentration_alpha_list]
+        conc_alpha_agent1 = [ep[1] for ep in epoch_concentration_alpha_list]
+        conc_beta_agent0 = [ep[0] for ep in epoch_concentration_beta_list]
+        conc_beta_agent1 = [ep[1] for ep in epoch_concentration_beta_list]
+        print(f"  Agent 0 Beta Alpha concentration (mean, std): {np.mean(conc_alpha_agent0):.2f}, {np.std(conc_alpha_agent0):.2f}")
+        print(f"  Agent 0 Beta Beta concentration (mean, std): {np.mean(conc_beta_agent0):.2f}, {np.std(conc_beta_agent0):.2f}")
+        print(f"  Agent 1 Beta Alpha concentration (mean, std): {np.mean(conc_alpha_agent1):.2f}, {np.std(conc_alpha_agent1):.2f}")
+        print(f"  Agent 1 Beta Beta concentration (mean, std): {np.mean(conc_beta_agent1):.2f}, {np.std(conc_beta_agent1):.2f}")
+    else:  # mode 2
+        # Mode 2: Beta (alpha, beta) for pricing + Dirichlet for rebalancing
+        conc_alpha_agent0 = [ep[0] for ep in epoch_concentration_alpha_list]
+        conc_alpha_agent1 = [ep[1] for ep in epoch_concentration_alpha_list]
+        conc_beta_agent0 = [ep[0] for ep in epoch_concentration_beta_list]
+        conc_beta_agent1 = [ep[1] for ep in epoch_concentration_beta_list]
+        conc_dirichlet_agent0 = [ep[0] for ep in epoch_concentration_dirichlet_list]
+        conc_dirichlet_agent1 = [ep[1] for ep in epoch_concentration_dirichlet_list]
+        print(f"  Agent 0 Beta Alpha concentration (mean, std): {np.mean(conc_alpha_agent0):.2f}, {np.std(conc_alpha_agent0):.2f}")
+        print(f"  Agent 0 Beta Beta concentration (mean, std): {np.mean(conc_beta_agent0):.2f}, {np.std(conc_beta_agent0):.2f}")
+        print(f"  Agent 0 Dirichlet concentration (mean, std): {np.mean(conc_dirichlet_agent0):.2f}, {np.std(conc_dirichlet_agent0):.2f}")
+        print(f"  Agent 1 Beta Alpha concentration (mean, std): {np.mean(conc_alpha_agent1):.2f}, {np.std(conc_alpha_agent1):.2f}")
+        print(f"  Agent 1 Beta Beta concentration (mean, std): {np.mean(conc_beta_agent1):.2f}, {np.std(conc_beta_agent1):.2f}")
+        print(f"  Agent 1 Dirichlet concentration (mean, std): {np.mean(conc_dirichlet_agent1):.2f}, {np.std(conc_dirichlet_agent1):.2f}")

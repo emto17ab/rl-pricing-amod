@@ -55,6 +55,8 @@ class GNNActor(nn.Module):
         if deterministic:
             if self.mode == 0:
                 action = (concentration) / (concentration.sum() + 1e-20)
+                # Make shape consistent with non-deterministic path: [nregion, 1]
+                action = action.squeeze(0).unsqueeze(-1)
             elif self.mode == 1:
                 action_o = (concentration[:,:,0])/(concentration[:,:,0] + concentration[:,:,1] + 1e-10)
                 action_o[action_o<0] = 0
@@ -84,4 +86,4 @@ class GNNActor(nn.Module):
                 action_reb = m_reb.rsample()              
                 log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_reb.log_prob(action_reb)
                 action = torch.cat((action_o.squeeze(0).unsqueeze(-1), action_reb.squeeze(0).unsqueeze(-1)),-1)   
-        return action, log_prob
+        return action, log_prob, concentration
