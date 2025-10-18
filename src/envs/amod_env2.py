@@ -36,13 +36,10 @@ class AMoD:
         self.passenger = dict()  # passenger arrivals
         self.queue = defaultdict(list)  # passenger queue at each station
         self.demand = defaultdict(dict)  # demand
-        self.depDemand = dict()
-        self.arrDemand = dict()
         self.region = list(self.G)  # set of regions
         for i in self.region:
             self.passenger[i] = defaultdict(list)
-            self.depDemand[i] = defaultdict(float)
-            self.arrDemand[i] = defaultdict(float)
+
 
         self.price = defaultdict(dict)  # price
         self.arrivals = 0  # total number of added passengers
@@ -50,9 +47,7 @@ class AMoD:
         for i, j, t, d, p in scenario.tripAttr:
             self.demand[i, j][t] = d
             self.price[i, j][t] = p
-            self.depDemand[i][t] += d
-            # ???self.arrDemand[j][t+self.demandTime[i,j][t]] += d
-            self.arrDemand[i][t+self.demandTime[i, j][t]] += d
+            
         # number of vehicles within each region, key: i - region, t - time
         self.acc = defaultdict(dict)
         # number of vehicles arriving at each region, key: i - region, t - time
