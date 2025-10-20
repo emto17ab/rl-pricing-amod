@@ -228,13 +228,18 @@ class AMoD:
                         # Get baseline price for this O-D pair
                         baseline_price = self.agent_price[agent_id][n, j][t]
                         
-                        # Apply node-level price scalar (from action_rl)
-                        # price[agent_id][n] is a scalar between 0 and 1 from Beta distribution
-                        # In mode 1: price[agent_id][n] is directly the scalar
-                        # In mode 2: price[agent_id][n] is [price_scalar, reb_scalar], so we take [0]
-                        price_scalar = price[agent_id][n]
-                        if isinstance(price_scalar, (list, np.ndarray)):
-                            price_scalar = price_scalar[0]
+                        # For fixed agent, always use price scalar of 0.5 (keeps base price)
+                        # Otherwise use the learned price scalar
+                        if self.fix_agent == agent_id:
+                            price_scalar = 0.5
+                        else:
+                            # Apply node-level price scalar (from action_rl)
+                            # price[agent_id][n] is a scalar between 0 and 1 from Beta distribution
+                            # In mode 1: price[agent_id][n] is directly the scalar
+                            # In mode 2: price[agent_id][n] is [price_scalar, reb_scalar], so we take [0]
+                            price_scalar = price[agent_id][n]
+                            if isinstance(price_scalar, (list, np.ndarray)):
+                                price_scalar = price_scalar[0]
                         
                         # Multiply by 2 to allow range [0, 2×baseline]
                         p = 2 * baseline_price * price_scalar
@@ -269,21 +274,12 @@ class AMoD:
                 U_0 = 13.5 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr0
                 U_1 = 13.5 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr1
                 
-                # Build choice set based on which agents are active
-                if self.fix_agent == 0:
-                    # Agent 0 is fixed, only include agent 1 and reject
-                    exp_utilities.append(np.exp(U_1))
-                    labels.append("agent1")
-                elif self.fix_agent == 1:
-                    # Agent 1 is fixed, only include agent 0 and reject
-                    exp_utilities.append(np.exp(U_0))
-                    labels.append("agent0")
-                else:
-                    # Normal operation: include both agents
-                    exp_utilities.append(np.exp(U_0))
-                    labels.append("agent0")
-                    exp_utilities.append(np.exp(U_1))
-                    labels.append("agent1")
+                # Always include both agents in the choice set
+                # (Fixed agent will use base price due to scalar 0.5)
+                exp_utilities.append(np.exp(U_0))
+                labels.append("agent0")
+                exp_utilities.append(np.exp(U_1))
+                labels.append("agent1")
                 
                 # Always include reject option
                 exp_utilities.append(np.exp(U_reject))
