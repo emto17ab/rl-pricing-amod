@@ -16,7 +16,7 @@ class GNNParser:
     Parser converting raw environment observations to agent inputs (s_t).
     """
 
-    def __init__(self, env, T, scale_factor, agent_id, json_file=None):
+    def __init__(self, env, T, scale_factor, agent_id, json_file=None, use_od_prices=False):
         super().__init__()
         self.env = env
         self.T = T
@@ -24,6 +24,7 @@ class GNNParser:
         self.json_file = json_file
         self.agent_id = agent_id
         self.opponent_id = 1 - agent_id
+        self.use_od_prices = use_od_prices
         if self.json_file is not None:
             with open(json_file, "r") as file:
                 self.data = json.load(file)
@@ -44,21 +45,42 @@ class GNNParser:
         ############# LOOOK AT THIS. SHOULD IT USE DEMAND from OBS OR self.env.demand ##########################
         current_demand = torch.tensor([sum([(demand[i, j][time])* self.s for j in self.env.region]) for i in self.env.region]).view(1, 1, self.env.nregion).float()
 
-        # Own current price at t
-        own_current_price = torch.tensor([sum([(self.env.agent_price[self.agent_id][i, j][time])* self.s for j in self.env.region]) for i in self.env.region]).view(1, 1, self.env.nregion).float()
-
-        # Competitor current price at t
-        competitor_current_price = torch.tensor([sum([(self.env.agent_price[self.opponent_id][i, j][time])* self.s for j in self.env.region]) for i in self.env.region]).view(1, 1, self.env.nregion).float()
-
-        x = (
-            torch.cat(
-                [current_avb, future_avb, queue_length, current_demand, own_current_price, competitor_current_price], 
-                dim=1
+        # Price features (conditional on use_od_prices)
+        if self.use_od_prices:
+            # OD price matrices: shape [1, nregion, nregion] for each agent
+            own_current_price = torch.tensor([[self.env.agent_price[self.agent_id][i, j].get(time, 0) * self.s 
+                                              for j in self.env.region] 
+                                             for i in self.env.region]).view(1, self.env.nregion, self.env.nregion).float()
+            
+            competitor_current_price = torch.tensor([[self.env.agent_price[self.opponent_id][i, j].get(time, 0) * self.s 
+                                                     for j in self.env.region] 
+                                                    for i in self.env.region]).view(1, self.env.nregion, self.env.nregion).float()
+            
+            # Concatenate: [1, 1+T+1+1+nregion+nregion, nregion]
+            x = (
+                torch.cat(
+                    [current_avb, future_avb, queue_length, current_demand, own_current_price, competitor_current_price], 
+                    dim=1
+                )
+                .squeeze(0)
+                .view(1 + self.T + 1 + 1 + self.env.nregion + self.env.nregion, self.env.nregion)
+                .T
             )
-            .squeeze(0)
-            .view(1 + self.T + 1 + 1 + 1 + 1, self.env.nregion)
-            .T
-        )
+        else:
+            # Aggregated prices: shape [1, 1, nregion]
+            own_current_price = torch.tensor([sum([(self.env.agent_price[self.agent_id][i, j][time])* self.s for j in self.env.region]) for i in self.env.region]).view(1, 1, self.env.nregion).float()
+
+            competitor_current_price = torch.tensor([sum([(self.env.agent_price[self.opponent_id][i, j][time])* self.s for j in self.env.region]) for i in self.env.region]).view(1, 1, self.env.nregion).float()
+
+            x = (
+                torch.cat(
+                    [current_avb, future_avb, queue_length, current_demand, own_current_price, competitor_current_price], 
+                    dim=1
+                )
+                .squeeze(0)
+                .view(1 + self.T + 1 + 1 + 1 + 1, self.env.nregion)
+                .T
+            )
 
         if self.json_file is not None:
             edge_index = torch.vstack(
@@ -102,6 +124,7 @@ class A2C(nn.Module):
         scale_factor,
         agent_id,
         json_file = None,
+        use_od_prices = False,
         eps=np.finfo(np.float32).eps.item()
     ):
         
@@ -130,7 +153,7 @@ class A2C(nn.Module):
     
         # Set the observation parser
         self.obs_parser = GNNParser(self.env, T=T, json_file=json_file, scale_factor=scale_factor,
-                                   agent_id=agent_id)
+                                   agent_id=agent_id, use_od_prices=use_od_prices)
 
         # Set learning rates
         self.p_lr = p_lr
