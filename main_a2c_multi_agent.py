@@ -34,7 +34,18 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
                     # Update episode reward
                     eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
 
-                    action_rl = {a: model_agents[a].select_action(obs[a], deterministic=True) for a in [0, 1]}
+                    # Get actions
+                    action_rl = {}
+                    for a in [0, 1]:
+                        if a == fix_agent:
+                            # Fixed agent: use actual initial distribution for rebalancing
+                            total_vehicles = sum(env.agent_initial_acc[a].values())
+                            action_rl[a] = np.array([
+                                env.agent_initial_acc[a][env.region[i]] / total_vehicles 
+                                for i in range(env.nregion)
+                            ])
+                        else:
+                            action_rl[a] = model_agents[a].select_action(obs[a], deterministic=True)
 
                     # Compute desired accumulation for all agents
                     desiredAcc = {}
@@ -64,7 +75,14 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
 
                     eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
 
-                    action_rl = {a: model_agents[a].select_action(obs[a], deterministic=True) for a in [0,1]}
+                    # Get actions
+                    action_rl = {}
+                    for a in [0, 1]:
+                        if a == fix_agent:
+                            # Fixed agent: environment handles price override to 0.5
+                            action_rl[a] = np.array([0.5] * env.nregion)
+                        else:
+                            action_rl[a] = model_agents[a].select_action(obs[a], deterministic=True)
 
                     # Matching update (global step)
                     env.matching_update()
@@ -75,7 +93,23 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
                     
                     eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
 
-                    action_rl = {a: model_agents[a].select_action(obs[a], deterministic=True) for a in [0,1]}
+                    # Get actions
+                    action_rl = {}
+                    for a in [0, 1]:
+                        if a == fix_agent:
+                            # Fixed agent: environment handles price override to 0.5
+                            # Mode 2 action shape: [nregion, 2] where [:, 0] = price, [:, 1] = reb
+                            total_vehicles = sum(env.agent_initial_acc[a].values())
+                            reb_action = np.array([
+                                env.agent_initial_acc[a][env.region[i]] / total_vehicles 
+                                for i in range(env.nregion)
+                            ])
+                            action_rl[a] = np.column_stack([
+                                np.array([0.5] * env.nregion),  # Price (will be overridden by env)
+                                reb_action  # Rebalancing: actual initial distribution
+                            ])
+                        else:
+                            action_rl[a] = model_agents[a].select_action(obs[a], deterministic=True)
 
                     # --- Desired Acc computation ---
                     # Compute desired accumulation for all agents
@@ -351,6 +385,13 @@ parser.add_argument(
     help="Fix agent behavior for testing: 0=fix agent 0, 1=fix agent 1, 2=no fixing (default: 2)",
 )
 
+parser.add_argument(
+    "--use_od_prices",
+    action="store_true",
+    default=False,
+    help="Use OD price matrices instead of aggregated prices per region (default: False)",
+)
+
 # Parser arguments
 args = parser.parse_args()
 
@@ -387,16 +428,18 @@ if not args.test:
     if args.fix_agent == 0:
         print("=" * 80)
         print("FIXED AGENT MODE: Agent 0 is FIXED")
-        print("- Agent 0 receives NO demand")
+        print("- Agent 0 uses BASE PRICES (scalar=0.5, no learning)")
+        print("- Agent 0 is included in choice model and can receive demand")
         print("- Agent 0 vehicles reset to initial distribution each step")
-        print("- Agent 1 is LEARNING and receives ALL demand")
+        print("- Agent 1 is LEARNING (adjusts prices dynamically)")
         print("=" * 80)
     elif args.fix_agent == 1:
         print("=" * 80)
         print("FIXED AGENT MODE: Agent 1 is FIXED")
-        print("- Agent 1 receives NO demand")
+        print("- Agent 1 uses BASE PRICES (scalar=0.5, no learning)")
+        print("- Agent 1 is included in choice model and can receive demand")
         print("- Agent 1 vehicles reset to initial distribution each step")
-        print("- Agent 0 is LEARNING and receives ALL demand")
+        print("- Agent 0 is LEARNING (adjusts prices dynamically)")
         print("=" * 80)
     else:
         print("=" * 80)
@@ -405,10 +448,18 @@ if not args.test:
         print("- Both agents learn simultaneously")
         print("=" * 80)
 
+    # Calculate input size based on price type
+    if args.use_od_prices:
+        # OD price matrices: T (future) + 3 (current_avb, queue, demand) + 2*nregion (own and competitor OD prices)
+        input_size = args.look_ahead + 3 + 2 * env.nregion
+    else:
+        # Aggregated prices: T (future) + 3 (current_avb, queue, demand) + 2 (own and competitor aggregated prices)
+        input_size = args.look_ahead + 5
+    
     model_agents = {
             a: A2C(
                 env=env,
-                input_size= args.look_ahead + 5, # 5 features + time encoding
+                input_size=input_size,
                 hidden_size=args.hidden_size,
                 device=device,
                 p_lr=args.p_lr,
@@ -419,7 +470,8 @@ if not args.test:
                 mode=args.mode,
                 clip=args.clip,
                 gamma=args.gamma,
-                agent_id = a 
+                agent_id = a,
+                use_od_prices = args.use_od_prices
             )
             for a in [0, 1]
         }
@@ -501,23 +553,42 @@ if not args.test:
                 episode_reward = {a: episode_reward[a] + paxreward[a] for a in [0, 1]}
 
                 # Get actions and concentrations
-                action_conc = {a: model_agents[a].select_action(obs[a], return_concentration=True) for a in [0,1]}
-                action_rl = {a: action_conc[a][0] for a in [0,1]}
-                concentrations = {a: action_conc[a][1] for a in [0,1]}
+                action_rl = {}
+                concentrations = {}
+                for a in [0, 1]:
+                    if a == args.fix_agent:
+                        # Fixed agent: use actual initial distribution for rebalancing
+                        # Convert initial vehicle counts to proportions
+                        total_vehicles = sum(env.agent_initial_acc[a].values())
+                        action_rl[a] = np.array([
+                            env.agent_initial_acc[a][env.region[i]] / total_vehicles 
+                            for i in range(env.nregion)
+                        ])
+                        concentrations[a] = np.zeros((env.nregion, 1))  # Dummy for tracking
+                    else:
+                        action_conc = model_agents[a].select_action(obs[a], return_concentration=True)
+                        action_rl[a] = action_conc[0]
+                        concentrations[a] = action_conc[1]
                 
                 # Track concentration (mode 0: Dirichlet concentration for rebalancing)
-                # Shape: [nregion, 1]
                 for a in [0, 1]:
-                    actions_concentration_dirichlet[a].append(np.mean(concentrations[a]))
+                    if a != args.fix_agent:
+                        actions_concentration_dirichlet[a].append(np.mean(concentrations[a]))
 
                 # Determine which agents are active (not fixed)
                 # Compute desired accumulation for all agents
                 desiredAcc = {}
                 for a in [0, 1]:
                     if a == args.fix_agent:
-                        # For fixed agent, set desiredAcc to initial distribution
-                        # This will result in zero rebalancing (vehicles already at desired positions)
-                        desiredAcc[a] = {env.region[i]: env.agent_initial_acc[a][env.region[i]] for i in range(env.nregion)}
+                        # For fixed agent, distribute vehicles uniformly across all regions
+                        current_total = dictsum(env.agent_acc[a], env.time + 1)
+                        base_per_region = current_total // env.nregion
+                        remainder = current_total % env.nregion
+                        # Distribute uniformly with remainder going to first regions
+                        desiredAcc[a] = {
+                            env.region[i]: base_per_region + (1 if i < remainder else 0)
+                            for i in range(env.nregion)
+                        }
                     else:
                         # For active agent, use action to determine desired distribution
                         desiredAcc[a] = {
@@ -546,19 +617,32 @@ if not args.test:
                     model_agents[agent_id].rewards.append(paxreward[agent_id])
 
                 # Get actions and concentrations
-                action_conc = {a: model_agents[a].select_action(obs[a], return_concentration=True) for a in [0,1]}
-                action_rl = {a: action_conc[a][0] for a in [0,1]}
-                concentrations = {a: action_conc[a][1] for a in [0,1]}
+                action_rl = {}
+                concentrations = {}
+                for a in [0, 1]:
+                    if a == args.fix_agent:
+                        # Fixed agent: environment handles price override to 0.5
+                        # Just provide any valid pricing action (will be ignored)
+                        action_rl[a] = np.array([0.5] * env.nregion)
+                        concentrations[a] = np.zeros((env.nregion, 2))  # Dummy for tracking
+                    else:
+                        action_conc = model_agents[a].select_action(obs[a], return_concentration=True)
+                        action_rl[a] = action_conc[0]
+                        concentrations[a] = action_conc[1]
                 
                 # Track prices during episode (mode 1: action_rl is price scalar)
                 for a in [0, 1]:
-                    actions_price[a].append(np.mean(2 * np.array(action_rl[a])))
+                    if a == args.fix_agent:
+                        # Fixed agent always uses 0.5 scalar
+                        actions_price[a].append(1.0)  # 2 * 0.5 = 1.0 (base price)
+                    else:
+                        actions_price[a].append(np.mean(2 * np.array(action_rl[a])))
                 
                 # Track concentration (mode 1: Beta distribution - alpha and beta)
-                # Shape: [nregion, 2] where [:, 0] = alpha, [:, 1] = beta
                 for a in [0, 1]:
-                    actions_concentration_alpha[a].append(np.mean(concentrations[a][:, 0]))
-                    actions_concentration_beta[a].append(np.mean(concentrations[a][:, 1]))
+                    if a != args.fix_agent:
+                        actions_concentration_alpha[a].append(np.mean(concentrations[a][:, 0]))
+                        actions_concentration_beta[a].append(np.mean(concentrations[a][:, 1]))
 
                 # Matching update (global step)
                 env.matching_update()
@@ -570,32 +654,56 @@ if not args.test:
                 episode_reward = {a: episode_reward[a] + paxreward[a] for a in [0, 1]}
 
                 # Get actions and concentrations
-                action_conc = {a: model_agents[a].select_action(obs[a], return_concentration=True) for a in [0,1]}
-
-                action_rl = {a: action_conc[a][0] for a in [0,1]}
-                concentrations = {a: action_conc[a][1] for a in [0,1]}
-
-
+                action_rl = {}
+                concentrations = {}
+                for a in [0, 1]:
+                    if a == args.fix_agent:
+                        # Fixed agent: environment handles price override to 0.5
+                        # Mode 2 action shape: [nregion, 2] where [:, 0] = price scalar, [:, 1] = reb action
+                        total_vehicles = sum(env.agent_initial_acc[a].values())
+                        reb_action = np.array([
+                            env.agent_initial_acc[a][env.region[i]] / total_vehicles 
+                            for i in range(env.nregion)
+                        ])
+                        action_rl[a] = np.column_stack([
+                            np.array([0.5] * env.nregion),  # Price (will be overridden to 0.5 by env)
+                            reb_action  # Rebalancing: actual initial distribution
+                        ])
+                        concentrations[a] = np.zeros((env.nregion, 3))  # Dummy for tracking
+                    else:
+                        action_conc = model_agents[a].select_action(obs[a], return_concentration=True)
+                        action_rl[a] = action_conc[0]
+                        concentrations[a] = action_conc[1]
                 
                 # Track prices during episode (mode 2: action_rl[:,0] is price scalar)
                 for a in [0, 1]:
-                    actions_price[a].append(np.mean(2 * np.array(action_rl[a])[:, 0]))
+                    if a == args.fix_agent:
+                        # Fixed agent always uses 0.5 scalar
+                        actions_price[a].append(1.0)  # 2 * 0.5 = 1.0 (base price)
+                    else:
+                        actions_price[a].append(np.mean(2 * np.array(action_rl[a])[:, 0]))
                 
                 # Track concentration (mode 2: Beta + Dirichlet)
-                # Shape: [nregion, 3] where [:, 0] = alpha, [:, 1] = beta, [:, 2] = dirichlet
                 for a in [0, 1]:
-                    actions_concentration_alpha[a].append(np.mean(concentrations[a][:, 0]))
-                    actions_concentration_beta[a].append(np.mean(concentrations[a][:, 1]))
-                    actions_concentration_dirichlet[a].append(np.mean(concentrations[a][:, 2]))
+                    if a != args.fix_agent:
+                        actions_concentration_alpha[a].append(np.mean(concentrations[a][:, 0]))
+                        actions_concentration_beta[a].append(np.mean(concentrations[a][:, 1]))
+                        actions_concentration_dirichlet[a].append(np.mean(concentrations[a][:, 2]))
                     
                 # --- Desired Acc computation ---
                 # Compute desired accumulation for all agents
                 desiredAcc = {}
                 for a in [0, 1]:
                     if a == args.fix_agent:
-                        # For fixed agent, set desiredAcc to initial distribution
-                        # This will result in zero rebalancing (vehicles already at desired positions)
-                        desiredAcc[a] = {env.region[i]: env.agent_initial_acc[a][env.region[i]] for i in range(env.nregion)}
+                        # For fixed agent, distribute vehicles uniformly across all regions
+                        current_total = dictsum(env.agent_acc[a], env.time + 1)
+                        base_per_region = current_total // env.nregion
+                        remainder = current_total % env.nregion
+                        # Distribute uniformly with remainder going to first regions
+                        desiredAcc[a] = {
+                            env.region[i]: base_per_region + (1 if i < remainder else 0)
+                            for i in range(env.nregion)
+                        }
                     else:
                         # For active agent, use action to determine desired distribution
                         desiredAcc[a] = {
@@ -633,7 +741,21 @@ if not args.test:
         # Update both agent models after episode and collect training metrics
         grad_norms = {}
         for a in [0, 1]:
-            grad_norms[a] = model_agents[a].training_step()  # update model after episode and get metrics
+            if a == args.fix_agent:
+                # Fixed agent: skip learning, return dummy metrics
+                grad_norms[a] = {
+                    "actor_grad_norm": 0.0,
+                    "critic_grad_norm": 0.0,
+                    "actor_loss": 0.0,
+                    "critic_loss": 0.0
+                }
+                # Clear the fixed agent's buffers without updating
+                model_agents[a].rewards = []
+                model_agents[a].saved_actions = []
+                model_agents[a].saved_values = []
+                model_agents[a].saved_logprobs = []
+            else:
+                grad_norms[a] = model_agents[a].training_step()  # update model after episode and get metrics
 
         # Get total vehicles for verification (returns dict with {agent_id: total_vehicles})
         total_vehicles = env.get_total_vehicles()
@@ -829,16 +951,18 @@ else:
     if args.fix_agent == 0:
         print("=" * 80)
         print("TEST MODE - FIXED AGENT: Agent 0 is FIXED")
-        print("- Agent 0 receives NO demand")
+        print("- Agent 0 uses BASE PRICES (scalar=0.5, no learning)")
+        print("- Agent 0 is included in choice model and can receive demand")
         print("- Agent 0 vehicles reset to initial distribution each step")
-        print("- Agent 1 receives ALL demand")
+        print("- Agent 1 uses learned policy")
         print("=" * 80)
     elif args.fix_agent == 1:
         print("=" * 80)
         print("TEST MODE - FIXED AGENT: Agent 1 is FIXED")
-        print("- Agent 1 receives NO demand")
+        print("- Agent 1 uses BASE PRICES (scalar=0.5, no learning)")
+        print("- Agent 1 is included in choice model and can receive demand")
         print("- Agent 1 vehicles reset to initial distribution each step")
-        print("- Agent 0 receives ALL demand")
+        print("- Agent 0 uses learned policy")
         print("=" * 80)
     else:
         print("=" * 80)
@@ -846,10 +970,18 @@ else:
         print("- Demand is split via choice model")
         print("=" * 80)
 
+    # Calculate input size based on price type
+    if args.use_od_prices:
+        # OD price matrices: T (future) + 3 (current_avb, queue, demand) + 2*nregion (own and competitor OD prices)
+        input_size = args.look_ahead + 3 + 2 * env.nregion
+    else:
+        # Aggregated prices: T (future) + 3 (current_avb, queue, demand) + 2 (own and competitor aggregated prices)
+        input_size = args.look_ahead + 5
+    
     model_agents = {
             a: A2C(
                 env=env,
-                input_size= args.look_ahead + 5, # 5 features + time encoding
+                input_size=input_size,
                 hidden_size=args.hidden_size,
                 device=device,
                 p_lr=args.p_lr,
@@ -860,7 +992,8 @@ else:
                 mode=args.mode,
                 clip=args.clip,
                 gamma=args.gamma,
-                agent_id = a 
+                agent_id = a,
+                use_od_prices = args.use_od_prices
             )
             for a in [0, 1]
         }
@@ -938,13 +1071,26 @@ else:
                 eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
 
                 # Get actions and concentrations
-                action_conc = {a: model_agents[a].select_action(obs[a], deterministic=True, return_concentration=True) for a in [0, 1]}
-                action_rl = {a: action_conc[a][0] for a in [0, 1]}
-                concentrations = {a: action_conc[a][1] for a in [0, 1]}
+                action_rl = {}
+                concentrations = {}
+                for a in [0, 1]:
+                    if a == args.fix_agent:
+                        # Fixed agent: use actual initial distribution for rebalancing
+                        total_vehicles = sum(env.agent_initial_acc[a].values())
+                        action_rl[a] = np.array([
+                            env.agent_initial_acc[a][env.region[i]] / total_vehicles 
+                            for i in range(env.nregion)
+                        ])
+                        concentrations[a] = np.zeros((env.nregion, 1))
+                    else:
+                        action_conc = model_agents[a].select_action(obs[a], deterministic=True, return_concentration=True)
+                        action_rl[a] = action_conc[0]
+                        concentrations[a] = action_conc[1]
                 
                 # Track concentration (mode 0: Dirichlet for rebalancing)
                 for a in [0, 1]:
-                    actions_concentration_dirichlet[a].append(np.mean(concentrations[a]))
+                    if a != args.fix_agent:
+                        actions_concentration_dirichlet[a].append(np.mean(concentrations[a]))
 
                 # Compute desired accumulation for all agents
                 desiredAcc = {}
@@ -975,18 +1121,31 @@ else:
                 eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
 
                 # Get actions and concentrations
-                action_conc = {a: model_agents[a].select_action(obs[a], deterministic=True, return_concentration=True) for a in [0,1]}
-                action_rl = {a: action_conc[a][0] for a in [0,1]}
-                concentrations = {a: action_conc[a][1] for a in [0,1]}
+                action_rl = {}
+                concentrations = {}
+                for a in [0, 1]:
+                    if a == args.fix_agent:
+                        # Fixed agent: environment handles price override to 0.5
+                        action_rl[a] = np.array([0.5] * env.nregion)
+                        concentrations[a] = np.zeros((env.nregion, 2))
+                    else:
+                        action_conc = model_agents[a].select_action(obs[a], deterministic=True, return_concentration=True)
+                        action_rl[a] = action_conc[0]
+                        concentrations[a] = action_conc[1]
                 
                 # Track prices during episode (mode 1: action_rl is price scalar)
                 for a in [0, 1]:
-                    actions_price[a].append(np.mean(2 * np.array(action_rl[a])))
+                    if a == args.fix_agent:
+                        # Fixed agent always uses 0.5 scalar
+                        actions_price[a].append(1.0)  # 2 * 0.5 = 1.0 (base price)
+                    else:
+                        actions_price[a].append(np.mean(2 * np.array(action_rl[a])))
                 
                 # Track concentration (mode 1: Beta distribution - alpha and beta)
                 for a in [0, 1]:
-                    actions_concentration_alpha[a].append(np.mean(concentrations[a][:, 0]))
-                    actions_concentration_beta[a].append(np.mean(concentrations[a][:, 1]))
+                    if a != args.fix_agent:
+                        actions_concentration_alpha[a].append(np.mean(concentrations[a][:, 0]))
+                        actions_concentration_beta[a].append(np.mean(concentrations[a][:, 1]))
 
                 # Matching update (global step)
                 env.matching_update()
@@ -998,19 +1157,41 @@ else:
                 eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
 
                 # Get actions and concentrations
-                action_conc = {a: model_agents[a].select_action(obs[a], deterministic=True, return_concentration=True) for a in [0,1]}
-                action_rl = {a: action_conc[a][0] for a in [0,1]}
-                concentrations = {a: action_conc[a][1] for a in [0,1]}
+                action_rl = {}
+                concentrations = {}
+                for a in [0, 1]:
+                    if a == args.fix_agent:
+                        # Fixed agent: environment handles price override to 0.5
+                        # Mode 2 action shape: [nregion, 2] where [:, 0] = price scalar, [:, 1] = reb action
+                        total_vehicles = sum(env.agent_initial_acc[a].values())
+                        reb_action = np.array([
+                            env.agent_initial_acc[a][env.region[i]] / total_vehicles 
+                            for i in range(env.nregion)
+                        ])
+                        action_rl[a] = np.column_stack([
+                            np.array([0.5] * env.nregion),  # Price (will be overridden by env)
+                            reb_action  # Rebalancing: actual initial distribution
+                        ])
+                        concentrations[a] = np.zeros((env.nregion, 3))
+                    else:
+                        action_conc = model_agents[a].select_action(obs[a], deterministic=True, return_concentration=True)
+                        action_rl[a] = action_conc[0]
+                        concentrations[a] = action_conc[1]
                 
                 # Track prices during episode (mode 2: action_rl[:,0] is price scalar)
                 for a in [0, 1]:
-                    actions_price[a].append(np.mean(2 * np.array(action_rl[a])[:, 0]))
+                    if a == args.fix_agent:
+                        # Fixed agent always uses 0.5 scalar
+                        actions_price[a].append(1.0)  # 2 * 0.5 = 1.0 (base price)
+                    else:
+                        actions_price[a].append(np.mean(2 * np.array(action_rl[a])[:, 0]))
                 
                 # Track concentration (mode 2: Beta + Dirichlet)
                 for a in [0, 1]:
-                    actions_concentration_alpha[a].append(np.mean(concentrations[a][:, 0]))
-                    actions_concentration_beta[a].append(np.mean(concentrations[a][:, 1]))
-                    actions_concentration_dirichlet[a].append(np.mean(concentrations[a][:, 2]))
+                    if a != args.fix_agent:
+                        actions_concentration_alpha[a].append(np.mean(concentrations[a][:, 0]))
+                        actions_concentration_beta[a].append(np.mean(concentrations[a][:, 1]))
+                        actions_concentration_dirichlet[a].append(np.mean(concentrations[a][:, 2]))
 
                 # --- Desired Acc computation ---
                 # Compute desired accumulation for all agents

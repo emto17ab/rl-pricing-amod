@@ -53,7 +53,7 @@ main {
          ofile.write(",");
          ofile.write(e.j);
          ofile.write(",");
-         ofile.write(thisOplModel.rebFlow[e]);
+         ofile.write(thisOplModel.rebFlow[e].solutionValue);
          ofile.write(")");
        }
   ofile.writeln("];")
