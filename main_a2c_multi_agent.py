@@ -308,10 +308,17 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    "--clip",
+    "--actor_clip",
     type=float,
     default=500,
-    help="clip value for gradient clipping (default: 500)",
+    help="clip value for actor gradient clipping (default: 500)",
+)
+
+parser.add_argument(
+    "--critic_clip",
+    type=float,
+    default=500,
+    help="clip value for critic gradient clipping (default: 500)",
 )
 
 parser.add_argument(
@@ -469,7 +476,8 @@ if not args.test:
                 scale_factor = args.scale_factor,
                 json_file=f"data/scenario_{city}.json",
                 mode=args.mode,
-                clip=args.clip,
+                actor_clip=args.actor_clip,
+                critic_clip=args.critic_clip,
                 gamma=args.gamma,
                 agent_id = a,
                 use_od_prices = args.use_od_prices
@@ -991,7 +999,8 @@ else:
                 scale_factor = args.scale_factor,
                 json_file=f"data/scenario_{city}.json",
                 mode=args.mode,
-                clip=args.clip,
+                actor_clip=args.actor_clip,
+                critic_clip=args.critic_clip,
                 gamma=args.gamma,
                 agent_id = a,
                 use_od_prices = args.use_od_prices

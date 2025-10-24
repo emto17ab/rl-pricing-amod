@@ -120,7 +120,8 @@ class A2C(nn.Module):
         gamma,
         p_lr,   # actor learning rate
         q_lr,   # critic learning rate
-        clip,    # gradient clipping value
+        actor_clip,    # gradient clipping value for actor
+        critic_clip,   # gradient clipping value for critic
         scale_factor,
         agent_id,
         json_file = None,
@@ -165,8 +166,9 @@ class A2C(nn.Module):
         # Set gamma parameter
         self.gamma = gamma
 
-        # Set gradient clipping value
-        self.clip = clip
+        # Set gradient clipping values
+        self.actor_clip = actor_clip
+        self.critic_clip = critic_clip
 
         # Action & reward buffer
         self.saved_actions = []
@@ -257,7 +259,7 @@ class A2C(nn.Module):
         a_loss.backward()
 
         # Gradient clipping for actor
-        actor_grad_norm = torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.clip)
+        actor_grad_norm = torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.actor_clip)
         self.optimizers['a_optimizer'].step()
         
         self.optimizers['c_optimizer'].zero_grad()
@@ -266,7 +268,7 @@ class A2C(nn.Module):
         v_loss.backward()
 
         # Gradient clipping for critic
-        critic_grad_norm = torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.clip)
+        critic_grad_norm = torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.critic_clip)
         self.optimizers['c_optimizer'].step()
         
         # reset rewards and action buffer
