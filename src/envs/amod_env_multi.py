@@ -14,7 +14,7 @@ import random
 class AMoD:
     # initialization
     # updated to take scenario and beta (cost for rebalancing) as input
-    def __init__(self, scenario, mode, beta, jitter, max_wait, choice_price_mult, seed, fix_agent=2):
+    def __init__(self, scenario, mode, beta, jitter, max_wait, choice_price_mult, seed, fix_agent=2, loss_aversion=2.0):
         # Setting the scenario
         self.scenario = deepcopy(scenario)
 
@@ -27,6 +27,12 @@ class AMoD:
         
         # Setting which agent to fix (0=fix agent 0, 1=fix agent 1, 2=no fixing)
         self.fix_agent = fix_agent
+        
+        # Add loss aversion parameter for unprofitable trip penalty
+        self.loss_aversion = loss_aversion  # Multiplier for loss penalty (λ)
+        
+        # Track unprofitable trips for logging
+        self.agent_unprofitable_trips = {agent_id: 0 for agent_id in [0, 1]}
 
         # Setting up the road graph
         self.G = scenario.G  # Road Graph: node - region, edge - connection of regions, node attr: 'accInit', edge attr: 'time'
@@ -206,6 +212,10 @@ class AMoD:
         t = self.time
         paxreward = {0: 0, 1: 0}
         
+        # Reset violation tracking for this timestep
+        for agent_id in self.agents:
+            self.agent_unprofitable_trips[agent_id] = 0
+        
         # Reset agent_info for this timestep
         for agent_id in self.agents:
             for key in self.agent_info[agent_id]:
@@ -241,10 +251,10 @@ class AMoD:
                             if isinstance(price_scalar, (list, np.ndarray)):
                                 price_scalar = price_scalar[0]
                         
-                        # Multiply by 2 to allow range [0, 2×baseline]
+                        # Calculate proposed price (multiply by 2 to allow range [0, 2×baseline])
                         p = 2 * baseline_price * price_scalar
                         
-                        # Ensure minimum price (avoid zero prices)
+                        # Ensure absolute minimum price (avoid zero prices)
                         if p <= 1e-6:
                             p = self.jitter
                         
@@ -384,16 +394,38 @@ class AMoD:
                             self.agent_servedDemand[agent_id][pax.origin, pax.destination][t] += 1
 
                             trip_cost = self.demandTime[pax.origin, pax.destination][t] * self.beta
-                            # Calculate reward components as price minus operating cost
-                            paxreward[agent_id] += pax.price - trip_cost
+                            trip_revenue = pax.price
+                            
+                            # Calculate profitability-aware reward
+                            base_reward = trip_revenue - trip_cost
+                            
+                            # Penalty for unprofitable trips (loss aversion)
+                            if base_reward < 0:
+                                self.agent_unprofitable_trips[agent_id] += 1
+                                # Apply quadratic penalty: λ × (loss)²
+                                loss_penalty = self.loss_aversion * (base_reward ** 2)
+                                adjusted_reward = base_reward - loss_penalty
+                            else:
+                                adjusted_reward = base_reward
+                            
+                            paxreward[agent_id] += adjusted_reward
 
                             # Update the operating costs
                             self.ext_reward_agents[agent_id][n] += max(0, trip_cost)
 
-                            self.agent_info[agent_id]['revenue'] += pax.price
+                            # Track true metrics separately for monitoring
+                            self.agent_info[agent_id]['revenue'] += trip_revenue
                             self.agent_info[agent_id]['served_demand'] += 1
                             self.agent_info[agent_id]['operating_cost'] += trip_cost
                             self.agent_info[agent_id]['served_waiting'] += wait_t
+                            
+                            # Track profitability metrics
+                            if 'true_profit' not in self.agent_info[agent_id]:
+                                self.agent_info[agent_id]['true_profit'] = 0
+                                self.agent_info[agent_id]['adjusted_profit'] = 0
+                            
+                            self.agent_info[agent_id]['true_profit'] += base_reward
+                            self.agent_info[agent_id]['adjusted_profit'] += adjusted_reward
                         else:
                             if pax.unmatched_update():
                                 matched_leave_index.append(i)
@@ -427,6 +459,8 @@ class AMoD:
         for agent_id in [0, 1]:
             self.agent_info[agent_id]['rejection_rate'] = rejection_rate
             self.agent_info[agent_id]['rejected_demand'] += total_rejected_demand
+            # Add pricing metrics to info
+            self.agent_info[agent_id]['unprofitable_trips'] = self.agent_unprofitable_trips[agent_id]
 
         return self.obs, paxreward, done, self.agent_info, self.ext_reward_agents, ext_done
 

@@ -1,13 +1,13 @@
 #!/bin/bash
 #BSUB -q hpc
-#BSUB -J base_case_manhattan_mode2_40k_dual_agent_od_down_scaled
+#BSUB -J base_case_manhattan_mode2_40k_dual_agent_od_down_scaled_clip10
 #BSUB -n 4
 #BSUB -R "span[hosts=1]"
 #BSUB -R "rusage[mem=8GB]"
 #BSUB -W 24:00
-#BSUB -o logs/base_case_manhattan_mode2_40k_dual_agent_od_down_scaled_%J.out
-#BSUB -e logs/base_case_manhattan_mode2_40k_dual_agent_od_down_scaled_%J.err
+#BSUB -o logs/base_case_manhattan_mode2_40k_dual_agent_od_down_scaled_clip10%J.out
+#BSUB -e logs/base_case_manhattan_mode2_40k_dual_agent_od_down_scaled_clip10%J.err
 
 source /work3/s233791/rl-pricing-amod/thesis_env/bin/activate
 
-python main_a2c_multi_agent.py --mode 2 --max_episodes 40000 --actor_clip 3 --critic_clip 3 --use_od_prices --q_lr 1e-4 --p_lr 1e-4 --city "nyc_manhattan" --checkpoint_path base_case_manhattan_mode2_40k_dual_agent_od_down_scaled
+python main_a2c_multi_agent.py --mode 2 --max_episodes 40004 --actor_clip 10 --critic_clip 10 --use_od_prices --q_lr 1e-4 --p_lr 1e-4 --city "nyc_manhattan" --checkpoint_path base_case_manhattan_mode2_40k_dual_agent_od_down_scaled_clip10

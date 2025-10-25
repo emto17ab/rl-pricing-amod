@@ -399,6 +399,13 @@ parser.add_argument(
     help="Use OD price matrices instead of aggregated prices per region (default: False)",
 )
 
+parser.add_argument(
+    "--loss_aversion",
+    type=float,
+    default=2.0,
+    help="Loss aversion multiplier for unprofitable trips (default: 2.0)",
+)
+
 # Parser arguments
 args = parser.parse_args()
 
@@ -430,7 +437,7 @@ if not args.test:
                 supply_ratio=args.supply_ratio)
 
     # Create the environment
-    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_agent=args.fix_agent)
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_agent=args.fix_agent, loss_aversion=args.loss_aversion)
     
     # Print fixed agent information
     if args.fix_agent == 0:
@@ -534,6 +541,10 @@ if not args.test:
         episode_total_operating_cost = {0: 0, 1: 0}
         episode_waiting = {0: 0, 1: 0}
         episode_rejection_rates = {0: [], 1: []}
+        # Profitability tracking
+        episode_true_profit = {0: 0, 1: 0}
+        episode_adjusted_profit = {0: 0, 1: 0}
+        episode_unprofitable_trips = {0: 0, 1: 0}
         actions_price = {0: [], 1: []}  # Track price scalars during episode
         
         # Track concentration parameters during episode (different structures per mode)
@@ -744,6 +755,10 @@ if not args.test:
                     episode_total_operating_cost[a] += info[a]["operating_cost"]
                     episode_waiting[a] += info[a]["served_waiting"]
                     episode_rejection_rates[a].append(info[a]["rejection_rate"])
+                    # Track profitability metrics
+                    episode_true_profit[a] += info[a].get("true_profit", 0)
+                    episode_adjusted_profit[a] += info[a].get("adjusted_profit", 0)
+                    episode_unprofitable_trips[a] += info[a].get("unprofitable_trips", 0)
         
             step += 1
         
@@ -815,6 +830,10 @@ if not args.test:
         "agent0/critic_grad_norm": grad_norms[0]["critic_grad_norm"],
         "agent0/actor_loss": grad_norms[0]["actor_loss"],
         "agent0/critic_loss": grad_norms[0]["critic_loss"],
+        # Agent 0 profitability metrics
+        "agent0/true_profit": episode_true_profit[0],
+        "agent0/adjusted_profit": episode_adjusted_profit[0],
+        "agent0/unprofitable_trips": episode_unprofitable_trips[0],
         # Agent 1 metrics
         "agent1/episode_reward": episode_reward[1],
         "agent1/episode_served_demand": episode_served_demand[1],
@@ -828,11 +847,19 @@ if not args.test:
         "agent1/critic_grad_norm": grad_norms[1]["critic_grad_norm"],
         "agent1/actor_loss": grad_norms[1]["actor_loss"],
         "agent1/critic_loss": grad_norms[1]["critic_loss"],
+        # Agent 1 profitability metrics
+        "agent1/true_profit": episode_true_profit[1],
+        "agent1/adjusted_profit": episode_adjusted_profit[1],
+        "agent1/unprofitable_trips": episode_unprofitable_trips[1],
         # Combined metrics
         "combined/total_reward": episode_reward[0] + episode_reward[1],
         "combined/total_served_demand": episode_served_demand[0] + episode_served_demand[1],
         "combined/total_unserved_demand": episode_unserved_demand[0] + episode_unserved_demand[1],
         "combined/total_rebalancing_cost": episode_rebalancing_cost[0] + episode_rebalancing_cost[1],
+        # Combined profitability metrics
+        "combined/total_true_profit": episode_true_profit[0] + episode_true_profit[1],
+        "combined/total_adjusted_profit": episode_adjusted_profit[0] + episode_adjusted_profit[1],
+        "combined/total_unprofitable_trips": episode_unprofitable_trips[0] + episode_unprofitable_trips[1],
         # Vehicle tracking
         "vehicles/agent0_total": total_vehicles[0],
         "vehicles/agent1_total": total_vehicles[1],
@@ -954,7 +981,7 @@ else:
                 impute=args.impute,
                 supply_ratio=args.supply_ratio)
 
-    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_agent=args.fix_agent)
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_agent=args.fix_agent, loss_aversion=args.loss_aversion)
     
     # Print fixed agent information
     if args.fix_agent == 0:
