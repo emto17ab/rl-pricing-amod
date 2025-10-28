@@ -1,7 +1,7 @@
 import argparse
 import torch
-from src.envs.amod_env2 import Scenario, AMoD
-from src.algos.a2c_gnn_emil2 import A2C
+from src.envs.amod_env import Scenario, AMoD
+from src.algos.a2c_gnn import A2C
 from tqdm import trange
 import numpy as np
 from src.misc.utils import dictsum, nestdictsum
@@ -16,20 +16,20 @@ load_dotenv()
 
 # Define calibrated simulation parameters
 demand_ratio = {'san_francisco': 2, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1.8,
-                'nyc_man_south': 1.8, 'nyc_brooklyn': 9, 'porto': 4, 'rome': 1.8, 'shenzhen_baoan': 2.5,
+                'nyc_man_south': 1.8, 'nyc_brooklyn': 9, 'nyc_manhattan': 2, 'porto': 4, 'rome': 1.8, 'shenzhen_baoan': 2.5,
                 'shenzhen_downtown_west': 2.5, 'shenzhen_downtown_east': 3, 'shenzhen_north': 3
                }
 json_hr = {'san_francisco':19, 'washington_dc': 19, 'chicago': 19, 'nyc_man_north': 19, 'nyc_man_middle': 19,
-           'nyc_man_south': 19, 'nyc_brooklyn': 19, 'porto': 8, 'rome': 8, 'shenzhen_baoan': 8,
+           'nyc_man_south': 19, 'nyc_brooklyn': 19, 'nyc_manhattan': 19, 'porto': 8, 'rome': 8, 'shenzhen_baoan': 8,
            'shenzhen_downtown_west': 8, 'shenzhen_downtown_east': 8, 'shenzhen_north': 8
           }
 beta = {'san_francisco': 0.2, 'washington_dc': 0.5, 'chicago': 0.5, 'nyc_man_north': 0.5, 'nyc_man_middle': 0.5,
-                'nyc_man_south': 0.5, 'nyc_brooklyn':0.5, 'porto': 0.1, 'rome': 0.1, 'shenzhen_baoan': 0.5,
+                'nyc_man_south': 0.5, 'nyc_brooklyn':0.5, 'nyc_manhattan': 0.3, 'porto': 0.1, 'rome': 0.1, 'shenzhen_baoan': 0.5,
                 'shenzhen_downtown_west': 0.5, 'shenzhen_downtown_east': 0.5, 'shenzhen_north': 0.5}
 
-test_tstep = {'san_francisco': 3, 'nyc_brooklyn': 4, 'shenzhen_downtown_west': 3, 'nyc_man_middle': 3, 'nyc_man_south': 3, 'nyc_man_north': 3, 'washington_dc':3, 'chicago':3}
+test_tstep = {'san_francisco': 3, 'nyc_brooklyn': 4, 'shenzhen_downtown_west': 3, 'nyc_manhattan': 3, 'nyc_man_middle': 3, 'nyc_man_south': 3, 'nyc_man_north': 3, 'washington_dc':3, 'chicago':3}
 
-parser = argparse.ArgumentParser(description="SAC-GNN")
+parser = argparse.ArgumentParser(description="A2C-GNN")
 
 # Simulator parameters
 parser.add_argument(
@@ -43,7 +43,7 @@ parser.add_argument(
     help="demand_ratio (default: 1)",
 )
 parser.add_argument(
-    "--json_hr", type=int, default=7, metavar="S", help="json_hr (default: 7)"
+    "--json_hr", type=int, default=19, metavar="S", help="json_hr (default: 19)"
 )
 parser.add_argument(
     "--json_tstep",
@@ -55,8 +55,8 @@ parser.add_argument(
 parser.add_argument(
     '--mode', 
     type=int, 
-    default=1,
-    help='rebalancing mode. (0:manul, 1:pricing, 2:both. default 1)',
+    default=2,
+    help='rebalancing mode. (0:manul, 1:pricing, 2:both. default 2)',
 )
 
 parser.add_argument(
@@ -90,9 +90,9 @@ parser.add_argument(
 parser.add_argument(
     "--max_episodes",
     type=int,
-    default=10000,
+    default=15000,
     metavar="N",
-    help="number of episodes to train agent (default: 10k)",
+    help="number of episodes to train agent (default: 15k)",
 )
 parser.add_argument(
     "--max_steps",
@@ -148,30 +148,37 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    "--clip",
-    type=int,
+    "--actor_clip",
+    type=float,
     default=500,
-    help="clip value for gradient clipping (default: 500)",
+    help="clip value for actor gradient clipping (default: 500)",
+)
+
+parser.add_argument(
+    "--critic_clip",
+    type=float,
+    default=500,
+    help="clip value for critic gradient clipping (default: 500)",
 )
 
 parser.add_argument(
     "--p_lr",
     type=float,
-    default=1e-3,
-    help="learning rate for policy network (default: 1e-3)",
+    default=1e-4,
+    help="learning rate for policy network (default: 1e-4)",
 )
 
 parser.add_argument(
     "--q_lr",
     type=float,
-    default=1e-3,
-    help="learning rate for Q networks (default: 1e-3)",
+    default=1e-4,
+    help="learning rate for Q networks (default: 1e-4)",
 )
 
 parser.add_argument(
     "--city",
     type=str,
-    default="san_francisco",
+    default="nyc_manhattan",
     help="city to train on",
 )
 
@@ -210,6 +217,34 @@ parser.add_argument(
     help="Discount factor (default: 0.97)",
 )
 
+parser.add_argument(
+    "--choice_price_mult",
+    type=float,
+    default=1.0,
+    help="Choice price multiplier (default: 1.0)",
+)
+
+parser.add_argument(
+    "--use_od_prices",
+    action="store_true",
+    default=False,
+    help="Use OD price matrices instead of aggregated prices per region (default: False)",
+)
+
+parser.add_argument(
+    "--loss_aversion",
+    type=float,
+    default=2.0,
+    help="Loss aversion multiplier for unprofitable trips (default: 2.0)",
+)
+
+parser.add_argument(
+    "--fix_baseline",
+    action="store_true",
+    default=False,
+    help="Fix baseline behavior: use base price and initial vehicle distribution (default: False)",
+)
+
 # Parser arguments
 args = parser.parse_args()
 
@@ -222,6 +257,7 @@ wandb.login(key=os.getenv('WANDB_API_KEY'))
 
 run = wandb.init(
     project="thesis",
+    name=args.checkpoint_path,
     config=args,
 )
 
@@ -241,27 +277,58 @@ if not args.test:
                 supply_ratio=args.supply_ratio)
 
     # Create the environment
-    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt)
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, loss_aversion=args.loss_aversion, fix_baseline=args.fix_baseline)
+    
+    # Print fixed baseline information
+    if args.fix_baseline:
+        print("\n" + "="*50)
+        print("FIXED BASELINE MODE ACTIVATED")
+        print("="*50)
+        print("Behavior:")
+        print("  - Prices: Always using base price (price scalar = 0.5)")
+        print("  - Rebalancing: Always rebalancing to initial distribution")
+        initial_vehicles = env.get_initial_vehicles()
+        print(f"  - Initial vehicles: {initial_vehicles}")
+        print(f"  - Target distribution: {dict(env.initial_acc)}")
+        print("="*50 + "\n")
+    else:
+        print("\n" + "="*50)
+        print("NORMAL TRAINING MODE")
+        print("="*50)
+        print("Agent will learn both pricing and rebalancing strategies")
+        print("="*50 + "\n")
+
+    # Calculate input size based on price type
+    if args.use_od_prices:
+        # OD price matrices: T (future) + 3 (current_avb, queue, demand) + 2*nregion (own and competitor OD prices)
+        input_size = args.look_ahead + 3 + env.nregion
+    else:
+        # Aggregated prices: T (future) + 3 (current_avb, queue, demand) + 2 (own and competitor aggregated prices)
+        input_size = args.look_ahead + 4
 
     # Load the model 
     model = A2C(
             env=env,
-            input_size= args.look_ahead + 4, # 4 features + time encoding
+            input_size=input_size,
             hidden_size=args.hidden_size,
             device=device,
             p_lr=args.p_lr,
             q_lr=args.q_lr,
+            mode = args.mode,
             T = args.look_ahead,
             scale_factor = args.scale_factor,
             json_file=f"data/scenario_{city}.json",
-            mode=args.mode,
-            clip=args.clip,
-            gamma=args.gamma, 
+            actor_clip=args.actor_clip,
+            critic_clip=args.critic_clip,
+            gamma=args.gamma,
+            use_od_prices=args.use_od_prices
         )
 
     if args.load:
         print("load checkpoint")
-        model.load_checkpoint(path=f"ckpt/{args.checkpoint_path}.pth")
+        checkpoint_path = f"ckpt/{args.checkpoint_path}_running.pth"
+        model.load_checkpoint(path=checkpoint_path)
+        print("loaded checkpoint from", checkpoint_path)
 
     #Initialize lists for logging
     log = {'train_reward': [], 
@@ -294,12 +361,21 @@ if not args.test:
         demand_ori = nestdictsum(env.demand)
         if i_episode == train_episodes - 1:
             export = {"demand_ori":copy.deepcopy(env.demand)}
-        action_rl = [0]*env.nregion
+        action_rl = None
         episode_reward = 0
         episode_served_demand = 0
+        episode_unserved_demand = 0
         episode_rebalancing_cost = 0
+        episode_rejected_demand = 0
+        episode_total_revenue = 0
+        episode_operating_cost = 0
         episode_waiting = 0
+        episode_rejection_rates = []
+        episode_true_profit = 0
+        episode_adjusted_profit = 0
+        episode_unprofitable_trips = 0
         actions = []
+        actions_price = []  # Track price scalars during episode
 
         current_eps = []
         done = False
@@ -310,70 +386,162 @@ if not args.test:
                 obs, paxreward, done, info, _, _ = env.match_step_simple()
                 episode_reward += paxreward
         
-                action_rl = model.select_action(obs)
-
-                # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
-                desiredAcc = {env.region[i]: int(action_rl[i] *dictsum(env.acc,env.time+1))for i in range(len(env.region))}
+                # Select action for rebalancing
+                if args.fix_baseline:
+                    # Fixed baseline: distribute vehicles uniformly across all regions
+                    current_total = dictsum(env.acc, env.time + 1)
+                    base_per_region = current_total // env.nregion
+                    remainder = current_total % env.nregion
+                    # Distribute uniformly with remainder going to first regions
+                    desiredAcc = {
+                        env.region[i]: base_per_region + (1 if i < remainder else 0)
+                        for i in range(env.nregion)
+                    }
+                else:
+                    action_rl = model.select_action(obs)
+                    # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
+                    desiredAcc = {env.region[i]: int(action_rl[i] *dictsum(env.acc,env.time+1))for i in range(len(env.region))}
 
                 # solve minimum rebalancing distance problem (Step 3 in paper)
                 rebAction = solveRebFlow(
                     env,
-                    "scenario_san_francisco4",
+                    "nyc_manhattan",
                     desiredAcc,
                     args.cplexpath,
-                    args.directory, 
+                    args.directory,
+                    job_id=args.checkpoint_path  # Use checkpoint name to avoid conflicts
                 )
 
                 # Take rebalancing action in environment
                 new_obs, rebreward, done, info, _, _ = env.reb_step(rebAction)
                 episode_reward += rebreward
-                model.rewards.append(paxreward + rebreward)
+                
+                # Only add to model rewards if not in fixed baseline mode
+                if not args.fix_baseline:
+                    model.rewards.append(paxreward + rebreward)
 
             elif env.mode == 1:
                 obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
                 episode_reward += paxreward
-                model.rewards.append(paxreward)
-                action_rl = model.select_action(obs)  
+                
+                # Only add to model rewards if not in fixed baseline mode
+                if not args.fix_baseline:
+                    model.rewards.append(paxreward)
+                
+                # Select action for pricing
+                if args.fix_baseline:
+                    # Fixed baseline: use price scalar of 0.5 (keeps base price)
+                    action_rl = np.array([0.5] * env.nregion)
+                else:
+                    action_rl = model.select_action(obs)
+                    
                 env.matching_update()
 
             elif env.mode == 2:
+                # Select action for pricing and rebalancing BEFORE matching
+                if args.fix_baseline:
+                    # Fixed baseline: create action with price scalar 0.5 and uniform rebalancing
+                    # Mode 2 action shape: [nregion, 2] where [:, 0] = price scalar, [:, 1] = reb action
+                    total_vehicles = sum(env.initial_acc.values())
+                    reb_action = np.array([
+                        env.initial_acc[env.region[i]] / total_vehicles 
+                        for i in range(env.nregion)
+                    ])
+                    action_rl = np.column_stack([
+                        np.array([0.5] * env.nregion),  # Price scalar = 0.5 (base price)
+                        reb_action  # Rebalancing proportions from initial distribution
+                    ])
+                else:
+                    action_rl = model.select_action(obs)
+                
+                # Perform matching with the pricing action
                 obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
 
                 episode_reward += paxreward
 
-                action_rl = model.select_action(obs)
-
-                # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
-                desiredAcc = {
-                    env.region[i]: int(
-                        action_rl[i][-1] * dictsum(env.acc, env.time + 1))
-                    for i in range(len(env.region))
-                }
+                # Compute desired accumulation for rebalancing
+                if args.fix_baseline:
+                    # Distribute vehicles uniformly across all regions
+                    current_total = dictsum(env.acc, env.time + 1)
+                    base_per_region = current_total // env.nregion
+                    remainder = current_total % env.nregion
+                    desiredAcc = {
+                        env.region[i]: base_per_region + (1 if i < remainder else 0)
+                        for i in range(env.nregion)
+                    }
+                else:
+                    # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
+                    desiredAcc = {
+                        env.region[i]: int(
+                            action_rl[i][-1] * dictsum(env.acc, env.time + 1))
+                        for i in range(len(env.region))
+                    }
 
                 # solve minimum rebalancing distance problem (Step 3 in paper)
                 rebAction = solveRebFlow(
                     env,
-                    "scenario_san_francisco4",
+                    "nyc_manhattan",
                     desiredAcc,
                     args.cplexpath,
-                    args.directory, 
+                    args.directory,
+                    job_id=args.checkpoint_path  # Use checkpoint name to avoid conflicts
                 )
                 # Take rebalancing action in environment
                 new_obs, rebreward, done, info, _, _ = env.reb_step(rebAction)
                 episode_reward += rebreward
-                model.rewards.append(paxreward + rebreward)
+                
+                # Only add to model rewards if not in fixed baseline mode
+                if not args.fix_baseline:
+                    model.rewards.append(paxreward + rebreward)
             else:
                 raise ValueError("Only mode 0, 1, and 2 are allowed")
             
             # track performance over episode
             episode_served_demand += info["served_demand"]
+            episode_unserved_demand += info["unserved_demand"]
             episode_rebalancing_cost += info["rebalancing_cost"]
+            episode_total_revenue += info["revenue"]
+            episode_rejected_demand += info["rejected_demand"]
+            episode_operating_cost += info["operating_cost"]
             episode_waiting += info['served_waiting']
-            actions.append(action_rl)
+            episode_rejection_rates.append(info['rejection_rate'])
+            episode_true_profit += info['true_profit']
+            episode_adjusted_profit += info['adjusted_profit']
+            episode_unprofitable_trips += info['unprofitable_trips']
+            
+            # Track actions and prices
+            if not args.fix_baseline:
+                actions.append(action_rl)
+            
+            # Track price scalar for modes 1 and 2
+            if args.mode == 1:
+                if args.fix_baseline:
+                    # Mode 1: action_rl is array of price scalars (all 0.5)
+                    actions_price.append(np.mean(2 * np.array(action_rl)))
+                else:
+                    # Mode 1: action_rl is just the price scalar for each region
+                    actions_price.append(np.mean(2 * np.array(action_rl)))
+            elif args.mode == 2:
+                if args.fix_baseline:
+                    # Mode 2: action_rl[:, 0] contains price scalars (all 0.5)
+                    actions_price.append(np.mean(2 * np.array(action_rl)[:, 0]))
+                else:
+                    # Mode 2: action_rl[i][0] is the price scalar, action_rl[i][-1] is the rebalancing
+                    actions_price.append(np.mean(2 * np.array(action_rl)[:, 0]))
 
             step += 1
 
-        grad_norms = model.training_step()  # update model after episode and get metrics
+        # Only perform training step if not in fixed baseline mode
+        if not args.fix_baseline:
+            grad_norms = model.training_step()  # update model after episode and get metrics
+        else:
+            # In fixed baseline mode, provide dummy grad norms for logging
+            grad_norms = {
+                "actor_grad_norm": 0.0,
+                "critic_grad_norm": 0.0,
+                "actor_loss": 0.0,
+                "critic_loss": 0.0
+            }
 
         # Get total vehicles for verification
         total_vehicles = env.get_total_vehicles()
@@ -381,21 +549,51 @@ if not args.test:
         # Calculate vehicle discrepancy
         vehicle_discrepancy = abs(total_vehicles - initial_vehicles)
         
-        # Add training metrics to wandb
-        wandb.log({
-        "episode": i_episode + 1,
-        "episode_reward": episode_reward,
-        "episode_served_demand": episode_served_demand,
-        "episode_rebalancing_cost": episode_rebalancing_cost,
-        "episode_waiting_time": episode_waiting/episode_served_demand if episode_served_demand > 0 else 0,
-        "actor_grad_norm": grad_norms['actor_grad_norm'],
-        "critic_grad_norm": grad_norms['critic_grad_norm'],
-        "actor_loss": grad_norms['actor_loss'],
-        "critic_loss": grad_norms['critic_loss'],
-        "total_vehicles": total_vehicles,
-        "initial_vehicles": initial_vehicles,
-        "vehicle_discrepancy": vehicle_discrepancy
-        })
+        # Calculate mean price scalar for the episode (modes 1 and 2 only)
+        mean_price_scalar = 0
+        if args.mode != 0 and len(actions_price) > 0:
+            mean_price_scalar = np.mean(actions_price)
+        
+        # Add training metrics to wandb (organized into sections)
+        log_dict = {
+            "episode": i_episode + 1,
+            
+            # Rewards section
+            "rewards/episode_reward": episode_reward,
+            "rewards/true_profit": episode_true_profit,
+            "rewards/adjusted_profit": episode_adjusted_profit,
+            
+            # Demand section
+            "demand/served": episode_served_demand,
+            "demand/unserved": episode_unserved_demand,
+            "demand/rejected": episode_rejected_demand,
+            "demand/unprofitable_trips": episode_unprofitable_trips,
+            
+            # Revenue and costs section
+            "revenue_costs/total_revenue": episode_total_revenue,
+            "revenue_costs/operating_cost": episode_operating_cost,
+            "revenue_costs/rebalancing_cost": episode_rebalancing_cost,
+            
+            # Service quality section
+            "service/waiting_time": episode_waiting/episode_served_demand if episode_served_demand > 0 else 0,
+            
+            # Training metrics section
+            "training/actor_loss": grad_norms['actor_loss'],
+            "training/critic_loss": grad_norms['critic_loss'],
+            "training/actor_grad_norm": grad_norms['actor_grad_norm'],
+            "training/critic_grad_norm": grad_norms['critic_grad_norm'],
+            
+            # Vehicles section
+            "vehicles/total": total_vehicles,
+            "vehicles/initial": initial_vehicles,
+            "vehicles/discrepancy": vehicle_discrepancy,
+        }
+        
+        # Add price scalar only for modes 1 and 2
+        if args.mode != 0:
+            log_dict["pricing/mean_price_scalar"] = mean_price_scalar
+        
+        wandb.log(log_dict)
 
         # Keep metrics
         epoch_reward_list.append(episode_reward)
@@ -421,13 +619,6 @@ if not args.test:
                 test_reward, test_served_demand, test_rebalancing_cost = model.test_agent(
                     10, env, args.cplexpath, args.directory)
                 model.train()
-
-                # Log test results
-                wandb.log({
-                "test_reward": test_reward,
-                "test_served_demand": test_served_demand, 
-                "test_rebalancing_cost": test_rebalancing_cost
-                })
 
                 if test_reward >= best_reward_test:
                     best_reward_test = test_reward
@@ -460,26 +651,39 @@ else:
                 supply_ratio=args.supply_ratio)
     
     # Create the environment
-    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt)
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, loss_aversion=args.loss_aversion, fix_baseline=args.fix_baseline)
+
+    # Calculate input size based on price type
+    if args.use_od_prices:
+        # OD price matrices: T (future) + 3 (current_avb, queue, demand) + 2*nregion (own and competitor OD prices)
+        input_size = args.look_ahead + 3 + env.nregion
+    else:
+        # Aggregated prices: T (future) + 3 (current_avb, queue, demand) + 2 (own and competitor aggregated prices)
+        input_size = args.look_ahead + 4
 
     # Load the model 
     model = A2C(
             env=env,
-            input_size= args.look_ahead + 4, # 4 features + time encoding
+            input_size=input_size,
             hidden_size=args.hidden_size,
             device=device,
             p_lr=args.p_lr,
             q_lr=args.q_lr,
+            mode = args.mode,
             T = args.look_ahead,
             scale_factor = args.scale_factor,
             json_file=f"data/scenario_{city}.json",
-            mode=args.mode,
-            clip=args.clip,
-            gamma=args.gamma, 
+            actor_clip=args.actor_clip,
+            critic_clip=args.critic_clip,
+            gamma=args.gamma,
+            use_od_prices=args.use_od_prices
         )
 
-    print("load model")
-    model.load_checkpoint(path=f"ckpt/{args.checkpoint_path}.pth")
+    if args.load:
+        print("load checkpoint")
+        checkpoint_path = f"ckpt/{args.checkpoint_path}_running.pth"
+        model.load_checkpoint(path=checkpoint_path)
+        print("loaded checkpoint from", checkpoint_path)
 
     test_episodes = args.max_episodes  # set max number of training episodes
     epochs = trange(test_episodes)  # epoch iterator
@@ -527,7 +731,7 @@ else:
         demand_original_steps.append(env.demand)
         price_original_steps.append(env.price)
 
-        action_rl = [0]*env.nregion        
+        action_rl = None       
         done = False
 
         while not done:
@@ -544,10 +748,11 @@ else:
                 # solve minimum rebalancing distance problem (Step 3 in paper)
                 rebAction = solveRebFlow(
                     env,
-                    "scenario_san_francisco4",
+                    "nyc_manhattan",
                     desiredAcc,
                     args.cplexpath,
-                    args.directory, 
+                    args.directory,
+                    job_id=args.checkpoint_path  # Use checkpoint name to avoid conflicts
                 )
 
                 # Take rebalancing action in environment
@@ -576,10 +781,11 @@ else:
                 # solve minimum rebalancing distance problem (Step 3 in paper)
                 rebAction = solveRebFlow(
                     env,
-                    "scenario_san_francisco4",
+                    "nyc_manhattan",
                     desiredAcc,
                     args.cplexpath,
-                    args.directory, 
+                    args.directory,
+                    job_id=args.checkpoint_path  # Use checkpoint name to avoid conflicts
                 )
 
                 # Take rebalancing action in environment

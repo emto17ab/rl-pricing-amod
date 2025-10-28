@@ -1,164 +1,180 @@
-"""
-A2C-GNN
--------
-This file contains the A2C-GNN specifications. In particular, we implement:
-(1) GNNParser
-    Converts raw environment observations to agent inputs (s_t).
-(2) GNNActor:
-    Policy parametrized by Graph Convolution Networks (Section III-C in the paper)
-(3) GNNCritic:
-    Critic parametrized by Graph Convolution Networks (Section III-C in the paper)
-(4) A2C:
-    Advantage Actor Critic algorithm using a GNN parametrization for both Actor and Critic.
-"""
-
-import numpy as np 
-import torch
+import numpy as np
+import torch 
 from torch import nn
-import torch.nn.functional as F
-from torch.distributions import Dirichlet
+import json
 from torch_geometric.data import Data
-from torch_geometric.nn import GCNConv
-from torch_geometric.nn import global_mean_pool, global_max_pool
-from torch_geometric.utils import grid
+from src.algos.layers import GNNCritic, GNNActor
+import torch.nn.functional as F
 from collections import namedtuple
+from src.algos.reb_flow_solver import solveRebFlow
+from src.misc.utils import dictsum, nestdictsum
 
 SavedAction = namedtuple('SavedAction', ['log_prob', 'value'])
-args = namedtuple('args', ('render', 'gamma', 'log_interval'))
-args.render= True
-args.gamma = 0.97
-args.log_interval = 10
 
-#########################################
-############## PARSER ###################
-#########################################
-
-class GNNParser():
+class GNNParser:
     """
     Parser converting raw environment observations to agent inputs (s_t).
     """
-    def __init__(self, env, T=10, grid_h=4, grid_w=4, scale_factor=0.01):
+
+    def __init__(self, env, T, scale_factor, json_file=None, use_od_prices=False):
         super().__init__()
         self.env = env
         self.T = T
         self.s = scale_factor
-        self.grid_h = grid_h
-        self.grid_w = grid_w
-        
+        self.json_file = json_file
+        self.use_od_prices = use_od_prices
+        if self.json_file is not None:
+            with open(json_file, "r") as file:
+                self.data = json.load(file)
+
     def parse_obs(self, obs):
-        x = torch.cat((
-            torch.tensor([obs[0][n][self.env.time+1]*self.s for n in self.env.region]).view(1, 1, self.env.nregion).float(), 
-            torch.tensor([[(obs[0][n][self.env.time+1] + self.env.dacc[n][t])*self.s for n in self.env.region] \
-                          for t in range(self.env.time+1, self.env.time+self.T+1)]).view(1, self.T, self.env.nregion).float(), 
-            torch.tensor([[sum([(self.env.scenario.demand_input[i,j][t])*(self.env.price[i,j][t])*self.s \
-                          for j in self.env.region]) for i in self.env.region] for t in range(self.env.time+1, self.env.time+self.T+1)]).view(1, self.T, self.env.nregion).float()),
-              dim=1).squeeze(0).view(21, self.env.nregion).T
-        edge_index, pos_coord = grid(height=self.grid_h, width=self.grid_w)
+        acc, time, dacc, demand = obs
+
+        # Current availability at t+1
+        current_avb = torch.tensor([acc[n][self.env.time + 1] * self.s for n in self.env.region]).view(1, 1, self.env.nregion).float()
+
+        # Future availability from t+2 to t+T
+        future_avb = torch.tensor([[(acc[n][self.env.time + 1] + self.env.dacc[n][t])* self.s for n in self.env.region] for t in range(self.env.time + 1, self.env.time + self.T + 1)]).view(1, self.T, self.env.nregion).float()
+
+        # Queue length
+        queue_len = torch.tensor([len(self.env.queue[n]) * self.s for n in self.env.region]).view(1, 1, self.env.nregion).float()
+        
+        # Current demand at t
+        current_demand = torch.tensor([sum([(demand[i, j][time])* self.s for j in self.env.region]) for i in self.env.region]).view(1, 1, self.env.nregion).float()
+
+        if self.use_od_prices:
+            # Current OD prices at t - shape [nregion, nregion] for OD-specific prices
+            current_price = torch.tensor([[(self.env.price[i, j][time])* self.s for j in self.env.region] for i in self.env.region]).view(1, self.env.nregion, self.env.nregion).float()
+            
+            x = torch.cat((current_avb, future_avb, queue_len, current_demand, current_price), dim=1).squeeze(0).view(1 + self.T + 1 + 1 + self.env.nregion, self.env.nregion).T
+        else:
+            # Current price at t
+            current_price = torch.tensor([sum([(self.env.price[i, j][time])* self.s for j in self.env.region]) for i in self.env.region]).view(1, 1, self.env.nregion).float()                   
+
+            x = torch.cat((current_avb, future_avb, queue_len, current_demand, current_price), dim=1).squeeze(0).view(1 + self.T + 1 + 1 + 1, self.env.nregion).T
+              
+        if self.json_file is not None:
+            edge_index = torch.vstack(
+                (
+                    torch.tensor(
+                        [edge["i"] for edge in self.data["topology_graph"]]
+                    ).view(1, -1),
+                    torch.tensor(
+                        [edge["j"] for edge in self.data["topology_graph"]]
+                    ).view(1, -1),
+                )
+            ).long()
+        else:
+            edge_index = torch.cat(
+                (
+                    torch.arange(self.env.nregion).view(1, self.env.nregion),
+                    torch.arange(self.env.nregion).view(1, self.env.nregion),
+                ),
+                dim=0,
+            ).long()
         data = Data(x, edge_index)
         return data
-    
-#########################################
-############## ACTOR ####################
-#########################################
-class GNNActor(nn.Module):
-    """
-    Actor \pi(a_t | s_t) parametrizing the concentration parameters of a Dirichlet Policy.
-    """
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        
-        self.conv1 = GCNConv(in_channels, in_channels)
-        self.lin1 = nn.Linear(in_channels, 32)
-        self.lin2 = nn.Linear(32, 32)
-        self.lin3 = nn.Linear(32, 1)
-    
-    def forward(self, data):
-        out = F.relu(self.conv1(data.x, data.edge_index))
-        x = out + data.x
-        x = F.relu(self.lin1(x))
-        x = F.relu(self.lin2(x))
-        x = self.lin3(x)
-        return x
-
-#########################################
-############## CRITIC ###################
-#########################################
-
-class GNNCritic(nn.Module):
-    """
-    Critic parametrizing the value function estimator V(s_t).
-    """
-    def __init__(self, in_channels, out_channels):
-        super().__init__()
-        
-        self.conv1 = GCNConv(in_channels, in_channels)
-        self.lin1 = nn.Linear(in_channels, 32)
-        self.lin2 = nn.Linear(32, 32)
-        self.lin3 = nn.Linear(32, 1)
-    
-    def forward(self, data):
-        out = F.relu(self.conv1(data.x, data.edge_index))
-        x = out + data.x 
-        x = torch.sum(x, dim=0)
-        x = F.relu(self.lin1(x))
-        x = F.relu(self.lin2(x))
-        x = self.lin3(x)
-        return x
-
-#########################################
-############## A2C AGENT ################
-#########################################
 
 class A2C(nn.Module):
     """
     Advantage Actor Critic algorithm for the AMoD control problem. 
     """
-    def __init__(self, env, input_size, eps=np.finfo(np.float32).eps.item(), device=torch.device("cpu")):
+    def __init__(
+        self,
+        env,
+        input_size,
+        device,
+        hidden_size,
+        T,
+        mode,
+        gamma,
+        p_lr,   # actor learning rate
+        q_lr,   # critic learning rate
+        actor_clip,    # gradient clipping value for actor
+        critic_clip,   # gradient clipping value for critic
+        scale_factor,
+        json_file = None,
+        use_od_prices = False, 
+        eps=np.finfo(np.float32).eps.item()
+    ):
+        
         super(A2C, self).__init__()
+        # Set the environment and related attributes
         self.env = env
+        self.act_dim = env.nregion
+
+        # Set the mode
+        self.mode = mode
+
+        # Set very small number to avoid division by zero
         self.eps = eps
+
+        # Set the input size and hidden size
         self.input_size = input_size
-        self.hidden_size = input_size
+        self.hidden_size = hidden_size
+
+        # Specify the device
         self.device = device
-        
-        self.actor = GNNActor(self.input_size, self.hidden_size)
-        self.critic = GNNCritic(self.input_size, self.hidden_size)
-        self.obs_parser = GNNParser(self.env)
-        
+
+        # Set the Actor and Critic networks
+        self.actor = GNNActor(self.input_size, self.hidden_size, act_dim=self.act_dim, mode=mode)
+        self.critic = GNNCritic(self.input_size, self.hidden_size, act_dim=self.act_dim)
+    
+        # Set the observation parser
+        self.obs_parser = GNNParser(self.env, T=T, json_file=json_file, scale_factor=scale_factor, use_od_prices=use_od_prices)
+
+        # Set learning rates
+        self.p_lr = p_lr
+        self.q_lr = q_lr
+
+        # Inialize the optimizers
         self.optimizers = self.configure_optimizers()
-        
-        # action & reward buffer
+
+        # Set gamma parameter
+        self.gamma = gamma
+
+        # Set gradient clipping values
+        self.actor_clip = actor_clip
+        self.critic_clip = critic_clip
+
+        # Action & reward buffer
         self.saved_actions = []
         self.rewards = []
         self.to(self.device)
-        
-    def forward(self, obs, jitter=1e-20):
-        """
-        forward of both actor and critic
-        """
-        # parse raw environment data in model format
-        x = self.parse_obs(obs).to(self.device)
-        
-        # actor: computes concentration parameters of a Dirichlet distribution
-        a_out = self.actor(x)
-        concentration = F.softplus(a_out).reshape(-1) + jitter
 
-        # critic: estimates V(s_t)
-        value = self.critic(x)
-        return concentration, value
-    
     def parse_obs(self, obs):
         state = self.obs_parser.parse_obs(obs)
         return state
     
-    def select_action(self, obs):
-        concentration, value = self.forward(obs)
+    # Combines select action and forward steps of actor and critic
+    def select_action(self, obs, deterministic=False):
+        # Parse the observation to get the graph data
+        state = self.parse_obs(obs).to(self.device)
+
+        # Forward pass through actor network to get action and log probability        
+        a, logprob, concentration = self.actor(state, deterministic=deterministic)
         
-        m = Dirichlet(concentration)
+        # Forward pass through critic network to get state value estimate
+        value = self.critic(state)
         
-        action = m.sample()
-        self.saved_actions.append(SavedAction(m.log_prob(action), value))
-        return list(action.cpu().numpy())
+        # Only save actions for training (when not deterministic)
+        if not deterministic:
+            self.saved_actions.append(SavedAction(logprob, value))
+    
+        action_np = a.detach().cpu().numpy()
+
+        # Handle different action shapes based on mode:
+        # Mode 0 & 1: shape [nregion, 1] -> flatten to [nregion]
+        # Mode 2: shape [nregion, 2] -> keep as 2D [[price, reb], ...]
+        if action_np.shape[-1] == 1:
+            # Mode 0 or 1: squeeze last dimension
+            action_list = action_np.squeeze(-1).tolist()
+        else:
+            # Mode 2: keep 2D structure
+            action_list = action_np.tolist()
+        
+        # Return the action to be executed in the environment
+        return action_list
 
     def training_step(self):
         R = 0
@@ -170,44 +186,62 @@ class A2C(nn.Module):
         # calculate the true value using rewards returned from the environment
         for r in self.rewards[::-1]:
             # calculate the discounted value
-            R = r + args.gamma * R
+            R = r + self.gamma * R
             returns.insert(0, R)
 
-        returns = torch.tensor(returns)
+        returns = torch.tensor(returns).to(self.device)
         returns = (returns - returns.mean()) / (returns.std() + self.eps)
 
         for (log_prob, value), R in zip(saved_actions, returns):
             advantage = R - value.item()
 
-            # calculate actor (policy) loss 
+            # calculate actor (policy) loss with entropy regularization
             policy_losses.append(-log_prob * advantage)
 
             # calculate critic (value) loss using L1 smooth loss
+            #value_losses.append(F.smooth_l1_loss(value, R.unsqueeze(0)))
             value_losses.append(F.smooth_l1_loss(value, torch.tensor([R]).to(self.device)))
 
-        # take gradient steps
+        # take gradient steps with clipping
         self.optimizers['a_optimizer'].zero_grad()
-        a_loss = torch.stack(policy_losses).sum()
+        a_loss = torch.stack(policy_losses).mean()
         a_loss.backward()
+
+        # Gradient clipping for actor
+        actor_grad_norm = torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.actor_clip)
         self.optimizers['a_optimizer'].step()
         
         self.optimizers['c_optimizer'].zero_grad()
-        v_loss = torch.stack(value_losses).sum()
+        v_loss = torch.stack(value_losses).mean()
         v_loss.backward()
+
+        # Gradient clipping for critic
+        critic_grad_norm = torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.critic_clip)
         self.optimizers['c_optimizer'].step()
         
         # reset rewards and action buffer
         del self.rewards[:]
         del self.saved_actions[:]
-    
+
+        # Return metrics for logging
+        return {
+            "actor_grad_norm": actor_grad_norm.item(),
+            "critic_grad_norm": critic_grad_norm.item(),
+            "actor_loss": a_loss.item(),
+            "critic_loss": v_loss.item()
+        }
+
     def configure_optimizers(self):
+        # Define dictionary to hold the optimizers
         optimizers = dict()
+
+        # Define the optimizers for actor and critic
         actor_params = list(self.actor.parameters())
         critic_params = list(self.critic.parameters())
-        optimizers['a_optimizer'] = torch.optim.Adam(actor_params, lr=1e-3)
-        optimizers['c_optimizer'] = torch.optim.Adam(critic_params, lr=1e-3)
+        optimizers["a_optimizer"] = torch.optim.Adam(actor_params, lr=self.p_lr)
+        optimizers["c_optimizer"] = torch.optim.Adam(critic_params, lr=self.q_lr)
         return optimizers
-    
+
     def save_checkpoint(self, path='ckpt.pth'):
         checkpoint = dict()
         checkpoint['model'] = self.state_dict()
@@ -215,11 +249,101 @@ class A2C(nn.Module):
             checkpoint[key] = value.state_dict()
         torch.save(checkpoint, path)
         
-    def load_checkpoint(self, path='ckpt.pth'):
-        checkpoint = torch.load(path)
-        self.load_state_dict(checkpoint['model'])
+    def load_checkpoint(self, path="ckpt.pth"):
+        checkpoint = torch.load(path, map_location=self.device)
+        model_dict = self.state_dict()
+        pretrained_dict = {
+            k: v for k, v in checkpoint["model"].items() if k in model_dict
+        }
+        model_dict.update(pretrained_dict)
+        self.load_state_dict(model_dict)
         for key, value in self.optimizers.items():
             self.optimizers[key].load_state_dict(checkpoint[key])
     
     def log(self, log_dict, path='log.pth'):
         torch.save(log_dict, path)
+
+    def test_agent(self, test_episodes, env, cplexpath, directory):
+        epochs = range(test_episodes)  # epoch iterator
+        episode_reward = []
+        episode_served_demand = []
+        episode_rebalancing_cost = []
+        for _ in epochs:
+            eps_reward = 0
+            eps_served_demand = 0
+            eps_rebalancing_cost = 0
+            obs = env.reset()
+            action_rl = [0]*env.nregion
+            actions = []
+            done = False
+            while not done:
+
+                if env.mode == 0:
+                    obs, paxreward, done, info, _, _ = env.match_step_simple()
+                    eps_reward += paxreward
+            
+                    action_rl = self.select_action(obs, deterministic=True)  # Choose an action
+                    actions.append(action_rl)
+
+                    # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
+                    desiredAcc = {env.region[i]: int(action_rl[i] *dictsum(env.acc,env.time+1))for i in range(len(env.region))}
+
+                    # solve minimum rebalancing distance problem (Step 3 in paper)
+                    rebAction = solveRebFlow(
+                        env,
+                        "nyc_manhattan",
+                        desiredAcc,
+                        cplexpath,
+                        directory, 
+                    )
+
+                    # Take rebalancing action in environment
+                    _, rebreward, done, _, _, _ = env.reb_step(rebAction)
+                    eps_reward += rebreward
+                    
+                elif env.mode == 1:
+                    obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+                    eps_reward += paxreward
+                    action_rl = self.select_action(obs, deterministic=True)  # Choose an action
+                    env.matching_update()
+
+                elif env.mode == 2:
+                    obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+                    eps_reward += paxreward
+
+                    action_rl = self.select_action(obs, deterministic=True)  # Choose an action)
+
+                    # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
+                    desiredAcc = {
+                        env.region[i]: int(
+                            action_rl[i][-1] * dictsum(env.acc, env.time + 1))
+                        for i in range(len(env.region))
+                    }
+
+                    # solve minimum rebalancing distance problem (Step 3 in paper)
+                    rebAction = solveRebFlow(
+                        env,
+                        "nyc_manhattan",
+                        desiredAcc,
+                        cplexpath,
+                        directory, 
+                    )
+
+                    # Take rebalancing action in environment
+                    _, rebreward, done, info, _, _ = env.reb_step(rebAction)
+                    eps_reward += rebreward 
+                else:
+                    raise ValueError("Only mode 0, 1, and 2 are allowed")  
+                   
+                eps_served_demand += info["served_demand"]
+                eps_rebalancing_cost += info["rebalancing_cost"]
+                
+            episode_reward.append(eps_reward)
+            episode_served_demand.append(eps_served_demand)
+            episode_rebalancing_cost.append(eps_rebalancing_cost)
+
+        return (
+            np.mean(episode_reward),
+            np.mean(episode_served_demand),
+            np.mean(episode_rebalancing_cost),
+        )

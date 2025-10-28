@@ -6,7 +6,7 @@ from tqdm import trange
 import numpy as np
 from src.misc.utils import dictsum, nestdictsum
 import copy, os
-from src.algos.reb_flow_solver_multi import solveRebFlow
+from src.algos.reb_flow_solver_multi_agent import solveRebFlow
 import json, pickle
 import wandb
 from dotenv import load_dotenv
@@ -168,7 +168,7 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
 
 # Define calibrated simulation parameters
 demand_ratio = {'san_francisco': 2, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1.8,
-                'nyc_man_south': 1.8, 'nyc_brooklyn': 9, 'nyc_manhattan': 0.05, 'porto': 4, 'rome': 1.8, 'shenzhen_baoan': 2.5,
+                'nyc_man_south': 1.8, 'nyc_brooklyn': 9, 'nyc_manhattan': 2, 'porto': 4, 'rome': 1.8, 'shenzhen_baoan': 2.5,
                 'shenzhen_downtown_west': 2.5, 'shenzhen_downtown_east': 3, 'shenzhen_north': 3
                }
 json_hr = {'san_francisco':19, 'washington_dc': 19, 'chicago': 19, 'nyc_man_north': 19, 'nyc_man_middle': 19,
@@ -203,7 +203,7 @@ parser.add_argument(
     help="demand_ratio (default: 1)",
 )
 parser.add_argument(
-    "--json_hr", type=int, default=7, metavar="S", help="json_hr (default: 7)"
+    "--json_hr", type=int, default=19, metavar="S", help="json_hr (default: 19)"
 )
 parser.add_argument(
     "--json_tstep",
@@ -215,8 +215,8 @@ parser.add_argument(
 parser.add_argument(
     '--mode', 
     type=int, 
-    default=1,
-    help='rebalancing mode. (0:manul, 1:pricing, 2:both. default 1)',
+    default=2,
+    help='rebalancing mode. (0:manul, 1:pricing, 2:both. default 2)',
 )
 
 parser.add_argument(
@@ -250,9 +250,9 @@ parser.add_argument(
 parser.add_argument(
     "--max_episodes",
     type=int,
-    default=10000,
+    default=15000,
     metavar="N",
-    help="number of episodes to train agent (default: 10k)",
+    help="number of episodes to train agent (default: 15k)",
 )
 parser.add_argument(
     "--max_steps",
@@ -324,21 +324,21 @@ parser.add_argument(
 parser.add_argument(
     "--p_lr",
     type=float,
-    default=1e-3,
-    help="learning rate for policy network (default: 1e-3)",
+    default=1e-4,
+    help="learning rate for policy network (default: 1e-4)",
 )
 
 parser.add_argument(
     "--q_lr",
     type=float,
-    default=1e-3,
-    help="learning rate for Q networks (default: 1e-3)",
+    default=1e-4,
+    help="learning rate for Q networks (default: 1e-4)",
 )
 
 parser.add_argument(
     "--city",
     type=str,
-    default="san_francisco",
+    default="nyc_manhattan",
     help="city to train on",
 )
 
@@ -618,7 +618,7 @@ if not args.test:
 
                 # Compute rebalancing flows for both agents
                 rebAction = {
-                    a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode)
+                    a: solveRebFlow(env, "nyc_manhattan", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode)
                     for a in [0, 1]
                 }
                 
@@ -626,7 +626,7 @@ if not args.test:
                 episode_reward = {a: episode_reward[a] + rebreward[a] for a in [0, 1]}
                 
                 for agent_id in [0, 1]:
-                    model_agents[agent_id].rewards.append(paxreward[agent_id] + rebreward[agent_id])
+                    model_agents[agent_id].rewards.append((paxreward[agent_id] + rebreward[agent_id]))
 
             elif env.mode == 1:
                 obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
@@ -734,7 +734,7 @@ if not args.test:
                 # --- Rebalancing step ---
                 # Compute rebalancing flows for both agents
                 rebAction = {
-                    a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode)
+                    a: solveRebFlow(env, "nyc_manhattan", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode)
                     for a in [0, 1]
                 }
             
@@ -742,7 +742,7 @@ if not args.test:
             
                 episode_reward = {a: episode_reward[a] + rebreward[a] for a in [0, 1]}
                 for agent_id in [0, 1]:
-                    model_agents[agent_id].rewards.append(paxreward[agent_id] + rebreward[agent_id])
+                    model_agents[agent_id].rewards.append((paxreward[agent_id] + rebreward[agent_id]))
             else:
                 raise ValueError("Only mode 0, 1, and 2 are allowed")
 
@@ -771,13 +771,21 @@ if not args.test:
                     "actor_grad_norm": 0.0,
                     "critic_grad_norm": 0.0,
                     "actor_loss": 0.0,
-                    "critic_loss": 0.0
+                    "critic_loss": 0.0,
+                    "actor_grad_norm_before_clip": 0.0,
+                    "critic_grad_norm_before_clip": 0.0,
+                    "advantage_mean": 0.0,
+                    "advantage_std": 0.0,
+                    "value_mean": 0.0,
+                    "value_std": 0.0,
+                    "log_prob_mean": 0.0,
+                    "log_prob_std": 0.0,
+                    "return_mean": 0.0,
+                    "return_std": 0.0,
                 }
                 # Clear the fixed agent's buffers without updating
                 model_agents[a].rewards = []
                 model_agents[a].saved_actions = []
-                model_agents[a].saved_values = []
-                model_agents[a].saved_logprobs = []
             else:
                 grad_norms[a] = model_agents[a].training_step()  # update model after episode and get metrics
 
@@ -830,6 +838,19 @@ if not args.test:
         "agent0/critic_grad_norm": grad_norms[0]["critic_grad_norm"],
         "agent0/actor_loss": grad_norms[0]["actor_loss"],
         "agent0/critic_loss": grad_norms[0]["critic_loss"],
+        # New diagnostic metrics for Agent 0
+        "agent0/actor_grad_norm_before_clip": grad_norms[0]["actor_grad_norm_before_clip"],
+        "agent0/critic_grad_norm_before_clip": grad_norms[0]["critic_grad_norm_before_clip"],
+        "agent0/advantage_mean": grad_norms[0]["advantage_mean"],
+        "agent0/advantage_std": grad_norms[0]["advantage_std"],
+        "agent0/value_mean": grad_norms[0]["value_mean"],
+        "agent0/value_std": grad_norms[0]["value_std"],
+        "agent0/log_prob_mean": grad_norms[0]["log_prob_mean"],
+        "agent0/log_prob_std": grad_norms[0]["log_prob_std"],
+        "agent0/return_mean": grad_norms[0]["return_mean"],
+        "agent0/return_std": grad_norms[0]["return_std"],
+        "agent0/concentration_max": grad_norms[0]["concentration_max"],
+        "agent0/concentration_min": grad_norms[0]["concentration_min"],
         # Agent 0 profitability metrics
         "agent0/true_profit": episode_true_profit[0],
         "agent0/adjusted_profit": episode_adjusted_profit[0],
@@ -847,6 +868,19 @@ if not args.test:
         "agent1/critic_grad_norm": grad_norms[1]["critic_grad_norm"],
         "agent1/actor_loss": grad_norms[1]["actor_loss"],
         "agent1/critic_loss": grad_norms[1]["critic_loss"],
+        # New diagnostic metrics for Agent 1
+        "agent1/actor_grad_norm_before_clip": grad_norms[1]["actor_grad_norm_before_clip"],
+        "agent1/critic_grad_norm_before_clip": grad_norms[1]["critic_grad_norm_before_clip"],
+        "agent1/advantage_mean": grad_norms[1]["advantage_mean"],
+        "agent1/advantage_std": grad_norms[1]["advantage_std"],
+        "agent1/value_mean": grad_norms[1]["value_mean"],
+        "agent1/value_std": grad_norms[1]["value_std"],
+        "agent1/log_prob_mean": grad_norms[1]["log_prob_mean"],
+        "agent1/log_prob_std": grad_norms[1]["log_prob_std"],
+        "agent1/return_mean": grad_norms[1]["return_mean"],
+        "agent1/return_std": grad_norms[1]["return_std"],
+        "agent1/concentration_max": grad_norms[1]["concentration_max"],
+        "agent1/concentration_min": grad_norms[1]["concentration_min"],
         # Agent 1 profitability metrics
         "agent1/true_profit": episode_true_profit[1],
         "agent1/adjusted_profit": episode_adjusted_profit[1],
@@ -1030,7 +1064,7 @@ else:
                 critic_clip=args.critic_clip,
                 gamma=args.gamma,
                 agent_id = a,
-                use_od_prices = args.use_od_prices
+                use_od_prices = args.use_od_prices,
             )
             for a in [0, 1]
         }

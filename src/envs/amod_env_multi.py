@@ -4,9 +4,9 @@ import numpy as np
 import subprocess
 import os
 import networkx as nx
-from src.misc.utils2 import mat2str
-from src.misc.helper_functions2 import demand_update
-from src.envs.structures2 import generate_passenger
+from src.misc.utils import mat2str
+from src.misc.helper_functions import demand_update
+from src.envs.structures import generate_passenger
 from copy import deepcopy
 import json
 import random
@@ -14,7 +14,7 @@ import random
 class AMoD:
     # initialization
     # updated to take scenario and beta (cost for rebalancing) as input
-    def __init__(self, scenario, mode, beta, jitter, max_wait, choice_price_mult, seed, fix_agent=2, loss_aversion=2.0):
+    def __init__(self, scenario, mode, beta, jitter, max_wait, choice_price_mult, seed, loss_aversion, fix_agent):
         # Setting the scenario
         self.scenario = deepcopy(scenario)
 
@@ -185,7 +185,7 @@ class AMoD:
         # - rejection_rate: ratio of rejected to total demand
         self.agent_info = {agent_id: dict.fromkeys(['revenue', 'served_demand', 'unserved_demand',
                                     'rebalancing_cost', 'operating_cost', 'served_waiting', 
-                                    'rejected_demand', 'rejection_rate'], 0) 
+                                    'rejected_demand', 'rejection_rate', 'true_profit', 'adjusted_profit'], 0) 
                     for agent_id in self.agents}
 
         # Multi-agent external rewards (operating costs): ext_reward[agent_id] = np.array of external rewards per region
@@ -263,7 +263,7 @@ class AMoD:
                 ####################### Choice Model Implementation #################
                 d_original = d  # before applying choice model
 
-                 #--Choice Model--
+                #--Choice Model--
                 
                 pr0 = self.agent_price[0][n, j][t]
                 pr1 = self.agent_price[1][n, j][t]
@@ -281,8 +281,8 @@ class AMoD:
                 income_effect = 25 / wage
 
                 # Compute utilities for all agents
-                U_0 = 13.5 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr0
-                U_1 = 13.5 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr1
+                U_0 = 7.84 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr0
+                U_1 = 7.84 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr1
                 
                 # Always include both agents in the choice set
                 # (Fixed agent will use base price due to scalar 0.5)
@@ -418,12 +418,6 @@ class AMoD:
                             self.agent_info[agent_id]['served_demand'] += 1
                             self.agent_info[agent_id]['operating_cost'] += trip_cost
                             self.agent_info[agent_id]['served_waiting'] += wait_t
-                            
-                            # Track profitability metrics
-                            if 'true_profit' not in self.agent_info[agent_id]:
-                                self.agent_info[agent_id]['true_profit'] = 0
-                                self.agent_info[agent_id]['adjusted_profit'] = 0
-                            
                             self.agent_info[agent_id]['true_profit'] += base_reward
                             self.agent_info[agent_id]['adjusted_profit'] += adjusted_reward
                         else:
@@ -739,7 +733,7 @@ class AMoD:
         # Reset multi-agent info tracking
         self.agent_info = {agent_id: dict.fromkeys(['revenue', 'served_demand', 'unserved_demand',
                                     'rebalancing_cost', 'operating_cost', 'served_waiting', 
-                                    'rejected_demand', 'rejection_rate'], 0) 
+                                    'rejected_demand', 'rejection_rate', "true_profit", "adjusted_profit"], 0) 
                     for agent_id in self.agents}
         
         
@@ -754,7 +748,7 @@ class AMoD:
 
 class Scenario:
     def __init__(self, N1=2, N2=4, tf=60, sd=None, ninit=5, tripAttr=None, demand_input=None, demand_ratio=None, supply_ratio=1,
-                 trip_length_preference=0.25, grid_travel_time=1, fix_price=True, alpha=0.0, json_file=None, json_hr=9, json_tstep=3, varying_time=False, json_regions=None, impute=False):
+                 trip_length_preference=0.25, grid_travel_time=1, fix_price=True, alpha=0.0, json_file=None, json_hr=19, json_tstep=3, varying_time=False, json_regions=None, impute=False):
         # trip_length_preference: positive - more shorter trips, negative - more longer trips
         # grid_travel_time: travel time between grids
         # demand_input： list - total demand out of each region,
