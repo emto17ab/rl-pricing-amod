@@ -11,7 +11,7 @@ from collections import defaultdict
 from src.misc.utils import mat2str
 
 
-def solveRebFlow(env, res_path, desiredAcc, CPLEXPATH, directory):
+def solveRebFlow(env, res_path, desiredAcc, CPLEXPATH, directory, job_id=None):
     t = env.time
     accRLTuple = [(n, int(desiredAcc[n])) for n in desiredAcc]
     accTuple = [(n, int(env.acc[n][t+1])) for n in env.acc]
@@ -30,9 +30,11 @@ def solveRebFlow(env, res_path, desiredAcc, CPLEXPATH, directory):
     except Exception as e:
         print(f"Error creating output directory {OPTPath}: {e}")
         raise e
-        
-    datafile = OPTPath + f'data_{t}.dat'
-    resfile = OPTPath + f'res_{t}.dat'
+    
+    # Use job_id to make filenames unique across parallel jobs
+    file_suffix = f"_{job_id}_{t}" if job_id else f"_{t}"
+    datafile = OPTPath + f'data{file_suffix}.dat'
+    resfile = OPTPath + f'res{file_suffix}.dat'
     # Write data file with error handling
     try:
         with open(datafile, 'w') as file:
@@ -53,7 +55,7 @@ def solveRebFlow(env, res_path, desiredAcc, CPLEXPATH, directory):
         CPLEXPATH = "/opt/ibm/ILOG/CPLEX_Studio128/opl/bin/x86-64_linux/"
     my_env = os.environ.copy()
     my_env["LD_LIBRARY_PATH"] = CPLEXPATH
-    out_file = OPTPath + f'out_{t}.dat'
+    out_file = OPTPath + f'out{file_suffix}.dat'
     
     # Add error handling and better debugging with retry logic
     max_retries = 3

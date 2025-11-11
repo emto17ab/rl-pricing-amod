@@ -1,0 +1,16 @@
+====================================================================================================
+GRADIENT EXPLOSION DIAGNOSTIC LOG - Agent 1
+Purpose: Understand what causes gradient explosions through data
+====================================================================================================
+Job ID: 26750677
+Timestamp: 20251031_123001
+Configuration:
+  - Actor gradient clip: 500.0
+  - Critic gradient clip: 500.0
+  - Gamma: 0.97
+  - Actor LR: 0.0001
+  - Critic LR: 0.0001
+  - Log prob aggregation: MEAN (scale-invariant)
+  - Entropy regularization: ENABLED (prevents peaked distributions)
+====================================================================================================
+

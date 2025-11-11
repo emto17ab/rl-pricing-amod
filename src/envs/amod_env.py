@@ -20,29 +20,29 @@ import random
 class AMoD:
     # initialization
     # updated to take scenario and beta (cost for rebalancing) as input
-    def __init__(self, scenario, mode, beta=0.2, jitter=0, max_wait=2):
+    def __init__(self, scenario, mode, beta, jitter, max_wait, choice_price_mult, seed, loss_aversion, fix_baseline=False):
         # I changed it to deep copy so that the scenario input is not modified by env
         self.scenario = deepcopy(scenario)
         self.mode = mode  # Mode of rebalancing (0:manul, 1:pricing, 2:both. default 1)
         self.jitter = jitter # Jitter for zero demand
         self.max_wait = max_wait # Maximum passenger waiting time
+        self.fix_baseline = fix_baseline  # Fix baseline behavior (base price + initial distribution)
+        # Add loss aversion parameter for unprofitable trip penalty
+        self.loss_aversion = loss_aversion  # Multiplier for loss penalty (λ)
+        self.unprofitable_trips = 0
         self.G = scenario.G  # Road Graph: node - regiocon'dn, edge - connection of regions, node attr: 'accInit', edge attr: 'time'
         self.demandTime = self.scenario.demandTime
         self.rebTime = self.scenario.rebTime
         self.time = 0  # current time
         self.tf = scenario.tf  # final time
-        # TODO: set tstep if the scenario is not based on real data
         self.tstep = scenario.tstep
         self.passenger = dict()  # passenger arrivals
         self.queue = defaultdict(list)  # passenger queue at each station
         self.demand = defaultdict(dict)  # demand
-        self.depDemand = dict()
-        self.arrDemand = dict()
         self.region = list(self.G)  # set of regions
         for i in self.region:
             self.passenger[i] = defaultdict(list)
-            self.depDemand[i] = defaultdict(float)
-            self.arrDemand[i] = defaultdict(float)
+
 
         self.price = defaultdict(dict)  # price
         self.arrivals = 0  # total number of added passengers
@@ -50,9 +50,7 @@ class AMoD:
         for i, j, t, d, p in scenario.tripAttr:
             self.demand[i, j][t] = d
             self.price[i, j][t] = p
-            self.depDemand[i][t] += d
-            # ???self.arrDemand[j][t+self.demandTime[i,j][t]] += d
-            self.arrDemand[i][t+self.demandTime[i, j][t]] += d
+            
         # number of vehicles within each region, key: i - region, t - time
         self.acc = defaultdict(dict)
         # number of vehicles arriving at each region, key: i - region, t - time
@@ -65,17 +63,14 @@ class AMoD:
         self.paxWait = defaultdict(list)
         self.edges = []  # set of rebalancing edges
         self.nregion = len(scenario.G)  # number of regions
-
         # Set all edges
         for i in self.G:
             self.edges.append((i, i))
             for e in self.G.out_edges(i):
                 self.edges.append(e)
         self.edges = list(set(self.edges))
-
         # number of edges leaving each region
         self.nedge = [len(self.G.out_edges(n))+1 for n in self.region]
-
         # set rebalancing time for each link
         for i, j in self.G.edges:
             self.G.edges[i, j]['time'] = self.rebTime[i, j][self.time]
@@ -84,10 +79,13 @@ class AMoD:
         for i, j in self.demand:
             self.paxFlow[i, j] = defaultdict(float)
             self.paxWait[i, j] = []
+        # Store initial vehicle distribution for fixed baseline mode
+        self.initial_acc = {}
         for n in self.region:
-            self.acc[n][0] = self.G.nodes[n]['accInit']
+            initial_count = self.G.nodes[n]['accInit']
+            self.acc[n][0] = initial_count
+            self.initial_acc[n] = initial_count  # Store for fixed baseline
             self.dacc[n] = defaultdict(float)
-
         # scenario.tstep: number of steps as one timestep
         self.beta = beta * scenario.tstep
         t = self.time
@@ -99,10 +97,21 @@ class AMoD:
 
         self.N = len(self.region)  # total number of cells
 
-        # add the initialization of info here
+        # add the initialization of info here (agent-specific metrics)
         self.info = dict.fromkeys(['revenue', 'served_demand', 'unserved_demand',
-                                  'rebalancing_cost', 'operating_cost', 'served_waiting'], 0)
+                                    'rebalancing_cost', 'operating_cost', 'served_waiting', 
+                                    'true_profit', 'adjusted_profit'], 0)
+        
+        # System-level info tracking (not agent-specific)
+        # Tracks metrics at the system level:
+        # - rejected_demand: number of passengers who rejected the agent via choice model
+        # - total_demand: total demand generated in the system
+        # - rejection_rate: ratio of rejected demand to total demand
+        self.system_info = dict.fromkeys(['rejected_demand', 'total_demand', 'rejection_rate'], 0)
+
         self.reward = 0
+        self.choice_price_mult = choice_price_mult
+        self.seed = seed
         # observation: current vehicle distribution, time, future arrivals, demand
         self.obs = (self.acc, self.time, self.dacc, self.demand)
 
@@ -115,112 +124,181 @@ class AMoD:
         t = self.time
         self.reward = 0
         self.ext_reward = np.zeros(self.nregion)
+        self.agent_unprofitable_trips = 0
+        
+        # Reset agent-specific info
+        for key in self.info:
+            self.info[key] = 0
+        
+        # Reset system-level info
+        for key in self.system_info:
+            self.system_info[key] = 0
 
-        self.info['served_demand'] = 0  # initialize served demand
-        self.info['unserved_demand'] = 0
-        self.info['served_waiting'] = 0
-        self.info["operating_cost"] = 0  # initialize operating cost
-        self.info['revenue'] = 0
-        self.info['rebalancing_cost'] = 0
+        total_original_demand = 0
+        total_rejected_demand = 0
         
         # Loop over all the regions
         for n in self.region:
-            # Set number of cars at region n at node t
-            accCurrent = self.acc[n][t]
-
             # Loop over all regions j reachacble from regions n
             # Update current queue
             for j in self.G[n]:
-
                 # Set the demand and price
                 d = self.demand[n, j][t]
-                p = self.price[n, j][t]
-
+                
+                # Update price based on agent action or fixed baseline
                 if (price is not None) and (np.sum(price) != 0):
-                    p_ori = p
-                    if p_ori != 0:
-                        if isinstance(price[0], list):
-                            if len(price[0]) == len(price):
-                                p = 2 * p_ori * price[n][j]
-                            else:
-                                p = 2 * p_ori * price[n][0]
-                            d = max(demand_update(d, p, 2 * p_ori, p_ori, self.jitter), 0)    
-                        else:
-                            p = p_ori * price[n] * 2
-                            d = max(demand_update(d, p, 2 * p_ori, p_ori, self.jitter), 0)                    
-                    self.demand[n, j][t] = d
-                    self.price[n, j][t] = p
-                else:
-                    if self.demand[n, j][t] == 0 and self.price[n, j][t]!=0:
-                        self.demand[n, j][t] = self.jitter
-                        d = self.jitter             
+                    # Get baseline price for this O-D pair
+                    baseline_price = self.price[n, j][t]
                     
-                newp, self.arrivals = generate_passenger((n, j, t, d, p), self.max_wait, self.arrivals)
+                    # For fixed baseline mode, always use price scalar of 0.5
+                    # Otherwise, use the learned price scalar from the agent
+                    if self.fix_baseline:
+                        price_scalar = 0.5
+                    else:
+                        price_scalar = price[n]
+                        if isinstance(price_scalar, (list, np.ndarray)):
+                            price_scalar = price_scalar[0]
+                        
+                    # Calculate proposed price (multiply by 2 to allow range [0, 2×baseline])
+                    p = 2 * baseline_price * price_scalar
+                        
+                    # Ensure absolute minimum price (avoid zero prices)
+                    if p <= 1e-6:
+                        p = self.jitter
+                    
+                    self.price[n, j][t] = p
 
+                ####################### Choice Model Implementation #################
+                d_original = d  # before applying choice model
+                
+                current_price = self.price[n, j][t]
+                travel_time = self.demandTime[n, j][t]
+                travel_time_in_hours = travel_time / 60
+                U_reject = 0
+
+                exp_utilities = []
+                labels = []
+
+                wage = 25
+
+                income_effect = 25 / wage
+
+                utility_agent = 7.84 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * current_price
+
+                exp_utilities.append(np.exp(utility_agent))
+                labels.append("agent")
+                # Always include reject option
+                exp_utilities.append(np.exp(U_reject))
+                labels.append("reject")
+                Probabilities = np.array(exp_utilities) / np.sum(exp_utilities)
+                labels_array = np.array(labels)
+
+                d_agent=d_reject=0
+
+                # Use choice model with appropriate choice set
+                if d_original > 0:
+                    for _ in range(d_original):
+                        choice = np.random.choice(labels_array, p=Probabilities)
+                        if choice == "agent":
+                            d_agent += 1
+                        elif choice == "reject":
+                            d_reject += 1
+
+
+                self.demand[n, j][t] = d_agent
+
+                newp, self.arrivals = generate_passenger(
+                    (n, j, t, d_agent, current_price), self.max_wait, self.arrivals)
                 self.passenger[n][t].extend(newp)
                 # shuffle passenger list at station so that the passengers are not served in destination order
                 random.Random(42).shuffle(self.passenger[n][t])
 
+                total_original_demand += d_original
+                total_rejected_demand += d_reject
+
+            # Set number of cars at region n at node t
+            accCurrent = self.acc[n][t]
             new_enterq = [pax for pax in self.passenger[n][t] if pax.enter()]
             queueCurrent = self.queue[n] + new_enterq
             self.queue[n] = queueCurrent
             # Match passenger in queue in order
             matched_leave_index = []  # Index of matched and leaving passenger in queue
+
             for i, pax in enumerate(queueCurrent):
                 if accCurrent != 0:
                     accept = pax.match(t)
                     if accept:
                         matched_leave_index.append(i)
                         accCurrent -= 1
-                        self.paxFlow[pax.origin, pax.destination][t +
-                                                                  self.demandTime[pax.origin, pax.destination][t]] += 1
-                        self.paxWait[pax.origin, pax.destination].append(pax.wait_time)                                                                  
-                        self.dacc[pax.destination][t +
-                                                   self.demandTime[pax.origin, pax.destination][t]] += 1
+                        arr_t = t + self.demandTime[pax.origin, pax.destination][t]
+                        self.paxFlow[pax.origin, pax.destination][arr_t] += 1
+
+                        wait_t = pax.wait_time
+                        self.paxWait[pax.origin, pax.destination].append(wait_t)
+
+                        self.dacc[pax.destination][arr_t] += 1
+
                         self.servedDemand[pax.origin, pax.destination][t] += 1
-                        self.reward += pax.price - \
-                            self.demandTime[pax.origin,
-                                            pax.destination][t]*self.beta
-                        self.ext_reward[n] += max(
-                            0, (self.demandTime[pax.origin, pax.destination][t]*self.beta))
 
-                        self.info['revenue'] += pax.price
+                        trip_revenue = pax.price
+                        trip_cost = self.demandTime[pax.origin, pax.destination][t] * self.beta
+
+                        # Calculate profitability-aware reward
+                        base_reward = trip_revenue - trip_cost
+
+                        # Penalty for unprofitable trips (loss aversion)
+                        if base_reward < 0:
+                            self.unprofitable_trips += 1
+                            loss_penalty = self.loss_aversion * (base_reward ** 2)
+                            adjusted_reward = base_reward - loss_penalty
+                        else:
+                            adjusted_reward = base_reward
+
+                        self.reward += adjusted_reward
+
+                        self.ext_reward[n] += max(0, trip_cost)
+
+                        self.info['revenue'] += trip_revenue
                         self.info['served_demand'] += 1
-                        self.info['operating_cost'] += self.demandTime[pax.origin,
-                                                                       pax.destination][t]*self.beta
-                        self.info['served_waiting'] += pax.wait_time
-                    else:
-                        leave = pax.unmatched_update()
-                        if leave:
-                            matched_leave_index.append(i)
-                            self.unservedDemand[pax.origin,
-                                                pax.destination][t] += 1
+                        self.info['operating_cost'] += trip_cost
+                        self.info['served_waiting'] += wait_t
+                        self.info['true_profit'] += base_reward
+                        self.info['adjusted_profit'] += adjusted_reward
 
+                    else:
+                        if pax.unmatched_update():
+                            matched_leave_index.append(i)
+                            self.unservedDemand[pax.origin, pax.destination][t] += 1
                             self.info['unserved_demand'] += 1
                 else:
-                    leave = pax.unmatched_update()
-                    if leave:
+                    if pax.unmatched_update():
                         matched_leave_index.append(i)
-                        self.unservedDemand[pax.origin,
-                                            pax.destination][t] += 1
-
+                        self.unservedDemand[pax.origin, pax.destination][t] += 1
                         self.info['unserved_demand'] += 1
+
             # Update queue
             self.queue[n] = [self.queue[n][i] for i in range(
                 len(self.queue[n])) if i not in matched_leave_index]
             # Update acc
             self.acc[n][t+1] = accCurrent
+        
+        done = (self.tf == t+1)
+        ext_done = [done]*self.nregion
 
         # for acc, the time index would be t+1, but for demand, the time index would be t
         self.obs = (self.acc, self.time, self.dacc, self.demand)
-        # if (self.mode == 0) | (self.mode == 2):
-        #     done = False  # if rebalancing needs to be carried out after
-        # elif self.mode == 1:
-        #     done = (self.tf == t+1)
-        done = (self.tf == t+1)
 
-        ext_done = [done]*self.nregion
-        return self.obs, max(0, self.reward), done, self.info, self.ext_reward, ext_done
+        # Update system-level info
+        self.system_info['rejected_demand'] = total_rejected_demand
+        self.system_info['total_demand'] = total_original_demand
+        self.system_info['rejection_rate'] = (
+            total_rejected_demand / total_original_demand if total_original_demand > 0 else 0
+        )
+        
+        # Add unprofitable trips count to agent info
+        self.info['unprofitable_trips'] = self.unprofitable_trips
+
+        return self.obs, self.reward, done, self.info, self.system_info, self.ext_reward, ext_done
 
     def matching_update(self):
         """Update properties if there is no rebalancing after matching"""
@@ -230,98 +308,8 @@ class AMoD:
             i, j = self.edges[k]
             if (i, j) in self.paxFlow and t in self.paxFlow[i, j]:
                 self.acc[j][t+1] += self.paxFlow[i, j][t]
-
+        
         self.time += 1
-
-    def matching(self, CPLEXPATH=None, PATH='', directory="saved_files", platform='linux'):
-        t = self.time
-        demandAttr = [(i, j, self.demand[i, j][t], self.price[i, j][t]) for i, j in self.demand
-                      if t in self.demand[i, j] and self.demand[i, j][t] > 1e-3]
-        self.arrivals += sum([i[2] for i in demandAttr])
-        accTuple = [(n, self.acc[n][t+1]) for n in self.acc]
-        modPath = os.getcwd().replace('\\', '/')+'/src/cplex_mod/'
-        matchingPath = os.getcwd().replace('\\', '/') + \
-                      '/' + str(directory) + '/cplex_logs/matching/'+PATH + '/'
-        if not os.path.exists(matchingPath):
-            os.makedirs(matchingPath)
-        datafile = matchingPath + 'data_{}.dat'.format(t)
-        resfile = matchingPath + 'res_{}.dat'.format(t)
-        with open(datafile, 'w') as file:
-            file.write('path="'+resfile+'";\r\n')
-            file.write('demandAttr='+mat2str(demandAttr)+';\r\n')
-            file.write('accInitTuple='+mat2str(accTuple)+';\r\n')
-        modfile = modPath+'matching.mod'
-        if CPLEXPATH is None:
-            CPLEXPATH = "C:/Program Files/IBM/ILOG/CPLEX_Studio201/opl/bin/x64_win64/"
-        my_env = os.environ.copy()
-        if platform == 'mac':
-            my_env["DYLD_LIBRARY_PATH"] = CPLEXPATH
-        else:
-            my_env["LD_LIBRARY_PATH"] = CPLEXPATH
-        out_file = matchingPath + 'out_{}.dat'.format(t)
-        with open(out_file, 'w') as output_f:
-            subprocess.check_call(
-                [CPLEXPATH+"oplrun", modfile, datafile], stdout=output_f, env=my_env)
-        output_f.close()
-        flow = defaultdict(float)
-        with open(resfile, 'r', encoding="utf8") as file:
-            for row in file:
-                item = row.replace('e)', ')').strip().strip(';').split('=')
-                if item[0] == 'flow':
-                    values = item[1].strip(')]').strip('[(').split(')(')
-                    for v in values:
-                        if len(v) == 0:
-                            continue
-                        i, j, f = v.split(',')
-                        flow[int(i), int(j)] = float(f)
-        paxAction = [flow[i, j] if (
-            i, j) in flow else 0 for i, j in self.edges]
-        return paxAction
-
-    # pax step
-    def pax_step(self, paxAction=None, CPLEXPATH=None, directory="saved_files", PATH='', platform='linux'):
-        t = self.time
-        self.reward = 0
-        self.ext_reward = np.zeros(self.nregion)
-        for i in self.region:
-            self.acc[i][t+1] = self.acc[i][t]
-        self.info['served_demand'] = 0  # initialize served demand
-        self.info["operating_cost"] = 0  # initialize operating cost
-        self.info['revenue'] = 0
-        self.info['rebalancing_cost'] = 0
-        # default matching algorithm used if isMatching is True, matching method will need the information of self.acc[t+1], therefore this part cannot be put forward
-        if paxAction is None:
-            paxAction = self.matching(
-                CPLEXPATH=CPLEXPATH, directory=directory, PATH=PATH, platform=platform)
-        self.paxAction = paxAction
-        # serving passengers
-
-        for k in range(len(self.edges)):
-            i, j = self.edges[k]
-            if (i, j) not in self.demand or t not in self.demand[i, j] or self.paxAction[k] < 1e-3:
-                continue
-            # I moved the min operator above, since we want paxFlow to be consistent with paxAction
-            self.paxAction[k] = min(self.acc[i][t+1], paxAction[k])
-            assert paxAction[k] < self.acc[i][t+1] + 1e-3
-            self.servedDemand[i, j][t] = self.paxAction[k]
-            self.paxFlow[i, j][t+self.demandTime[i, j][t]] = self.paxAction[k]
-            self.info["operating_cost"] += self.demandTime[i,
-                                                           j][t]*self.beta*self.paxAction[k]
-            self.acc[i][t+1] -= self.paxAction[k]
-            self.info['served_demand'] += self.servedDemand[i, j][t]
-            self.dacc[j][t+self.demandTime[i, j][t]
-                         ] += self.paxFlow[i, j][t+self.demandTime[i, j][t]]
-            self.reward += self.paxAction[k] * \
-                (self.price[i, j][t] - self.demandTime[i, j][t]*self.beta)
-            self.ext_reward[i] += max(0, self.paxAction[k] *
-                                      (self.price[i, j][t] - self.demandTime[i, j][t]*self.beta))
-            self.info['revenue'] += self.paxAction[k]*(self.price[i, j][t])
-
-        # for acc, the time index would be t+1, but for demand, the time index would be t
-        self.obs = (self.acc, self.time, self.dacc, self.demand)
-        done = False  # if passenger matching is executed first
-        ext_done = [done]*self.nregion
-        return self.obs, max(0, self.reward), done, self.info, self.ext_reward, ext_done
 
     # reb step
     def reb_step(self, rebAction):
@@ -366,7 +354,41 @@ class AMoD:
             self.G.edges[i, j]['time'] = self.rebTime[i, j][self.time]
         done = (self.tf == t+1)  # if the episode is completed
         ext_done = [done]*self.nregion
-        return self.obs, self.reward, done, self.info, self.ext_reward, ext_done
+        return self.obs, self.reward, done, self.info, self.system_info, self.ext_reward, ext_done
+
+    def get_total_vehicles(self):
+        """
+        Calculate total number of vehicles in the system at current time.
+        Includes: available vehicles + vehicles with passengers + rebalancing vehicles
+        """
+        t = self.time
+        total = 0
+        
+        # Count available vehicles at all regions for CURRENT time
+        for region in self.region:
+            # Try current time first, then fallback to t+1
+            if t in self.acc[region]:
+                total += self.acc[region][t]
+            elif t+1 in self.acc[region]:
+                total += self.acc[region][t+1]
+        
+        # Count vehicles with passengers (all current and future arrivals)
+        for (i, j), time_dict in self.paxFlow.items():
+            for time_step, flow in time_dict.items():
+                if time_step >= t:  # Current and future arrivals (vehicles in transit)
+                    total += flow
+        
+        # Count rebalancing vehicles (all current and future arrivals)
+        for (i, j), time_dict in self.rebFlow.items():
+            for time_step, flow in time_dict.items():
+                if time_step >= t:  # Current and future arrivals (vehicles in transit)
+                    total += flow
+        
+        return total
+
+    def get_initial_vehicles(self):
+        """Get the initial number of vehicles in the system"""
+        return sum(self.G.nodes[n]['accInit'] for n in self.G.nodes)
 
     def reset(self):
         # reset the episode
@@ -379,6 +401,32 @@ class AMoD:
         self.passenger = dict()
         self.queue = defaultdict(list)
         self.edges = []
+
+        # Reset reward tracking
+        self.reward = 0
+        self.ext_reward = np.zeros(self.nregion)
+        self.unprofitable_trips = 0
+
+        # Reset agent-specific info dictionary
+        self.info = {
+            'revenue': 0,
+            'served_demand': 0,
+            'unserved_demand': 0,
+            'rebalancing_cost': 0,
+            'operating_cost': 0,
+            'served_waiting': 0,
+            'unprofitable_trips': 0,
+            'true_profit': 0,
+            'adjusted_profit': 0
+        }
+        
+        # Reset system-level info dictionary
+        self.system_info = {
+            'rejected_demand': 0,
+            'total_demand': 0,
+            'rejection_rate': 0
+        }
+
         for i in self.G:
             self.edges.append((i, i))
             for e in self.G.out_edges(i):
@@ -391,6 +439,7 @@ class AMoD:
         self.arrivals = 0
         tripAttr = self.scenario.get_random_demand(reset=True)
         self.regionDemand = defaultdict(dict)
+
         # trip attribute (origin, destination, time of request, demand, price)
         for i, j, t, d, p in tripAttr:
             self.demand[i, j][t] = d
@@ -413,15 +462,12 @@ class AMoD:
         for i, j in self.demand:
             self.servedDemand[i, j] = defaultdict(float)
             self.unservedDemand[i, j] = defaultdict(float)
-         # TODO: define states here
         self.obs = (self.acc, self.time, self.dacc, self.demand)
-        self.reward = 0
         return self.obs
-
 
 class Scenario:
     def __init__(self, N1=2, N2=4, tf=60, sd=None, ninit=5, tripAttr=None, demand_input=None, demand_ratio=None, supply_ratio=1,
-                 trip_length_preference=0.25, grid_travel_time=1, fix_price=True, alpha=0.2, json_file=None, json_hr=9, json_tstep=3, varying_time=False, json_regions=None, impute=False):
+                 trip_length_preference=0.25, grid_travel_time=1, fix_price=True, alpha=0.0, json_file=None, json_hr=19, json_tstep=3, varying_time=False, json_regions=None, impute=False):
         # trip_length_preference: positive - more shorter trips, negative - more longer trips
         # grid_travel_time: travel time between grids
         # demand_input： list - total demand out of each region,
@@ -445,9 +491,12 @@ class Scenario:
             self.N2 = N2
             self.G = nx.complete_graph(N1*N2)
             self.G = self.G.to_directed()
+            # Add self-loops to the graph for within-region trips
+            self.G.add_edges_from([(i, i) for i in self.G.nodes])
             self.demandTime = defaultdict(dict)  # traveling time between nodes
             self.rebTime = defaultdict(dict)
-            self.edges = list(self.G.edges) + [(i, i) for i in self.G.nodes]
+            # Self-loops are now part of G.edges, no need to add them separately
+            self.edges = list(self.G.edges)
             self.tstep = json_tstep
             for i, j in self.edges:
                 for t in range(tf*2):
@@ -456,7 +505,6 @@ class Scenario:
                     self.rebTime[i, j][t] = (
                         (abs(i//N1-j//N1) + abs(i % N1-j % N1))*grid_travel_time)
 
-            # Set 
             for n in self.G.nodes:
                 # initial number of vehicles at station
                 self.G.nodes[n]['accInit'] = int(ninit)
@@ -524,6 +572,8 @@ class Scenario:
                 self.G = nx.complete_graph(self.N1*self.N2)
             
             self.G = self.G.to_directed()
+            # Add self-loops to the graph for within-region trips
+            self.G.add_edges_from([(i, i) for i in self.G.nodes])
 
             # Will hold aggregated/averaged prices per OD per time bin (p[(o,d)][t])
             self.p = defaultdict(dict)
@@ -543,25 +593,21 @@ class Scenario:
             # Sets the number of steps per episode (default 20). Hence for each time step we generate a demand, travel time, rebalancing time, and price profile.
             self.tf = tf
 
-            # Add edges from each node to itself (self-loops)
-            self.edges = list(self.G.edges) + [(i, i) for i in self.G.nodes]
+            # Self-loops are now part of G.edges, no need to add them separately
+            self.edges = list(self.G.edges)
 
             # Sets the number of regions based on the graph's nodes (# of regions = # of nodes)
             self.nregion = len(self.G)
 
-            ####################### OOOOOOOOOOBBBBBBBBBBBBSSSSSSSSSSSSSS ############################
-            # THIS DOES NOTHING, WHY IT IS HERE?????????
             for i, j in self.demand_input:
                 self.demandTime[i, j] = defaultdict(int)
                 self.rebTime[i, j] = 1
-            #########################################################################################
-   
+        
             # Creates nregion × nregion numpy array of zeros (default) for time index t. The code will accumulate demand volumes into array cells [o,d]
             matrix_demand = defaultdict(lambda: np.zeros((self.nregion,self.nregion)))
 
             # Similarly stores aggregated (volume-weighted) price sums for each time index.
             matrix_price_ori = defaultdict(lambda: np.zeros((self.nregion,self.nregion)))
-
             # Loops over the data demand file
             for item in data["demand"]:
                 # Sets the variables
@@ -593,7 +639,7 @@ class Scenario:
                     t-self.json_start)//json_tstep] += v*demand_ratio
 
                 # The price p is accumulated in a volume-weighted manner (p*v) for the same OD and time index. 
-                # This is not just summing prices: it’s building a demand-weighted sum. Later we divide by total demand to get average price.
+                # This is not just summing prices: it's building a demand-weighted sum. Later we divide by total demand to get average price.
                 self.p[o, d][(t-self.json_start) //
                              json_tstep] += p*v*demand_ratio
 
@@ -737,27 +783,20 @@ class Scenario:
         # skip this when resetting the demand
         # if not reset:
         if self.is_json:
-            # Loop over the time indicies
             for t in range(0, self.tf*2):
-                # Loop over all the edges
                 for i, j in self.edges:
-                    # check if demand exists for OD pair i,j for time t
                     if (i, j) in self.demand_input and t in self.demand_input[i, j]:
-                        # Sample demand from Poisson with parameter set by demand_input
                         demand[i, j][t] = np.random.poisson(
                             self.demand_input[i, j][t])
-                        # Set price given by p
                         price[i, j][t] = self.p[i, j][t]
-                    # Else set price and demand to 0
                     else:
                         demand[i, j][t] = 0
                         price[i, j][t] = 0
-                    # Append, origin, destination, time, demand at time, price at time
                     tripAttr.append((i, j, t, demand[i, j][t], price[i, j][t]))
         else:
             self.static_demand = dict()
             region_rand = (np.random.rand(len(self.G))*self.alpha *
-                           2+1-self.alpha)  # multiplyer of demand
+                            2+1-self.alpha)  # multiplyer of demand
             if type(self.demand_input) in [float, int, list, np.array]:
 
                 if type(self.demand_input) in [float, int]:
@@ -773,7 +812,7 @@ class Scenario:
                     for idx in range(len(J)):
                         # allocation of demand to OD pairs
                         self.static_demand[i, J[idx]
-                                           ] = self.region_demand[i] * prob[idx]
+                                            ] = self.region_demand[i] * prob[idx]
             elif type(self.demand_input) in [dict, defaultdict]:
                 for i, j in self.edges:
                     self.static_demand[i, j] = self.demand_input[i, j] if (
@@ -798,4 +837,4 @@ class Scenario:
                             2)+1)*self.demandTime[i, j][t]
                     tripAttr.append((i, j, t, demand[i, j][t], price[i, j][t]))
 
-        return tripAttr
+        return tripAttr   

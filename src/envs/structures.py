@@ -71,7 +71,6 @@ def choice_passenger_accept(price, mtype=None):
         else:
             return True
 
-
 def generate_passenger(demand, max_wait=2, arrivals=None):
     """
     Generate passenger according to the demand

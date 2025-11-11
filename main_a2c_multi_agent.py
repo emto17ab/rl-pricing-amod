@@ -6,7 +6,7 @@ from tqdm import trange
 import numpy as np
 from src.misc.utils import dictsum, nestdictsum
 import copy, os
-from src.algos.reb_flow_solver_multi import solveRebFlow
+from src.algos.reb_flow_solver_multi_agent import solveRebFlow
 import json, pickle
 import wandb
 from dotenv import load_dotenv
@@ -29,7 +29,7 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
             while not done:
                 if env.mode == 0:
                     # Make Match Step
-                    obs, paxreward, done, info, _, _ = env.match_step_simple()
+                    obs, paxreward, done, info, system_info, _, _ = env.match_step_simple()
 
                     # Update episode reward
                     eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
@@ -66,12 +66,12 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
                         for a in [0, 1]
                     }
                     
-                    _, rebreward, done, info, _, _ = env.reb_step(rebAction)
+                    _, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
                     eps_reward = {a: eps_reward[a] + rebreward[a] for a in [0, 1]}
                     
                     
                 elif env.mode == 1:
-                    obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+                    obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
 
                     eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
 
@@ -89,7 +89,7 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
                 
                 elif env.mode == 2:
                     # --- Matching step ---
-                    obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+                    obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
                     
                     eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
 
@@ -132,11 +132,64 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
                         for a in [0, 1]
                     }
                 
-                    _, rebreward, done, info, _, _ = env.reb_step(rebAction)
+                    _, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
                 
                     eps_reward = {a: eps_reward[a] + rebreward[a] for a in [0, 1]}
+                
+                elif env.mode == 3:
+                    # === BASELINE MODE: No rebalancing, fixed prices ===
+                    # Use fixed price (scalar = 0.5 for both agents)
+                    action_rl = {
+                        0: np.array([0.5] * env.nregion),
+                        1: np.array([0.5] * env.nregion)
+                    }
+                    
+                    # Matching step with fixed prices
+                    obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
+                    
+                    # Track rewards (no rebalancing cost in baseline)
+                    eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
+                    
+                    # NO rebalancing step - just update vehicle arrivals from completed passenger trips
+                    env.matching_update()
+                
+                elif env.mode == 4:
+                    # === BASELINE MODE: Uniform rebalancing, fixed prices ===
+                    # Use fixed price (scalar = 0.5 for both agents)
+                    action_rl = {
+                        0: np.array([0.5] * env.nregion),
+                        1: np.array([0.5] * env.nregion)
+                    }
+                    
+                    # Matching step with fixed prices
+                    obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
+                    
+                    # Track rewards
+                    eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
+                    
+                    # Uniform rebalancing: distribute vehicles equally across all regions
+                    desiredAcc = {}
+                    for a in [0, 1]:
+                        current_total = dictsum(env.agent_acc[a], env.time + 1)
+                        base_per_region = current_total // env.nregion
+                        remainder = current_total % env.nregion
+                        desiredAcc[a] = {
+                            env.region[i]: base_per_region + (1 if i < remainder else 0)
+                            for i in range(env.nregion)
+                        }
+                    
+                    # Solve rebalancing flows
+                    rebAction = {
+                        a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], cplexpath, directory, a, max_episodes, mode)
+                        for a in [0, 1]
+                    }
+                    
+                    # Execute rebalancing step
+                    _, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
+                    eps_reward = {a: eps_reward[a] + rebreward[a] for a in [0, 1]}
+                
                 else:
-                    raise ValueError("Only mode 0, 1, and 2 are allowed")  
+                    raise ValueError("Only mode 0, 1, 2, 3, and 4 are allowed")  
                    
                 for a in [0, 1]:
                     eps_served_demand[a] += info[a]["served_demand"]
@@ -168,7 +221,7 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
 
 # Define calibrated simulation parameters
 demand_ratio = {'san_francisco': 2, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1.8,
-                'nyc_man_south': 1.8, 'nyc_brooklyn': 9, 'nyc_manhattan': 0.05, 'porto': 4, 'rome': 1.8, 'shenzhen_baoan': 2.5,
+                'nyc_man_south': 1.8, 'nyc_brooklyn': 9, 'nyc_manhattan': 2, 'porto': 4, 'rome': 1.8, 'shenzhen_baoan': 2.5,
                 'shenzhen_downtown_west': 2.5, 'shenzhen_downtown_east': 3, 'shenzhen_north': 3
                }
 json_hr = {'san_francisco':19, 'washington_dc': 19, 'chicago': 19, 'nyc_man_north': 19, 'nyc_man_middle': 19,
@@ -203,7 +256,7 @@ parser.add_argument(
     help="demand_ratio (default: 1)",
 )
 parser.add_argument(
-    "--json_hr", type=int, default=7, metavar="S", help="json_hr (default: 7)"
+    "--json_hr", type=int, default=19, metavar="S", help="json_hr (default: 19)"
 )
 parser.add_argument(
     "--json_tstep",
@@ -215,8 +268,8 @@ parser.add_argument(
 parser.add_argument(
     '--mode', 
     type=int, 
-    default=1,
-    help='rebalancing mode. (0:manul, 1:pricing, 2:both. default 1)',
+    default=2,
+    help='rebalancing mode. (0:manual, 1:pricing, 2:both, 3:baseline (no reb, fixed price), 4:baseline (uniform reb, fixed price). default 2)',
 )
 
 parser.add_argument(
@@ -250,9 +303,9 @@ parser.add_argument(
 parser.add_argument(
     "--max_episodes",
     type=int,
-    default=10000,
+    default=15000,
     metavar="N",
-    help="number of episodes to train agent (default: 10k)",
+    help="number of episodes to train agent (default: 15k)",
 )
 parser.add_argument(
     "--max_steps",
@@ -308,30 +361,37 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    "--clip",
+    "--actor_clip",
     type=float,
     default=500,
-    help="clip value for gradient clipping (default: 500)",
+    help="clip value for actor gradient clipping (default: 500)",
+)
+
+parser.add_argument(
+    "--critic_clip",
+    type=float,
+    default=500,
+    help="clip value for critic gradient clipping (default: 500)",
 )
 
 parser.add_argument(
     "--p_lr",
     type=float,
-    default=1e-3,
-    help="learning rate for policy network (default: 1e-3)",
+    default=1e-4,
+    help="learning rate for policy network (default: 1e-4)",
 )
 
 parser.add_argument(
     "--q_lr",
     type=float,
-    default=1e-3,
-    help="learning rate for Q networks (default: 1e-3)",
+    default=1e-4,
+    help="learning rate for Q networks (default: 1e-4)",
 )
 
 parser.add_argument(
     "--city",
     type=str,
-    default="san_francisco",
+    default="nyc_manhattan",
     help="city to train on",
 )
 
@@ -392,6 +452,13 @@ parser.add_argument(
     help="Use OD price matrices instead of aggregated prices per region (default: False)",
 )
 
+parser.add_argument(
+    "--loss_aversion",
+    type=float,
+    default=2.0,
+    help="Loss aversion multiplier for unprofitable trips (default: 2.0)",
+)
+
 # Parser arguments
 args = parser.parse_args()
 
@@ -423,7 +490,7 @@ if not args.test:
                 supply_ratio=args.supply_ratio)
 
     # Create the environment
-    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_agent=args.fix_agent)
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_agent=args.fix_agent, loss_aversion=args.loss_aversion)
     
     # Print fixed agent information
     if args.fix_agent == 0:
@@ -449,35 +516,54 @@ if not args.test:
         print("- Both agents learn simultaneously")
         print("=" * 80)
 
-    # Calculate input size based on price type
-    if args.use_od_prices:
-        # OD price matrices: T (future) + 3 (current_avb, queue, demand) + 2*nregion (own and competitor OD prices)
-        input_size = args.look_ahead + 3 + 2 * env.nregion
-    else:
-        # Aggregated prices: T (future) + 3 (current_avb, queue, demand) + 2 (own and competitor aggregated prices)
-        input_size = args.look_ahead + 5
-    
-    model_agents = {
-            a: A2C(
-                env=env,
-                input_size=input_size,
-                hidden_size=args.hidden_size,
-                device=device,
-                p_lr=args.p_lr,
-                q_lr=args.q_lr,
-                T = args.look_ahead,
-                scale_factor = args.scale_factor,
-                json_file=f"data/scenario_{city}.json",
-                mode=args.mode,
-                clip=args.clip,
-                gamma=args.gamma,
-                agent_id = a,
-                use_od_prices = args.use_od_prices
-            )
-            for a in [0, 1]
-        }
+    # Only create models if not in baseline mode (mode 3 or 4)
+    if args.mode not in [3, 4]:
+        # Calculate input size based on price type
+        if args.use_od_prices:
+            # OD price matrices: T (future) + 3 (current_avb, queue, demand) + 2*nregion (own and competitor OD prices)
+            input_size = args.look_ahead + 3 + 2 * env.nregion
+        else:
+            # Aggregated prices: T (future) + 3 (current_avb, queue, demand) + 2 (own and competitor aggregated prices)
+            input_size = args.look_ahead + 5
+        
+        model_agents = {
+                a: A2C(
+                    env=env,
+                    input_size=input_size,
+                    hidden_size=args.hidden_size,
+                    device=device,
+                    p_lr=args.p_lr,
+                    q_lr=args.q_lr,
+                    T = args.look_ahead,
+                    scale_factor = args.scale_factor,
+                    json_file=f"data/scenario_{city}.json",
+                    mode=args.mode,
+                    actor_clip=args.actor_clip,
+                    critic_clip=args.critic_clip,
+                    gamma=args.gamma,
+                    agent_id = a,
+                    use_od_prices = args.use_od_prices
+                )
+                for a in [0, 1]
+            }
+    elif args.mode == 3:
+        print("=" * 80)
+        print("BASELINE MODE (Mode 3): No learning, fixed policy")
+        print("- Both agents use BASE PRICE (scalar=0.5)")
+        print("- NO rebalancing performed")
+        print("- Provides baseline for comparison")
+        print("=" * 80)
+        model_agents = None  # No models needed
+    else:  # mode == 4
+        print("=" * 80)
+        print("BASELINE MODE (Mode 4): No learning, fixed policy with uniform rebalancing")
+        print("- Both agents use BASE PRICE (scalar=0.5)")
+        print("- UNIFORM rebalancing (distribute vehicles equally across regions)")
+        print("- Provides baseline for comparison")
+        print("=" * 80)
+        model_agents = None  # No models needed
 
-    if args.load:
+    if args.load and args.mode not in [3, 4]:
         print("load checkpoint")
         for agent_id in [0, 1]:
             checkpoint_path = f"ckpt/{args.checkpoint_path}_agent{agent_id+1}_running.pth"
@@ -491,8 +577,14 @@ if not args.test:
     best_reward = -np.inf  # set best training reward
     best_reward_test = -np.inf  # set best test reward
 
-    for agent_id in [0, 1]:
-        model_agents[agent_id].train()
+    # Only train agents if not in baseline mode
+    if args.mode not in [3, 4]:
+        for agent_id in [0, 1]:
+            model_agents[agent_id].train()
+    else:
+        # Mode 3 or 4: Baseline modes - skip model training, run simulation with fixed policy
+        print("\nRunning baseline mode with fixed policy...")
+        print("No training will be performed. Running test episodes only.\n")
 
     # Check metrics
     epoch_demand_list = []
@@ -521,11 +613,17 @@ if not args.test:
         episode_served_demand = {0: 0, 1: 0}
         episode_unserved_demand = {0: 0, 1: 0}
         episode_rebalancing_cost = {0: 0, 1: 0}
-        episode_rejected_demand = {0: 0, 1: 0}
         episode_total_revenue = {0: 0, 1: 0}
         episode_total_operating_cost = {0: 0, 1: 0}
         episode_waiting = {0: 0, 1: 0}
-        episode_rejection_rates = {0: [], 1: []}
+        # System-level demand tracking (not agent-specific)
+        episode_rejected_demand = 0  # Total demand rejected by choice model
+        episode_total_demand = 0  # Total demand generated in system
+        episode_rejection_rates = []  # Track rejection rate per step
+        # Profitability tracking
+        episode_true_profit = {0: 0, 1: 0}
+        episode_adjusted_profit = {0: 0, 1: 0}
+        episode_unprofitable_trips = {0: 0, 1: 0}
         actions_price = {0: [], 1: []}  # Track price scalars during episode
         
         # Track concentration parameters during episode (different structures per mode)
@@ -548,7 +646,7 @@ if not args.test:
         while not done:
             if env.mode == 0:
                 # Make Match Step
-                obs, paxreward, done, info, _, _ = env.match_step_simple()
+                obs, paxreward, done, info, system_info, _, _ = env.match_step_simple()
 
                 # Update episode reward
                 episode_reward = {a: episode_reward[a] + paxreward[a] for a in [0, 1]}
@@ -599,18 +697,18 @@ if not args.test:
 
                 # Compute rebalancing flows for both agents
                 rebAction = {
-                    a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode)
+                    a: solveRebFlow(env, "nyc_manhattan", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode)
                     for a in [0, 1]
                 }
                 
-                new_obs, rebreward, done, info, _, _ = env.reb_step(rebAction)
+                new_obs, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
                 episode_reward = {a: episode_reward[a] + rebreward[a] for a in [0, 1]}
                 
                 for agent_id in [0, 1]:
-                    model_agents[agent_id].rewards.append(paxreward[agent_id] + rebreward[agent_id])
+                    model_agents[agent_id].rewards.append((paxreward[agent_id] + rebreward[agent_id]))
 
             elif env.mode == 1:
-                obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+                obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
 
                 episode_reward = {a: episode_reward[a] + paxreward[a] for a in [0, 1]}
 
@@ -650,7 +748,7 @@ if not args.test:
             
             elif env.mode == 2:
                 # --- Matching step ---
-                obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+                obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
                 
                 episode_reward = {a: episode_reward[a] + paxreward[a] for a in [0, 1]}
 
@@ -715,48 +813,141 @@ if not args.test:
                 # --- Rebalancing step ---
                 # Compute rebalancing flows for both agents
                 rebAction = {
-                    a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode)
+                    a: solveRebFlow(env, "nyc_manhattan", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode)
                     for a in [0, 1]
                 }
             
-                new_obs, rebreward, done, info, _, _ = env.reb_step(rebAction)
+                new_obs, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
             
                 episode_reward = {a: episode_reward[a] + rebreward[a] for a in [0, 1]}
                 for agent_id in [0, 1]:
-                    model_agents[agent_id].rewards.append(paxreward[agent_id] + rebreward[agent_id])
+                    model_agents[agent_id].rewards.append((paxreward[agent_id] + rebreward[agent_id]))
+            
+            elif env.mode == 3:
+                # === BASELINE MODE: No rebalancing, fixed prices ===
+                # Use fixed price (scalar = 0.5 for both agents)
+                action_rl = {
+                    0: np.array([0.5] * env.nregion),
+                    1: np.array([0.5] * env.nregion)
+                }
+                
+                # Matching step with fixed prices
+                obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
+                
+                # Track rewards (no rebalancing cost in baseline)
+                episode_reward = {a: episode_reward[a] + paxreward[a] for a in [0, 1]}
+                
+                # NO rebalancing step - just update vehicle arrivals from completed passenger trips
+                env.matching_update()
+            
+            elif env.mode == 4:
+                # === BASELINE MODE 4: Uniform rebalancing, fixed prices ===
+                # Use fixed price (scalar = 0.5 for both agents)
+                action_rl = {
+                    0: np.array([0.5] * env.nregion),
+                    1: np.array([0.5] * env.nregion)
+                }
+                
+                # Matching step with fixed prices
+                obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
+                
+                # Track rewards
+                episode_reward = {a: episode_reward[a] + paxreward[a] for a in [0, 1]}
+                
+                # UNIFORM rebalancing: distribute vehicles equally across all regions
+                desiredAcc = {}
+                for a in [0, 1]:
+                    # Calculate total available vehicles for this agent
+                    current_total = dictsum(env.agent_acc[a], env.time + 1)
+                    base_per_region = current_total // env.nregion
+                    remainder = current_total % env.nregion
+                    # Distribute uniformly with remainder going to first regions
+                    desiredAcc[a] = {
+                        env.region[i]: base_per_region + (1 if i < remainder else 0)
+                        for i in range(env.nregion)
+                    }
+                
+                # Compute rebalancing flows for both agents
+                rebAction = {
+                    a: solveRebFlow(env, "nyc_manhattan", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode)
+                    for a in [0, 1]
+                }
+                
+                new_obs, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
+                episode_reward = {a: episode_reward[a] + rebreward[a] for a in [0, 1]}
+            
             else:
-                raise ValueError("Only mode 0, 1, and 2 are allowed")
+                raise ValueError("Only mode 0, 1, 2, 3, and 4 are allowed")
 
+            # Track agent-specific metrics
             for a in [0, 1]:
                     episode_served_demand[a] += info[a]["served_demand"]
                     episode_unserved_demand[a] += info[a]["unserved_demand"]
                     episode_rebalancing_cost[a] += info[a]["rebalancing_cost"]
                     episode_total_revenue[a] += info[a]["revenue"]
-                    episode_rejected_demand[a] += info[a]["rejected_demand"]
                     episode_total_operating_cost[a] += info[a]["operating_cost"]
                     episode_waiting[a] += info[a]["served_waiting"]
-                    episode_rejection_rates[a].append(info[a]["rejection_rate"])
+                    # Track profitability metrics
+                    episode_true_profit[a] += info[a].get("true_profit", 0)
+                    episode_adjusted_profit[a] += info[a].get("adjusted_profit", 0)
+                    episode_unprofitable_trips[a] += info[a].get("unprofitable_trips", 0)
+            
+            # Track system-level metrics (not agent-specific)
+            episode_rejected_demand += system_info["rejected_demand"]
+            episode_total_demand += system_info["total_demand"]
+            episode_rejection_rates.append(system_info["rejection_rate"])
         
             step += 1
         
         # Update both agent models after episode and collect training metrics
         grad_norms = {}
-        for a in [0, 1]:
-            if a == args.fix_agent:
-                # Fixed agent: skip learning, return dummy metrics
+        if args.mode not in [3, 4]:
+            # Normal modes: update models
+            for a in [0, 1]:
+                if a == args.fix_agent:
+                    # Fixed agent: skip learning, return dummy metrics
+                    grad_norms[a] = {
+                        "actor_grad_norm": 0.0,
+                        "critic_grad_norm": 0.0,
+                        "actor_loss": 0.0,
+                        "critic_loss": 0.0,
+                        "actor_grad_norm_before_clip": 0.0,
+                        "critic_grad_norm_before_clip": 0.0,
+                        "advantage_mean": 0.0,
+                        "advantage_std": 0.0,
+                        "value_mean": 0.0,
+                        "value_std": 0.0,
+                        "log_prob_mean": 0.0,
+                        "log_prob_std": 0.0,
+                        "return_mean": 0.0,
+                        "return_std": 0.0,
+                    }
+                    # Clear the fixed agent's buffers without updating
+                    model_agents[a].rewards = []
+                    model_agents[a].saved_actions = []
+                else:
+                    grad_norms[a] = model_agents[a].training_step()  # update model after episode and get metrics
+        else:
+            # Baseline modes (mode 3 or 4): no training, return dummy metrics for both agents
+            for a in [0, 1]:
                 grad_norms[a] = {
                     "actor_grad_norm": 0.0,
                     "critic_grad_norm": 0.0,
                     "actor_loss": 0.0,
-                    "critic_loss": 0.0
+                    "critic_loss": 0.0,
+                    "actor_grad_norm_before_clip": 0.0,
+                    "critic_grad_norm_before_clip": 0.0,
+                    "advantage_mean": 0.0,
+                    "advantage_std": 0.0,
+                    "value_mean": 0.0,
+                    "value_std": 0.0,
+                    "log_prob_mean": 0.0,
+                    "log_prob_std": 0.0,
+                    "return_mean": 0.0,
+                    "return_std": 0.0,
+                    "concentration_max": 0.0,
+                    "concentration_min": 0.0,
                 }
-                # Clear the fixed agent's buffers without updating
-                model_agents[a].rewards = []
-                model_agents[a].saved_actions = []
-                model_agents[a].saved_values = []
-                model_agents[a].saved_logprobs = []
-            else:
-                grad_norms[a] = model_agents[a].training_step()  # update model after episode and get metrics
 
         # Get total vehicles for verification (returns dict with {agent_id: total_vehicles})
         total_vehicles = env.get_total_vehicles()
@@ -802,11 +993,27 @@ if not args.test:
         "agent0/episode_waiting_time": episode_waiting[0]/episode_served_demand[0] if episode_served_demand[0] > 0 else 0,
         "agent0/total_revenue": episode_total_revenue[0],
         "agent0/total_operating_cost": episode_total_operating_cost[0],
-        "agent0/rejected_demand": episode_rejected_demand[0],
         "agent0/actor_grad_norm": grad_norms[0]["actor_grad_norm"],
         "agent0/critic_grad_norm": grad_norms[0]["critic_grad_norm"],
         "agent0/actor_loss": grad_norms[0]["actor_loss"],
         "agent0/critic_loss": grad_norms[0]["critic_loss"],
+        # New diagnostic metrics for Agent 0
+        "agent0/actor_grad_norm_before_clip": grad_norms[0]["actor_grad_norm_before_clip"],
+        "agent0/critic_grad_norm_before_clip": grad_norms[0]["critic_grad_norm_before_clip"],
+        "agent0/advantage_mean": grad_norms[0]["advantage_mean"],
+        "agent0/advantage_std": grad_norms[0]["advantage_std"],
+        "agent0/value_mean": grad_norms[0]["value_mean"],
+        "agent0/value_std": grad_norms[0]["value_std"],
+        "agent0/log_prob_mean": grad_norms[0]["log_prob_mean"],
+        "agent0/log_prob_std": grad_norms[0]["log_prob_std"],
+        "agent0/return_mean": grad_norms[0]["return_mean"],
+        "agent0/return_std": grad_norms[0]["return_std"],
+        "agent0/concentration_max": grad_norms[0]["concentration_max"],
+        "agent0/concentration_min": grad_norms[0]["concentration_min"],
+        # Agent 0 profitability metrics
+        "agent0/true_profit": episode_true_profit[0],
+        "agent0/adjusted_profit": episode_adjusted_profit[0],
+        "agent0/unprofitable_trips": episode_unprofitable_trips[0],
         # Agent 1 metrics
         "agent1/episode_reward": episode_reward[1],
         "agent1/episode_served_demand": episode_served_demand[1],
@@ -815,16 +1022,40 @@ if not args.test:
         "agent1/episode_waiting_time": episode_waiting[1]/episode_served_demand[1] if episode_served_demand[1] > 0 else 0,
         "agent1/total_revenue": episode_total_revenue[1],
         "agent1/total_operating_cost": episode_total_operating_cost[1],
-        "agent1/rejected_demand": episode_rejected_demand[1],
         "agent1/actor_grad_norm": grad_norms[1]["actor_grad_norm"],
         "agent1/critic_grad_norm": grad_norms[1]["critic_grad_norm"],
         "agent1/actor_loss": grad_norms[1]["actor_loss"],
         "agent1/critic_loss": grad_norms[1]["critic_loss"],
+        # New diagnostic metrics for Agent 1
+        "agent1/actor_grad_norm_before_clip": grad_norms[1]["actor_grad_norm_before_clip"],
+        "agent1/critic_grad_norm_before_clip": grad_norms[1]["critic_grad_norm_before_clip"],
+        "agent1/advantage_mean": grad_norms[1]["advantage_mean"],
+        "agent1/advantage_std": grad_norms[1]["advantage_std"],
+        "agent1/value_mean": grad_norms[1]["value_mean"],
+        "agent1/value_std": grad_norms[1]["value_std"],
+        "agent1/log_prob_mean": grad_norms[1]["log_prob_mean"],
+        "agent1/log_prob_std": grad_norms[1]["log_prob_std"],
+        "agent1/return_mean": grad_norms[1]["return_mean"],
+        "agent1/return_std": grad_norms[1]["return_std"],
+        "agent1/concentration_max": grad_norms[1]["concentration_max"],
+        "agent1/concentration_min": grad_norms[1]["concentration_min"],
+        # Agent 1 profitability metrics
+        "agent1/true_profit": episode_true_profit[1],
+        "agent1/adjusted_profit": episode_adjusted_profit[1],
+        "agent1/unprofitable_trips": episode_unprofitable_trips[1],
         # Combined metrics
         "combined/total_reward": episode_reward[0] + episode_reward[1],
         "combined/total_served_demand": episode_served_demand[0] + episode_served_demand[1],
         "combined/total_unserved_demand": episode_unserved_demand[0] + episode_unserved_demand[1],
         "combined/total_rebalancing_cost": episode_rebalancing_cost[0] + episode_rebalancing_cost[1],
+        # Combined demand tracking (system-level)
+        "combined/total_demand": episode_total_demand,
+        "combined/rejected_demand": episode_rejected_demand,
+        "combined/rejection_rate": np.mean(episode_rejection_rates) if len(episode_rejection_rates) > 0 else 0,
+        # Combined profitability metrics
+        "combined/total_true_profit": episode_true_profit[0] + episode_true_profit[1],
+        "combined/total_adjusted_profit": episode_adjusted_profit[0] + episode_adjusted_profit[1],
+        "combined/total_unprofitable_trips": episode_unprofitable_trips[0] + episode_unprofitable_trips[1],
         # Vehicle tracking
         "vehicles/agent0_total": total_vehicles[0],
         "vehicles/agent1_total": total_vehicles[1],
@@ -886,18 +1117,19 @@ if not args.test:
         )
         
         # Checkpoint best performing models (based on combined reward)
-        if total_reward >= best_reward:
+        if args.mode not in [3, 4]:
+            if total_reward >= best_reward:
+                for agent_id in [0, 1]:
+                    model_agents[agent_id].save_checkpoint(
+                        path=f"ckpt/{args.checkpoint_path}_agent{agent_id+1}_sample.pth")
+                best_reward = total_reward
+            
+            # Save running checkpoints for both agents
             for agent_id in [0, 1]:
                 model_agents[agent_id].save_checkpoint(
-                    path=f"ckpt/{args.checkpoint_path}_agent{agent_id+1}_sample.pth")
-            best_reward = total_reward
+                    path=f"ckpt/{args.checkpoint_path}_agent{agent_id+1}_running.pth")
         
-        # Save running checkpoints for both agents
-        for agent_id in [0, 1]:
-            model_agents[agent_id].save_checkpoint(
-                path=f"ckpt/{args.checkpoint_path}_agent{agent_id+1}_running.pth")
-        
-        if i_episode % 100 == 0:
+        if i_episode % 100 == 0 and args.mode not in [3, 4]:
             for agent_id in [0, 1]:
                 model_agents[agent_id].eval()
             test_reward, test_served_demand, test_rebalancing_cost = test_agents(
@@ -946,7 +1178,7 @@ else:
                 impute=args.impute,
                 supply_ratio=args.supply_ratio)
 
-    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_agent=args.fix_agent)
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_agent=args.fix_agent, loss_aversion=args.loss_aversion)
     
     # Print fixed agent information
     if args.fix_agent == 0:
@@ -979,37 +1211,54 @@ else:
         # Aggregated prices: T (future) + 3 (current_avb, queue, demand) + 2 (own and competitor aggregated prices)
         input_size = args.look_ahead + 5
     
-    model_agents = {
-            a: A2C(
-                env=env,
-                input_size=input_size,
-                hidden_size=args.hidden_size,
-                device=device,
-                p_lr=args.p_lr,
-                q_lr=args.q_lr,
-                T = args.look_ahead,
-                scale_factor = args.scale_factor,
-                json_file=f"data/scenario_{city}.json",
-                mode=args.mode,
-                clip=args.clip,
-                gamma=args.gamma,
-                agent_id = a,
-                use_od_prices = args.use_od_prices
-            )
-            for a in [0, 1]
-        }
+    # Only create models if not in baseline mode (mode 3 or 4)
+    if args.mode not in [3, 4]:
+        model_agents = {
+                a: A2C(
+                    env=env,
+                    input_size=input_size,
+                    hidden_size=args.hidden_size,
+                    device=device,
+                    p_lr=args.p_lr,
+                    q_lr=args.q_lr,
+                    T = args.look_ahead,
+                    scale_factor = args.scale_factor,
+                    json_file=f"data/scenario_{city}.json",
+                    mode=args.mode,
+                    actor_clip=args.actor_clip,
+                    critic_clip=args.critic_clip,
+                    gamma=args.gamma,
+                    agent_id = a,
+                    use_od_prices = args.use_od_prices,
+                )
+                for a in [0, 1]
+            }
 
-    print("load models")
-    for agent_id in [0, 1]:
-        checkpoint_path = f"ckpt/{args.checkpoint_path}_agent{agent_id+1}_{args.model_type}.pth"
-        model_agents[agent_id].load_checkpoint(path=checkpoint_path)
-        print(f"Loaded checkpoint for agent {agent_id} from {checkpoint_path}")
-    print("Loaded models from checkpoint successfully")
-
-    best_reward = -np.inf  # set best reward
-    best_reward_test = -np.inf  # set best reward
-    for agent_id in [0, 1]:
-        model_agents[agent_id].eval()
+        print("load models")
+        for agent_id in [0, 1]:
+            checkpoint_path = f"ckpt/{args.checkpoint_path}_agent{agent_id+1}_{args.model_type}.pth"
+            model_agents[agent_id].load_checkpoint(path=checkpoint_path)
+            print(f"Loaded checkpoint for agent {agent_id} from {checkpoint_path}")
+        print("Loaded models from checkpoint successfully")
+        
+        for agent_id in [0, 1]:
+            model_agents[agent_id].eval()
+    elif args.mode == 3:
+        print("=" * 80)
+        print("TEST MODE - BASELINE (Mode 3): No learning, fixed policy")
+        print("- Both agents use BASE PRICE (scalar=0.5)")
+        print("- NO rebalancing performed")
+        print("- Provides baseline for comparison")
+        print("=" * 80)
+        model_agents = None  # No models needed
+    else:  # mode == 4
+        print("=" * 80)
+        print("TEST MODE - BASELINE (Mode 4): No learning, fixed policy with uniform rebalancing")
+        print("- Both agents use BASE PRICE (scalar=0.5)")
+        print("- UNIFORM rebalancing (distribute vehicles equally across regions)")
+        print("- Provides baseline for comparison")
+        print("=" * 80)
+        model_agents = None  # No models needed
     
     # Initialize lists for logging
     log = {"test_reward": [], "test_served_demand": [], "test_reb_cost": []}
@@ -1029,10 +1278,11 @@ else:
     elif env.mode == 1:
         epoch_concentration_alpha_list = []
         epoch_concentration_beta_list = []
-    else:  # mode 2
+    elif env.mode == 2:
         epoch_concentration_alpha_list = []
         epoch_concentration_beta_list = []
         epoch_concentration_dirichlet_list = []
+    # Mode 3 and 4: No concentration tracking needed (baseline modes)
 
     # Storage for trip data from last episode
     trip_data_last_episode = []
@@ -1053,10 +1303,11 @@ else:
         elif env.mode == 1:
             actions_concentration_alpha = {0: [], 1: []}
             actions_concentration_beta = {0: [], 1: []}
-        else:  # mode 2
+        elif env.mode == 2:
             actions_concentration_alpha = {0: [], 1: []}
             actions_concentration_beta = {0: [], 1: []}
             actions_concentration_dirichlet = {0: [], 1: []}
+        # Mode 3 and 4: No concentration tracking needed (baseline modes)
         
         obs = env.reset()
 
@@ -1066,7 +1317,7 @@ else:
         while not done:
             if env.mode == 0:
                 # Make Match Step
-                obs, paxreward, done, info, _, _ = env.match_step_simple()
+                obs, paxreward, done, info, system_info, _, _ = env.match_step_simple()
 
                 # Update episode reward
                 eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
@@ -1112,12 +1363,12 @@ else:
                     for a in [0, 1]
                 }
                 
-                _, rebreward, done, info, _, _ = env.reb_step(rebAction)
+                _, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
                 eps_reward = {a: eps_reward[a] + rebreward[a] for a in [0, 1]}
                 
                 
             elif env.mode == 1:
-                obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+                obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
 
                 eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
 
@@ -1153,7 +1404,7 @@ else:
             
             elif env.mode == 2:
                 # --- Matching step ---
-                obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+                obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
                 
                 eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
 
@@ -1215,11 +1466,73 @@ else:
                     for a in [0, 1]
                 }
             
-                _, rebreward, done, info, _, _ = env.reb_step(rebAction)
+                _, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
             
                 eps_reward = {a: eps_reward[a] + rebreward[a] for a in [0, 1]}
+            
+            elif env.mode == 3:
+                # === BASELINE MODE: No rebalancing, fixed prices ===
+                # Use fixed price (scalar = 0.5 for both agents)
+                action_rl = {
+                    0: np.array([0.5] * env.nregion),
+                    1: np.array([0.5] * env.nregion)
+                }
+                
+                # Matching step with fixed prices
+                obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
+                
+                # Track rewards (no rebalancing cost in baseline)
+                eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
+                
+                # Track prices for logging (always 1.0 = base price)
+                for a in [0, 1]:
+                    actions_price[a].append(1.0)
+                
+                # NO rebalancing step - just update vehicle arrivals from completed passenger trips
+                env.matching_update()
+            
+            elif env.mode == 4:
+                # === BASELINE MODE 4: Uniform rebalancing, fixed prices ===
+                # Use fixed price (scalar = 0.5 for both agents)
+                action_rl = {
+                    0: np.array([0.5] * env.nregion),
+                    1: np.array([0.5] * env.nregion)
+                }
+                
+                # Matching step with fixed prices
+                obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
+                
+                # Track rewards
+                eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
+                
+                # Track prices for logging (always 1.0 = base price)
+                for a in [0, 1]:
+                    actions_price[a].append(1.0)
+                
+                # UNIFORM rebalancing: distribute vehicles equally across all regions
+                desiredAcc = {}
+                for a in [0, 1]:
+                    # Calculate total available vehicles for this agent
+                    current_total = dictsum(env.agent_acc[a], env.time + 1)
+                    base_per_region = current_total // env.nregion
+                    remainder = current_total % env.nregion
+                    # Distribute uniformly with remainder going to first regions
+                    desiredAcc[a] = {
+                        env.region[i]: base_per_region + (1 if i < remainder else 0)
+                        for i in range(env.nregion)
+                    }
+                
+                # Compute rebalancing flows for both agents
+                rebAction = {
+                    a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode)
+                    for a in [0, 1]
+                }
+                
+                _, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
+                eps_reward = {a: eps_reward[a] + rebreward[a] for a in [0, 1]}
+            
             else:
-                raise ValueError("Only mode 0, 1, and 2 are allowed")
+                raise ValueError("Only mode 0, 1, 2, 3, and 4 are allowed")
         
             for a in [0, 1]:
                 eps_demand[a] += info[a]["served_demand"]
@@ -1255,7 +1568,7 @@ else:
             for a in [0, 1]:
                 eps_concentration_alpha[a] = np.mean(actions_concentration_alpha[a]) if len(actions_concentration_alpha[a]) > 0 else 0
                 eps_concentration_beta[a] = np.mean(actions_concentration_beta[a]) if len(actions_concentration_beta[a]) > 0 else 0
-        else:  # mode 2
+        elif env.mode == 2:
             eps_concentration_alpha = {0: 0, 1: 0}
             eps_concentration_beta = {0: 0, 1: 0}
             eps_concentration_dirichlet = {0: 0, 1: 0}
@@ -1263,6 +1576,7 @@ else:
                 eps_concentration_alpha[a] = np.mean(actions_concentration_alpha[a]) if len(actions_concentration_alpha[a]) > 0 else 0
                 eps_concentration_beta[a] = np.mean(actions_concentration_beta[a]) if len(actions_concentration_beta[a]) > 0 else 0
                 eps_concentration_dirichlet[a] = np.mean(actions_concentration_dirichlet[a]) if len(actions_concentration_dirichlet[a]) > 0 else 0
+        # Mode 3 and 4: No concentration tracking
         
         # Append episode results to epoch lists
         epoch_reward_list.append(eps_reward) # Done
@@ -1280,10 +1594,11 @@ else:
         elif env.mode == 1:
             epoch_concentration_alpha_list.append(eps_concentration_alpha)
             epoch_concentration_beta_list.append(eps_concentration_beta)
-        else:  # mode 2
+        elif env.mode == 2:
             epoch_concentration_alpha_list.append(eps_concentration_alpha)
             epoch_concentration_beta_list.append(eps_concentration_beta)
             epoch_concentration_dirichlet_list.append(eps_concentration_dirichlet)
+        # Mode 3 and 4: No concentration tracking
         
         # Capture trip data from the last episode
         if episode == 9:  # Last episode (0-indexed, so episode 9 is the 10th)
@@ -1346,8 +1661,8 @@ else:
     print(f"  Total rebalancing cost (mean, std): {np.mean(costs_total):.2f}, {np.std(costs_total):.2f}")
     print(f"  Total arrivals (mean, std): {np.mean(arrivals_total):.2f}, {np.std(arrivals_total):.2f}")
     
-    # Only show rebalancing trips for modes 0 and 2 (not mode 1)
-    if args.mode != 1:
+    # Only show rebalancing trips for modes 0 and 2 (not mode 1, 3, or 4)
+    if args.mode not in [1, 3, 4]:
         reb_agent0 = [ep[0] for ep in epoch_rebalancing_list]
         reb_agent1 = [ep[1] for ep in epoch_rebalancing_list]
         reb_total = [ep[0] + ep[1] for ep in epoch_rebalancing_list]
@@ -1355,7 +1670,7 @@ else:
         print(f"  Agent 1 rebalancing trips (mean, std): {np.mean(reb_agent1):.2f}, {np.std(reb_agent1):.2f}")
         print(f"  Total rebalancing trips (mean, std): {np.mean(reb_total):.2f}, {np.std(reb_total):.2f}")
     
-    # Only show price scalar for modes 1 and 2 (not mode 0)
+    # Only show price scalar for modes 1, 2, and 3 (not mode 0)
     if args.mode != 0:
         price_agent0 = [ep[0] for ep in epoch_price_mean_list]
         price_agent1 = [ep[1] for ep in epoch_price_mean_list]
@@ -1364,35 +1679,36 @@ else:
         print(f"  Agent 0 price scalar (mean, std): {np.mean(price_agent0):.2f}, {np.std(price_agent0):.2f}")
         print(f"  Agent 1 price scalar (mean, std): {np.mean(price_agent1):.2f}, {np.std(price_agent1):.2f}")
     
-    # Show concentration parameters (mode-specific)
-    print("\nConcentration Parameters:")
-    if args.mode == 0:
-        # Mode 0: Only Dirichlet for rebalancing
-        conc_dirichlet_agent0 = [ep[0] for ep in epoch_concentration_dirichlet_list]
-        conc_dirichlet_agent1 = [ep[1] for ep in epoch_concentration_dirichlet_list]
-        print(f"  Agent 0 Dirichlet concentration (mean, std): {np.mean(conc_dirichlet_agent0):.2f}, {np.std(conc_dirichlet_agent0):.2f}")
-        print(f"  Agent 1 Dirichlet concentration (mean, std): {np.mean(conc_dirichlet_agent1):.2f}, {np.std(conc_dirichlet_agent1):.2f}")
-    elif args.mode == 1:
-        # Mode 1: Beta (alpha, beta) for pricing
-        conc_alpha_agent0 = [ep[0] for ep in epoch_concentration_alpha_list]
-        conc_alpha_agent1 = [ep[1] for ep in epoch_concentration_alpha_list]
-        conc_beta_agent0 = [ep[0] for ep in epoch_concentration_beta_list]
-        conc_beta_agent1 = [ep[1] for ep in epoch_concentration_beta_list]
-        print(f"  Agent 0 Beta Alpha concentration (mean, std): {np.mean(conc_alpha_agent0):.2f}, {np.std(conc_alpha_agent0):.2f}")
-        print(f"  Agent 0 Beta Beta concentration (mean, std): {np.mean(conc_beta_agent0):.2f}, {np.std(conc_beta_agent0):.2f}")
-        print(f"  Agent 1 Beta Alpha concentration (mean, std): {np.mean(conc_alpha_agent1):.2f}, {np.std(conc_alpha_agent1):.2f}")
-        print(f"  Agent 1 Beta Beta concentration (mean, std): {np.mean(conc_beta_agent1):.2f}, {np.std(conc_beta_agent1):.2f}")
-    else:  # mode 2
-        # Mode 2: Beta (alpha, beta) for pricing + Dirichlet for rebalancing
-        conc_alpha_agent0 = [ep[0] for ep in epoch_concentration_alpha_list]
-        conc_alpha_agent1 = [ep[1] for ep in epoch_concentration_alpha_list]
-        conc_beta_agent0 = [ep[0] for ep in epoch_concentration_beta_list]
-        conc_beta_agent1 = [ep[1] for ep in epoch_concentration_beta_list]
-        conc_dirichlet_agent0 = [ep[0] for ep in epoch_concentration_dirichlet_list]
-        conc_dirichlet_agent1 = [ep[1] for ep in epoch_concentration_dirichlet_list]
-        print(f"  Agent 0 Beta Alpha concentration (mean, std): {np.mean(conc_alpha_agent0):.2f}, {np.std(conc_alpha_agent0):.2f}")
-        print(f"  Agent 0 Beta Beta concentration (mean, std): {np.mean(conc_beta_agent0):.2f}, {np.std(conc_beta_agent0):.2f}")
-        print(f"  Agent 0 Dirichlet concentration (mean, std): {np.mean(conc_dirichlet_agent0):.2f}, {np.std(conc_dirichlet_agent0):.2f}")
-        print(f"  Agent 1 Beta Alpha concentration (mean, std): {np.mean(conc_alpha_agent1):.2f}, {np.std(conc_alpha_agent1):.2f}")
-        print(f"  Agent 1 Beta Beta concentration (mean, std): {np.mean(conc_beta_agent1):.2f}, {np.std(conc_beta_agent1):.2f}")
-        print(f"  Agent 1 Dirichlet concentration (mean, std): {np.mean(conc_dirichlet_agent1):.2f}, {np.std(conc_dirichlet_agent1):.2f}")
+    # Show concentration parameters (mode-specific, not for modes 3 and 4)
+    if args.mode not in [3, 4]:
+        print("\nConcentration Parameters:")
+        if args.mode == 0:
+            # Mode 0: Only Dirichlet for rebalancing
+            conc_dirichlet_agent0 = [ep[0] for ep in epoch_concentration_dirichlet_list]
+            conc_dirichlet_agent1 = [ep[1] for ep in epoch_concentration_dirichlet_list]
+            print(f"  Agent 0 Dirichlet concentration (mean, std): {np.mean(conc_dirichlet_agent0):.2f}, {np.std(conc_dirichlet_agent0):.2f}")
+            print(f"  Agent 1 Dirichlet concentration (mean, std): {np.mean(conc_dirichlet_agent1):.2f}, {np.std(conc_dirichlet_agent1):.2f}")
+        elif args.mode == 1:
+            # Mode 1: Beta (alpha, beta) for pricing
+            conc_alpha_agent0 = [ep[0] for ep in epoch_concentration_alpha_list]
+            conc_alpha_agent1 = [ep[1] for ep in epoch_concentration_alpha_list]
+            conc_beta_agent0 = [ep[0] for ep in epoch_concentration_beta_list]
+            conc_beta_agent1 = [ep[1] for ep in epoch_concentration_beta_list]
+            print(f"  Agent 0 Beta Alpha concentration (mean, std): {np.mean(conc_alpha_agent0):.2f}, {np.std(conc_alpha_agent0):.2f}")
+            print(f"  Agent 0 Beta Beta concentration (mean, std): {np.mean(conc_beta_agent0):.2f}, {np.std(conc_beta_agent0):.2f}")
+            print(f"  Agent 1 Beta Alpha concentration (mean, std): {np.mean(conc_alpha_agent1):.2f}, {np.std(conc_alpha_agent1):.2f}")
+            print(f"  Agent 1 Beta Beta concentration (mean, std): {np.mean(conc_beta_agent1):.2f}, {np.std(conc_beta_agent1):.2f}")
+        elif args.mode == 2:
+            # Mode 2: Beta (alpha, beta) for pricing + Dirichlet for rebalancing
+            conc_alpha_agent0 = [ep[0] for ep in epoch_concentration_alpha_list]
+            conc_alpha_agent1 = [ep[1] for ep in epoch_concentration_alpha_list]
+            conc_beta_agent0 = [ep[0] for ep in epoch_concentration_beta_list]
+            conc_beta_agent1 = [ep[1] for ep in epoch_concentration_beta_list]
+            conc_dirichlet_agent0 = [ep[0] for ep in epoch_concentration_dirichlet_list]
+            conc_dirichlet_agent1 = [ep[1] for ep in epoch_concentration_dirichlet_list]
+            print(f"  Agent 0 Beta Alpha concentration (mean, std): {np.mean(conc_alpha_agent0):.2f}, {np.std(conc_alpha_agent0):.2f}")
+            print(f"  Agent 0 Beta Beta concentration (mean, std): {np.mean(conc_beta_agent0):.2f}, {np.std(conc_beta_agent0):.2f}")
+            print(f"  Agent 0 Dirichlet concentration (mean, std): {np.mean(conc_dirichlet_agent0):.2f}, {np.std(conc_dirichlet_agent0):.2f}")
+            print(f"  Agent 1 Beta Alpha concentration (mean, std): {np.mean(conc_alpha_agent1):.2f}, {np.std(conc_alpha_agent1):.2f}")
+            print(f"  Agent 1 Beta Beta concentration (mean, std): {np.mean(conc_beta_agent1):.2f}, {np.std(conc_beta_agent1):.2f}")
+            print(f"  Agent 1 Dirichlet concentration (mean, std): {np.mean(conc_dirichlet_agent1):.2f}, {np.std(conc_dirichlet_agent1):.2f}")

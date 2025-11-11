@@ -4,9 +4,9 @@ import numpy as np
 import subprocess
 import os
 import networkx as nx
-from src.misc.utils2 import mat2str
-from src.misc.helper_functions2 import demand_update
-from src.envs.structures2 import generate_passenger
+from src.misc.utils import mat2str
+from src.misc.helper_functions import demand_update
+from src.envs.structures import generate_passenger
 from copy import deepcopy
 import json
 import random
@@ -14,7 +14,7 @@ import random
 class AMoD:
     # initialization
     # updated to take scenario and beta (cost for rebalancing) as input
-    def __init__(self, scenario, mode, beta, jitter, max_wait, choice_price_mult, seed, fix_agent=2):
+    def __init__(self, scenario, mode, beta, jitter, max_wait, choice_price_mult, seed, loss_aversion, fix_agent):
         # Setting the scenario
         self.scenario = deepcopy(scenario)
 
@@ -27,6 +27,12 @@ class AMoD:
         
         # Setting which agent to fix (0=fix agent 0, 1=fix agent 1, 2=no fixing)
         self.fix_agent = fix_agent
+        
+        # Add loss aversion parameter for unprofitable trip penalty
+        self.loss_aversion = loss_aversion  # Multiplier for loss penalty (λ)
+        
+        # Track unprofitable trips for logging
+        self.agent_unprofitable_trips = {agent_id: 0 for agent_id in [0, 1]}
 
         # Setting up the road graph
         self.G = scenario.G  # Road Graph: node - region, edge - connection of regions, node attr: 'accInit', edge attr: 'time'
@@ -175,12 +181,17 @@ class AMoD:
         # - rebalancing_cost: cost of moving empty vehicles
         # - operating_cost: total operational costs
         # - served_waiting: cumulative waiting time of served passengers
-        # - rejected_demand: number of passengers explicitly rejected
-        # - rejection_rate: ratio of rejected to total demand
         self.agent_info = {agent_id: dict.fromkeys(['revenue', 'served_demand', 'unserved_demand',
                                     'rebalancing_cost', 'operating_cost', 'served_waiting', 
-                                    'rejected_demand', 'rejection_rate'], 0) 
+                                    'true_profit', 'adjusted_profit'], 0) 
                     for agent_id in self.agents}
+        
+        # System-level info tracking (not agent-specific)
+        # Tracks metrics at the system level:
+        # - rejected_demand: number of passengers who rejected both agents via choice model
+        # - total_demand: total demand generated in the system
+        # - rejection_rate: ratio of rejected demand to total demand
+        self.system_info = dict.fromkeys(['rejected_demand', 'total_demand', 'rejection_rate'], 0)
 
         # Multi-agent external rewards (operating costs): ext_reward[agent_id] = np.array of external rewards per region
         self.ext_reward_agents = {a: np.zeros(self.nregion) for a in [0, 1]}
@@ -206,10 +217,18 @@ class AMoD:
         t = self.time
         paxreward = {0: 0, 1: 0}
         
+        # Reset violation tracking for this timestep
+        for agent_id in self.agents:
+            self.agent_unprofitable_trips[agent_id] = 0
+        
         # Reset agent_info for this timestep
         for agent_id in self.agents:
             for key in self.agent_info[agent_id]:
                 self.agent_info[agent_id][key] = 0
+        
+        # Reset system_info for this timestep
+        for key in self.system_info:
+            self.system_info[key] = 0
 
         total_original_demand = 0
         total_rejected_demand = 0
@@ -241,10 +260,10 @@ class AMoD:
                             if isinstance(price_scalar, (list, np.ndarray)):
                                 price_scalar = price_scalar[0]
                         
-                        # Multiply by 2 to allow range [0, 2×baseline]
+                        # Calculate proposed price (multiply by 2 to allow range [0, 2×baseline])
                         p = 2 * baseline_price * price_scalar
                         
-                        # Ensure minimum price (avoid zero prices)
+                        # Ensure absolute minimum price (avoid zero prices)
                         if p <= 1e-6:
                             p = self.jitter
                         
@@ -253,7 +272,7 @@ class AMoD:
                 ####################### Choice Model Implementation #################
                 d_original = d  # before applying choice model
 
-                 #--Choice Model--
+                #--Choice Model--
                 
                 pr0 = self.agent_price[0][n, j][t]
                 pr1 = self.agent_price[1][n, j][t]
@@ -271,8 +290,8 @@ class AMoD:
                 income_effect = 25 / wage
 
                 # Compute utilities for all agents
-                U_0 = 13.5 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr0
-                U_1 = 13.5 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr1
+                U_0 = 7.84 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr0
+                U_1 = 7.84 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr1
                 
                 # Always include both agents in the choice set
                 # (Fixed agent will use base price due to scalar 0.5)
@@ -384,16 +403,32 @@ class AMoD:
                             self.agent_servedDemand[agent_id][pax.origin, pax.destination][t] += 1
 
                             trip_cost = self.demandTime[pax.origin, pax.destination][t] * self.beta
-                            # Calculate reward components as price minus operating cost
-                            paxreward[agent_id] += pax.price - trip_cost
+                            trip_revenue = pax.price
+                            
+                            # Calculate profitability-aware reward
+                            base_reward = trip_revenue - trip_cost
+                            
+                            # Penalty for unprofitable trips (loss aversion)
+                            if base_reward < 0:
+                                self.agent_unprofitable_trips[agent_id] += 1
+                                # Apply quadratic penalty: λ × (loss)²
+                                loss_penalty = self.loss_aversion * (base_reward ** 2)
+                                adjusted_reward = base_reward - loss_penalty
+                            else:
+                                adjusted_reward = base_reward
+                            
+                            paxreward[agent_id] += adjusted_reward
 
                             # Update the operating costs
                             self.ext_reward_agents[agent_id][n] += max(0, trip_cost)
 
-                            self.agent_info[agent_id]['revenue'] += pax.price
+                            # Track true metrics separately for monitoring
+                            self.agent_info[agent_id]['revenue'] += trip_revenue
                             self.agent_info[agent_id]['served_demand'] += 1
                             self.agent_info[agent_id]['operating_cost'] += trip_cost
                             self.agent_info[agent_id]['served_waiting'] += wait_t
+                            self.agent_info[agent_id]['true_profit'] += base_reward
+                            self.agent_info[agent_id]['adjusted_profit'] += adjusted_reward
                         else:
                             if pax.unmatched_update():
                                 matched_leave_index.append(i)
@@ -420,15 +455,18 @@ class AMoD:
             1: (self.agent_acc[1], self.time, self.agent_dacc[1], self.agent_demand[1])
         }
 
-        rejection_rate = (
+        # Update system-level info
+        self.system_info['rejected_demand'] = total_rejected_demand
+        self.system_info['total_demand'] = total_original_demand
+        self.system_info['rejection_rate'] = (
             total_rejected_demand / total_original_demand if total_original_demand > 0 else 0
         )
 
+        # Add unprofitable trips count to agent info
         for agent_id in [0, 1]:
-            self.agent_info[agent_id]['rejection_rate'] = rejection_rate
-            self.agent_info[agent_id]['rejected_demand'] += total_rejected_demand
+            self.agent_info[agent_id]['unprofitable_trips'] = self.agent_unprofitable_trips[agent_id]
 
-        return self.obs, paxreward, done, self.agent_info, self.ext_reward_agents, ext_done
+        return self.obs, paxreward, done, self.agent_info, self.system_info, self.ext_reward_agents, ext_done
 
     def matching_update(self):
         """Update properties if there is no rebalancing after matching"""
@@ -525,7 +563,7 @@ class AMoD:
         done = (self.tf == t + 1)
         ext_done = [done] * self.nregion
     
-        return self.obs, rebreward, done, self.agent_info, self.ext_reward_agents, ext_done
+        return self.obs, rebreward, done, self.agent_info, self.system_info, self.ext_reward_agents, ext_done
 
     def get_total_vehicles(self, agent_id=None):
         """
@@ -705,8 +743,11 @@ class AMoD:
         # Reset multi-agent info tracking
         self.agent_info = {agent_id: dict.fromkeys(['revenue', 'served_demand', 'unserved_demand',
                                     'rebalancing_cost', 'operating_cost', 'served_waiting', 
-                                    'rejected_demand', 'rejection_rate'], 0) 
+                                    'true_profit', 'adjusted_profit'], 0) 
                     for agent_id in self.agents}
+        
+        # Reset system-level info tracking
+        self.system_info = dict.fromkeys(['rejected_demand', 'total_demand', 'rejection_rate'], 0)
         
         
         # Create observations for each agent
@@ -720,7 +761,7 @@ class AMoD:
 
 class Scenario:
     def __init__(self, N1=2, N2=4, tf=60, sd=None, ninit=5, tripAttr=None, demand_input=None, demand_ratio=None, supply_ratio=1,
-                 trip_length_preference=0.25, grid_travel_time=1, fix_price=True, alpha=0.0, json_file=None, json_hr=9, json_tstep=3, varying_time=False, json_regions=None, impute=False):
+                 trip_length_preference=0.25, grid_travel_time=1, fix_price=True, alpha=0.0, json_file=None, json_hr=19, json_tstep=3, varying_time=False, json_regions=None, impute=False):
         # trip_length_preference: positive - more shorter trips, negative - more longer trips
         # grid_travel_time: travel time between grids
         # demand_input： list - total demand out of each region,
@@ -744,9 +785,12 @@ class Scenario:
             self.N2 = N2
             self.G = nx.complete_graph(N1*N2)
             self.G = self.G.to_directed()
+            # Add self-loops to the graph for within-region trips
+            self.G.add_edges_from([(i, i) for i in self.G.nodes])
             self.demandTime = defaultdict(dict)  # traveling time between nodes
             self.rebTime = defaultdict(dict)
-            self.edges = list(self.G.edges) + [(i, i) for i in self.G.nodes]
+            # Self-loops are now part of G.edges, no need to add them separately
+            self.edges = list(self.G.edges)
             self.tstep = json_tstep
             for i, j in self.edges:
                 for t in range(tf*2):
@@ -841,6 +885,8 @@ class Scenario:
                 self.G = nx.complete_graph(self.N1*self.N2)
             
             self.G = self.G.to_directed()
+            # Add self-loops to the graph for within-region trips
+            self.G.add_edges_from([(i, i) for i in self.G.nodes])
 
             # Will hold aggregated/averaged prices per OD per time bin (p[(o,d)][t])
             self.p = defaultdict(dict)
@@ -860,8 +906,8 @@ class Scenario:
             # Sets the number of steps per episode (default 20). Hence for each time step we generate a demand, travel time, rebalancing time, and price profile.
             self.tf = tf
 
-            # Add edges from each node to itself (self-loops)
-            self.edges = list(self.G.edges) + [(i, i) for i in self.G.nodes]
+            # Self-loops are now part of G.edges, no need to add them separately
+            self.edges = list(self.G.edges)
 
             # Sets the number of regions based on the graph's nodes (# of regions = # of nodes)
             self.nregion = len(self.G)
