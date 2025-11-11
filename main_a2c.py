@@ -56,7 +56,7 @@ parser.add_argument(
     '--mode', 
     type=int, 
     default=2,
-    help='rebalancing mode. (0:manul, 1:pricing, 2:both. default 2)',
+    help='rebalancing mode. (0:rebalancing only, 1:pricing only, 2:both, 3:baseline no reb/fixed price, 4:baseline uniform reb/fixed price. default 2)',
 )
 
 parser.add_argument(
@@ -279,7 +279,7 @@ if not args.test:
     # Create the environment
     env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, loss_aversion=args.loss_aversion, fix_baseline=args.fix_baseline)
     
-    # Print fixed baseline information
+    # Print baseline information
     if args.fix_baseline:
         print("\n" + "="*50)
         print("FIXED BASELINE MODE ACTIVATED")
@@ -291,6 +291,22 @@ if not args.test:
         print(f"  - Initial vehicles: {initial_vehicles}")
         print(f"  - Target distribution: {dict(env.initial_acc)}")
         print("="*50 + "\n")
+    elif args.mode == 3:
+        print("\n" + "="*80)
+        print("BASELINE MODE (Mode 3): No learning, fixed policy")
+        print("="*80)
+        print("- Both agents use BASE PRICE (scalar=0.5)")
+        print("- NO rebalancing (vehicles stay where trips end)")
+        print("- Provides baseline for comparison")
+        print("="*80 + "\n")
+    elif args.mode == 4:
+        print("\n" + "="*80)
+        print("BASELINE MODE (Mode 4): No learning, fixed policy with uniform rebalancing")
+        print("="*80)
+        print("- Both agents use BASE PRICE (scalar=0.5)")
+        print("- UNIFORM rebalancing (distribute vehicles equally across regions)")
+        print("- Provides baseline for comparison")
+        print("="*80 + "\n")
     else:
         print("\n" + "="*50)
         print("NORMAL TRAINING MODE")
@@ -298,37 +314,43 @@ if not args.test:
         print("Agent will learn both pricing and rebalancing strategies")
         print("="*50 + "\n")
 
-    # Calculate input size based on price type
-    if args.use_od_prices:
-        # OD price matrices: T (future) + 3 (current_avb, queue, demand) + 2*nregion (own and competitor OD prices)
-        input_size = args.look_ahead + 3 + env.nregion
+    # Only create model if not in baseline mode (mode 3 or 4)
+    if args.mode not in [3, 4]:
+        # Calculate input size based on price type
+        if args.use_od_prices:
+            # OD price matrices: T (future) + 3 (current_avb, queue, demand) + 2*nregion (own and competitor OD prices)
+            input_size = args.look_ahead + 3 + env.nregion
+        else:
+            # Aggregated prices: T (future) + 3 (current_avb, queue, demand) + 2 (own and competitor aggregated prices)
+            input_size = args.look_ahead + 4
+
+        # Load the model 
+        model = A2C(
+                env=env,
+                input_size=input_size,
+                hidden_size=args.hidden_size,
+                device=device,
+                p_lr=args.p_lr,
+                q_lr=args.q_lr,
+                mode = args.mode,
+                T = args.look_ahead,
+                scale_factor = args.scale_factor,
+                json_file=f"data/scenario_{city}.json",
+                actor_clip=args.actor_clip,
+                critic_clip=args.critic_clip,
+                gamma=args.gamma,
+                use_od_prices=args.use_od_prices
+            )
+
+        if args.load:
+            print("load checkpoint")
+            checkpoint_path = f"ckpt/{args.checkpoint_path}_running.pth"
+            model.load_checkpoint(path=checkpoint_path)
+            print("loaded checkpoint from", checkpoint_path)
+        
+        model.train()  # set model in train mode
     else:
-        # Aggregated prices: T (future) + 3 (current_avb, queue, demand) + 2 (own and competitor aggregated prices)
-        input_size = args.look_ahead + 4
-
-    # Load the model 
-    model = A2C(
-            env=env,
-            input_size=input_size,
-            hidden_size=args.hidden_size,
-            device=device,
-            p_lr=args.p_lr,
-            q_lr=args.q_lr,
-            mode = args.mode,
-            T = args.look_ahead,
-            scale_factor = args.scale_factor,
-            json_file=f"data/scenario_{city}.json",
-            actor_clip=args.actor_clip,
-            critic_clip=args.critic_clip,
-            gamma=args.gamma,
-            use_od_prices=args.use_od_prices
-        )
-
-    if args.load:
-        print("load checkpoint")
-        checkpoint_path = f"ckpt/{args.checkpoint_path}_running.pth"
-        model.load_checkpoint(path=checkpoint_path)
-        print("loaded checkpoint from", checkpoint_path)
+        model = None  # No model needed for baseline modes
 
     #Initialize lists for logging
     log = {'train_reward': [], 
@@ -338,7 +360,6 @@ if not args.test:
     epochs = trange(train_episodes)  # epoch iterator
     best_reward = -np.inf  # set best reward
     best_reward_test = -np.inf  # set best reward
-    model.train()  # set model in train mode
 
     # Check metrics
     epoch_demand_list = []
@@ -366,11 +387,13 @@ if not args.test:
         episode_served_demand = 0
         episode_unserved_demand = 0
         episode_rebalancing_cost = 0
-        episode_rejected_demand = 0
         episode_total_revenue = 0
         episode_operating_cost = 0
         episode_waiting = 0
-        episode_rejection_rates = []
+        # System-level demand tracking (not agent-specific)
+        episode_rejected_demand = 0  # Total demand rejected by choice model
+        episode_total_demand = 0  # Total demand generated in system
+        episode_rejection_rates = []  # Track rejection rate per step
         episode_true_profit = 0
         episode_adjusted_profit = 0
         episode_unprofitable_trips = 0
@@ -383,7 +406,7 @@ if not args.test:
 
         while not done:
             if env.mode == 0:
-                obs, paxreward, done, info, _, _ = env.match_step_simple()
+                obs, paxreward, done, info, system_info, _, _ = env.match_step_simple()
                 episode_reward += paxreward
         
                 # Select action for rebalancing
@@ -413,7 +436,7 @@ if not args.test:
                 )
 
                 # Take rebalancing action in environment
-                new_obs, rebreward, done, info, _, _ = env.reb_step(rebAction)
+                new_obs, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
                 episode_reward += rebreward
                 
                 # Only add to model rewards if not in fixed baseline mode
@@ -421,7 +444,7 @@ if not args.test:
                     model.rewards.append(paxreward + rebreward)
 
             elif env.mode == 1:
-                obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+                obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
                 episode_reward += paxreward
                 
                 # Only add to model rewards if not in fixed baseline mode
@@ -438,24 +461,8 @@ if not args.test:
                 env.matching_update()
 
             elif env.mode == 2:
-                # Select action for pricing and rebalancing BEFORE matching
-                if args.fix_baseline:
-                    # Fixed baseline: create action with price scalar 0.5 and uniform rebalancing
-                    # Mode 2 action shape: [nregion, 2] where [:, 0] = price scalar, [:, 1] = reb action
-                    total_vehicles = sum(env.initial_acc.values())
-                    reb_action = np.array([
-                        env.initial_acc[env.region[i]] / total_vehicles 
-                        for i in range(env.nregion)
-                    ])
-                    action_rl = np.column_stack([
-                        np.array([0.5] * env.nregion),  # Price scalar = 0.5 (base price)
-                        reb_action  # Rebalancing proportions from initial distribution
-                    ])
-                else:
-                    action_rl = model.select_action(obs)
-                
-                # Perform matching with the pricing action
-                obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+                # Perform matching with the pricing action (from previous iteration or None for first)
+                obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
 
                 episode_reward += paxreward
 
@@ -487,33 +494,104 @@ if not args.test:
                     job_id=args.checkpoint_path  # Use checkpoint name to avoid conflicts
                 )
                 # Take rebalancing action in environment
-                new_obs, rebreward, done, info, _, _ = env.reb_step(rebAction)
+                new_obs, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
                 episode_reward += rebreward
                 
                 # Only add to model rewards if not in fixed baseline mode
                 if not args.fix_baseline:
                     model.rewards.append(paxreward + rebreward)
+                
+                # Update obs for next iteration
+                obs = new_obs
+                
+                # Select action for next iteration (pricing and rebalancing)
+                if args.fix_baseline:
+                    # Fixed baseline: create action with price scalar 0.5 and uniform rebalancing
+                    # Mode 2 action shape: [nregion, 2] where [:, 0] = price scalar, [:, 1] = reb action
+                    total_vehicles = sum(env.initial_acc.values())
+                    reb_action = np.array([
+                        env.initial_acc[env.region[i]] / total_vehicles 
+                        for i in range(env.nregion)
+                    ])
+                    action_rl = np.column_stack([
+                        np.array([0.5] * env.nregion),  # Price scalar = 0.5 (base price)
+                        reb_action  # Rebalancing proportions from initial distribution
+                    ])
+                else:
+                    action_rl = model.select_action(obs)
+            
+            elif env.mode == 3:
+                # === BASELINE MODE: No rebalancing, fixed prices ===
+                # Use fixed price (scalar = 0.5)
+                action_rl = np.array([0.5] * env.nregion)
+                
+                # Matching step with fixed prices
+                obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
+                
+                # Track rewards (no rebalancing cost in baseline)
+                episode_reward += paxreward
+                
+                # NO rebalancing step - just update vehicle arrivals from completed passenger trips
+                env.matching_update()
+            
+            elif env.mode == 4:
+                # === BASELINE MODE: Uniform rebalancing, fixed prices ===
+                # Use fixed price (scalar = 0.5)
+                action_rl = np.array([0.5] * env.nregion)
+                
+                # Matching step with fixed prices
+                obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
+                
+                # Track rewards
+                episode_reward += paxreward
+                
+                # Uniform rebalancing: distribute vehicles equally across all regions
+                current_total = dictsum(env.acc, env.time + 1)
+                base_per_region = current_total // env.nregion
+                remainder = current_total % env.nregion
+                desiredAcc = {
+                    env.region[i]: base_per_region + (1 if i < remainder else 0)
+                    for i in range(env.nregion)
+                }
+                
+                # Solve rebalancing flows
+                rebAction = solveRebFlow(
+                    env,
+                    "nyc_manhattan",
+                    desiredAcc,
+                    args.cplexpath,
+                    args.directory,
+                    job_id=args.checkpoint_path
+                )
+                
+                # Execute rebalancing step
+                _, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
+                episode_reward += rebreward
+            
             else:
-                raise ValueError("Only mode 0, 1, and 2 are allowed")
+                raise ValueError("Only mode 0, 1, 2, 3, and 4 are allowed")
             
             # track performance over episode
             episode_served_demand += info["served_demand"]
             episode_unserved_demand += info["unserved_demand"]
             episode_rebalancing_cost += info["rebalancing_cost"]
             episode_total_revenue += info["revenue"]
-            episode_rejected_demand += info["rejected_demand"]
             episode_operating_cost += info["operating_cost"]
             episode_waiting += info['served_waiting']
-            episode_rejection_rates.append(info['rejection_rate'])
             episode_true_profit += info['true_profit']
             episode_adjusted_profit += info['adjusted_profit']
             episode_unprofitable_trips += info['unprofitable_trips']
+            
+            # Track system-level metrics (not agent-specific)
+            episode_rejected_demand += system_info["rejected_demand"]
+            episode_total_demand += system_info["total_demand"]
+            episode_rejection_rates.append(system_info["rejection_rate"])
             
             # Track actions and prices
             if not args.fix_baseline:
                 actions.append(action_rl)
             
-            # Track price scalar for modes 1 and 2
+            # Track price scalar for modes 1, 2, 3, and 4
             if args.mode == 1:
                 if args.fix_baseline:
                     # Mode 1: action_rl is array of price scalars (all 0.5)
@@ -528,14 +606,17 @@ if not args.test:
                 else:
                     # Mode 2: action_rl[i][0] is the price scalar, action_rl[i][-1] is the rebalancing
                     actions_price.append(np.mean(2 * np.array(action_rl)[:, 0]))
+            elif args.mode in [3, 4]:
+                # Mode 3 and 4: Fixed price scalar of 0.5 (base price = 1.0)
+                actions_price.append(np.mean(2 * np.array(action_rl)))
 
             step += 1
 
-        # Only perform training step if not in fixed baseline mode
-        if not args.fix_baseline:
+        # Only perform training step if not in baseline mode
+        if args.mode not in [3, 4] and not args.fix_baseline:
             grad_norms = model.training_step()  # update model after episode and get metrics
         else:
-            # In fixed baseline mode, provide dummy grad norms for logging
+            # In baseline mode, provide dummy grad norms for logging
             grad_norms = {
                 "actor_grad_norm": 0.0,
                 "critic_grad_norm": 0.0,
@@ -566,7 +647,9 @@ if not args.test:
             # Demand section
             "demand/served": episode_served_demand,
             "demand/unserved": episode_unserved_demand,
+            "demand/total_demand": episode_total_demand,
             "demand/rejected": episode_rejected_demand,
+            "demand/rejection_rate": np.mean(episode_rejection_rates) if len(episode_rejection_rates) > 0 else 0,
             "demand/unprofitable_trips": episode_unprofitable_trips,
             
             # Revenue and costs section
@@ -608,22 +691,23 @@ if not args.test:
         epochs.set_description(
                     f"Episode {i_episode+1} | Reward: {episode_reward:.2f} | Grad Norms: Actor={grad_norms['actor_grad_norm']:.2f}, Critic={grad_norms['critic_grad_norm']:.2f}| Loss: Actor ={grad_norms['actor_loss']:.2f}, Critic={grad_norms['critic_loss']:.2f}"
                 )
-        # Checkpoint best performing model
-        if episode_reward >= best_reward:
-            model.save_checkpoint(
-                path=f"ckpt/{args.checkpoint_path}_sample.pth")
-            best_reward = episode_reward
-        model.save_checkpoint(path=f"ckpt/{args.checkpoint_path}_running.pth")
-        if i_episode % 100 == 0:
-                model.eval()
-                test_reward, test_served_demand, test_rebalancing_cost = model.test_agent(
-                    10, env, args.cplexpath, args.directory)
-                model.train()
+        # Checkpoint best performing model (skip for baseline modes 3 and 4)
+        if args.mode not in [3, 4]:
+            if episode_reward >= best_reward:
+                model.save_checkpoint(
+                    path=f"ckpt/{args.checkpoint_path}_sample.pth")
+                best_reward = episode_reward
+            model.save_checkpoint(path=f"ckpt/{args.checkpoint_path}_running.pth")
+            if i_episode % 100 == 0:
+                    model.eval()
+                    test_reward, test_served_demand, test_rebalancing_cost = model.test_agent(
+                        10, env, args.cplexpath, args.directory)
+                    model.train()
 
-                if test_reward >= best_reward_test:
-                    best_reward_test = test_reward
-                    model.save_checkpoint(
-                        path=f"ckpt/{args.checkpoint_path}_test.pth")
+                    if test_reward >= best_reward_test:
+                        best_reward_test = test_reward
+                        model.save_checkpoint(
+                            path=f"ckpt/{args.checkpoint_path}_test.pth")
     
     wandb.finish()
     metricPath = f"{args.directory}/train_logs/"
@@ -653,43 +737,64 @@ else:
     # Create the environment
     env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, loss_aversion=args.loss_aversion, fix_baseline=args.fix_baseline)
 
-    # Calculate input size based on price type
-    if args.use_od_prices:
-        # OD price matrices: T (future) + 3 (current_avb, queue, demand) + 2*nregion (own and competitor OD prices)
-        input_size = args.look_ahead + 3 + env.nregion
-    else:
-        # Aggregated prices: T (future) + 3 (current_avb, queue, demand) + 2 (own and competitor aggregated prices)
-        input_size = args.look_ahead + 4
+    # Only create model if not in baseline mode (mode 3 or 4)
+    if args.mode not in [3, 4]:
+        # Calculate input size based on price type
+        if args.use_od_prices:
+            # OD price matrices: T (future) + 3 (current_avb, queue, demand) + 2*nregion (own and competitor OD prices)
+            input_size = args.look_ahead + 3 + env.nregion
+        else:
+            # Aggregated prices: T (future) + 3 (current_avb, queue, demand) + 2 (own and competitor aggregated prices)
+            input_size = args.look_ahead + 4
 
-    # Load the model 
-    model = A2C(
-            env=env,
-            input_size=input_size,
-            hidden_size=args.hidden_size,
-            device=device,
-            p_lr=args.p_lr,
-            q_lr=args.q_lr,
-            mode = args.mode,
-            T = args.look_ahead,
-            scale_factor = args.scale_factor,
-            json_file=f"data/scenario_{city}.json",
-            actor_clip=args.actor_clip,
-            critic_clip=args.critic_clip,
-            gamma=args.gamma,
-            use_od_prices=args.use_od_prices
-        )
+        # Load the model 
+        model = A2C(
+                env=env,
+                input_size=input_size,
+                hidden_size=args.hidden_size,
+                device=device,
+                p_lr=args.p_lr,
+                q_lr=args.q_lr,
+                mode = args.mode,
+                T = args.look_ahead,
+                scale_factor = args.scale_factor,
+                json_file=f"data/scenario_{city}.json",
+                actor_clip=args.actor_clip,
+                critic_clip=args.critic_clip,
+                gamma=args.gamma,
+                use_od_prices=args.use_od_prices
+            )
 
-    if args.load:
-        print("load checkpoint")
-        checkpoint_path = f"ckpt/{args.checkpoint_path}_running.pth"
-        model.load_checkpoint(path=checkpoint_path)
-        print("loaded checkpoint from", checkpoint_path)
+        if args.load:
+            print("load checkpoint")
+            checkpoint_path = f"ckpt/{args.checkpoint_path}_running.pth"
+            model.load_checkpoint(path=checkpoint_path)
+            print("loaded checkpoint from", checkpoint_path)
+        
+        model.eval()  # set model in evaluation mode for testing
+    elif args.mode == 3:
+        print("\n" + "="*80)
+        print("TEST MODE - BASELINE (Mode 3): No learning, fixed policy")
+        print("="*80)
+        print("- Using BASE PRICE (scalar=0.5)")
+        print("- NO rebalancing (vehicles stay where trips end)")
+        print("- Provides baseline for comparison")
+        print("="*80 + "\n")
+        model = None
+    elif args.mode == 4:
+        print("\n" + "="*80)
+        print("TEST MODE - BASELINE (Mode 4): No learning, fixed policy with uniform rebalancing")
+        print("="*80)
+        print("- Using BASE PRICE (scalar=0.5)")
+        print("- UNIFORM rebalancing (distribute vehicles equally across regions)")
+        print("- Provides baseline for comparison")
+        print("="*80 + "\n")
+        model = None
 
     test_episodes = args.max_episodes  # set max number of training episodes
     epochs = trange(test_episodes)  # epoch iterator
     best_reward = -np.inf  # set best reward
     best_reward_test = -np.inf  # set best reward
-    model.eval()  # set model in evaluation mode for testing
 
      # Initialize lists for logging
     log = {"test_reward": [], "test_served_demand": [], "test_reb_cost": []}
@@ -736,7 +841,7 @@ else:
 
         while not done:
             if env.mode == 0:
-                obs, paxreward, done, info, _, _ = env.match_step_simple()
+                obs, paxreward, done, info, system_info, _, _ = env.match_step_simple()
                 episode_reward += paxreward
         
                 action_rl = model.select_action(obs, deterministic=True)  # Choose an action
@@ -756,17 +861,17 @@ else:
                 )
 
                 # Take rebalancing action in environment
-                _, rebreward, done, _, _, _ = env.reb_step(rebAction)
+                _, rebreward, done, _, system_info, _, _ = env.reb_step(rebAction)
                 episode_reward += rebreward
                 
             elif env.mode == 1:
-                obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+                obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
                 episode_reward += paxreward
                 action_rl = model.select_action(obs, deterministic=True)  # Choose an action
                 env.matching_update()
 
             elif env.mode == 2:
-                obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+                obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
                 episode_reward += paxreward
 
                 action_rl = model.select_action(obs, deterministic=True)  # Choose an action)
@@ -789,10 +894,59 @@ else:
                 )
 
                 # Take rebalancing action in environment
-                _, rebreward, done, info, _, _ = env.reb_step(rebAction)
+                _, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
                 episode_reward += rebreward 
+            
+            elif env.mode == 3:
+                # === BASELINE MODE: No rebalancing, fixed prices ===
+                # Use fixed price (scalar = 0.5)
+                action_rl = np.array([0.5] * env.nregion)
+                
+                # Matching step with fixed prices
+                obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
+                
+                # Track rewards (no rebalancing cost in baseline)
+                episode_reward += paxreward
+                
+                # NO rebalancing step - just update vehicle arrivals from completed passenger trips
+                env.matching_update()
+            
+            elif env.mode == 4:
+                # === BASELINE MODE: Uniform rebalancing, fixed prices ===
+                # Use fixed price (scalar = 0.5)
+                action_rl = np.array([0.5] * env.nregion)
+                
+                # Matching step with fixed prices
+                obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
+                
+                # Track rewards
+                episode_reward += paxreward
+                
+                # Uniform rebalancing: distribute vehicles equally across all regions
+                current_total = dictsum(env.acc, env.time + 1)
+                base_per_region = current_total // env.nregion
+                remainder = current_total % env.nregion
+                desiredAcc = {
+                    env.region[i]: base_per_region + (1 if i < remainder else 0)
+                    for i in range(env.nregion)
+                }
+                
+                # Solve rebalancing flows
+                rebAction = solveRebFlow(
+                    env,
+                    "nyc_manhattan",
+                    desiredAcc,
+                    args.cplexpath,
+                    args.directory,
+                    job_id=args.checkpoint_path
+                )
+                
+                # Execute rebalancing step
+                _, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
+                episode_reward += rebreward
+            
             else:
-                raise ValueError("Only mode 0, 1, and 2 are allowed")
+                raise ValueError("Only mode 0, 1, 2, 3, and 4 are allowed")
             
             episode_served_demand += info["served_demand"]
             episode_rebalancing_cost += info["rebalancing_cost"]
@@ -802,6 +956,9 @@ else:
                 actions_price.append(np.mean(2*np.array(action_rl)))
             elif args.mode == 2:
                 actions_price.append(np.mean(2*np.array(action_rl)[:,0]))
+            elif args.mode in [3, 4]:
+                # Mode 3 and 4: Fixed price scalar of 0.5 (base price = 1.0)
+                actions_price.append(np.mean(2*np.array(action_rl)))
             rebalancing_cost.append(info["rebalancing_cost"])
             # queue.append([len(env.queue[i]) for i in sorted(env.queue.keys())])
             queue.append(np.mean([len(env.queue[i]) for i in env.queue.keys()]))
