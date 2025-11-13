@@ -245,6 +245,13 @@ parser.add_argument(
     help="Fix baseline behavior: use base price and initial vehicle distribution (default: False)",
 )
 
+parser.add_argument(
+    "--entropy_coef",
+    type=float,
+    default=0.2,
+    help="Entropy regularization coefficient (default: 0.2)",
+)
+
 # Parser arguments
 args = parser.parse_args()
 
@@ -339,7 +346,8 @@ if not args.test:
                 actor_clip=args.actor_clip,
                 critic_clip=args.critic_clip,
                 gamma=args.gamma,
-                use_od_prices=args.use_od_prices
+                use_od_prices=args.use_od_prices,
+                entropy_coef=args.entropy_coef
             )
 
         if args.load:
@@ -462,9 +470,29 @@ if not args.test:
 
             elif env.mode == 2:
                 # Perform matching with the pricing action (from previous iteration or None for first)
-                obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
+                # Extract pricing action (first column) if action_rl exists
+                pricing_action = action_rl[:, 0] if action_rl is not None else None
+                    
+                obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(pricing_action)
 
                 episode_reward += paxreward
+                
+                # Select action BEFORE reb_step (while acc[n][time+1] still exists)
+                # This matches the multi-agent flow
+                if args.fix_baseline:
+                    # Fixed baseline: create action with price scalar 0.5 and uniform rebalancing
+                    # Mode 2 action shape: [nregion, 2] where [:, 0] = price scalar, [:, 1] = reb action
+                    total_vehicles = sum(env.initial_acc.values())
+                    reb_action_prop = np.array([
+                        env.initial_acc[env.region[i]] / total_vehicles 
+                        for i in range(env.nregion)
+                    ])
+                    action_rl = np.column_stack([
+                        np.array([0.5] * env.nregion),  # Price scalar = 0.5 (base price)
+                        reb_action_prop  # Rebalancing proportions from initial distribution
+                    ])
+                else:
+                    action_rl = model.select_action(obs)
 
                 # Compute desired accumulation for rebalancing
                 if args.fix_baseline:
@@ -477,7 +505,7 @@ if not args.test:
                         for i in range(env.nregion)
                     }
                 else:
-                    # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
+                    # Use the newly selected action for rebalancing
                     desiredAcc = {
                         env.region[i]: int(
                             action_rl[i][-1] * dictsum(env.acc, env.time + 1))
@@ -503,22 +531,6 @@ if not args.test:
                 
                 # Update obs for next iteration
                 obs = new_obs
-                
-                # Select action for next iteration (pricing and rebalancing)
-                if args.fix_baseline:
-                    # Fixed baseline: create action with price scalar 0.5 and uniform rebalancing
-                    # Mode 2 action shape: [nregion, 2] where [:, 0] = price scalar, [:, 1] = reb action
-                    total_vehicles = sum(env.initial_acc.values())
-                    reb_action = np.array([
-                        env.initial_acc[env.region[i]] / total_vehicles 
-                        for i in range(env.nregion)
-                    ])
-                    action_rl = np.column_stack([
-                        np.array([0.5] * env.nregion),  # Price scalar = 0.5 (base price)
-                        reb_action  # Rebalancing proportions from initial distribution
-                    ])
-                else:
-                    action_rl = model.select_action(obs)
             
             elif env.mode == 3:
                 # === BASELINE MODE: No rebalancing, fixed prices ===
@@ -662,6 +674,11 @@ if not args.test:
             
             # Training metrics section
             "training/actor_loss": grad_norms['actor_loss'],
+            "training/policy_loss": grad_norms.get('policy_loss', 0.0),
+            "training/entropy": grad_norms.get('entropy', 0.0),
+            "training/entropy_bonus": grad_norms.get('entropy_bonus', 0.0),
+            "training/advantage_mean": grad_norms.get('advantage_mean', 0.0),
+            "training/advantage_std": grad_norms.get('advantage_std', 0.0),
             "training/critic_loss": grad_norms['critic_loss'],
             "training/actor_grad_norm": grad_norms['actor_grad_norm'],
             "training/critic_grad_norm": grad_norms['critic_grad_norm'],
@@ -762,7 +779,8 @@ else:
                 actor_clip=args.actor_clip,
                 critic_clip=args.critic_clip,
                 gamma=args.gamma,
-                use_od_prices=args.use_od_prices
+                use_od_prices=args.use_od_prices,
+                entropy_coef=args.entropy_coef
             )
 
         if args.load:

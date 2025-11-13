@@ -221,9 +221,10 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
 
 # Define calibrated simulation parameters
 demand_ratio = {'san_francisco': 2, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1.8,
-                'nyc_man_south': 1.8, 'nyc_brooklyn': 9, 'nyc_manhattan': 2, 'porto': 4, 'rome': 1.8, 'shenzhen_baoan': 2.5,
+                'nyc_man_south': 1.8, 'nyc_brooklyn': 9, 'nyc_manhattan': 2.0, 'porto': 4, 'rome': 1.8, 'shenzhen_baoan': 2.5,
                 'shenzhen_downtown_west': 2.5, 'shenzhen_downtown_east': 3, 'shenzhen_north': 3
                }
+# Downscaled demand = 0.06
 json_hr = {'san_francisco':19, 'washington_dc': 19, 'chicago': 19, 'nyc_man_north': 19, 'nyc_man_middle': 19,
            'nyc_man_south': 19, 'nyc_brooklyn': 19, 'nyc_manhattan': 19, 'porto': 8, 'rome': 8, 'shenzhen_baoan': 8,
            'shenzhen_downtown_west': 8, 'shenzhen_downtown_east': 8, 'shenzhen_north': 8
@@ -459,6 +460,13 @@ parser.add_argument(
     help="Loss aversion multiplier for unprofitable trips (default: 2.0)",
 )
 
+parser.add_argument(
+    "--entropy_coef",
+    type=float,
+    default=0.2,
+    help="Entropy regularization coefficient (default: 0.2)",
+)
+
 # Parser arguments
 args = parser.parse_args()
 
@@ -466,14 +474,14 @@ args = parser.parse_args()
 args.cuda = args.cuda and torch.cuda.is_available()
 device = torch.device("cuda" if args.cuda else "cpu")
 
-# Set up weights and biases
-wandb.login(key=os.getenv('WANDB_API_KEY'))
-
-run = wandb.init(
-    project="thesis",
-    name=args.checkpoint_path,
-    config=args,
-)
+# Set up weights and biases (only for training mode)
+if not args.test:
+    wandb.login(key=os.getenv('WANDB_API_KEY'))
+    run = wandb.init(
+        project="thesis",
+        name=args.checkpoint_path,
+        config=args,
+    )
 
 # Set city
 city = args.city
@@ -542,7 +550,8 @@ if not args.test:
                     critic_clip=args.critic_clip,
                     gamma=args.gamma,
                     agent_id = a,
-                    use_od_prices = args.use_od_prices
+                    use_od_prices = args.use_od_prices,
+                    entropy_coef=args.entropy_coef
                 )
                 for a in [0, 1]
             }
@@ -996,6 +1005,9 @@ if not args.test:
         "agent0/actor_grad_norm": grad_norms[0]["actor_grad_norm"],
         "agent0/critic_grad_norm": grad_norms[0]["critic_grad_norm"],
         "agent0/actor_loss": grad_norms[0]["actor_loss"],
+        "agent0/policy_loss": grad_norms[0]["policy_loss"],
+        "agent0/entropy": grad_norms[0]["entropy"],
+        "agent0/entropy_bonus": grad_norms[0]["entropy_bonus"],
         "agent0/critic_loss": grad_norms[0]["critic_loss"],
         # New diagnostic metrics for Agent 0
         "agent0/actor_grad_norm_before_clip": grad_norms[0]["actor_grad_norm_before_clip"],
@@ -1025,6 +1037,9 @@ if not args.test:
         "agent1/actor_grad_norm": grad_norms[1]["actor_grad_norm"],
         "agent1/critic_grad_norm": grad_norms[1]["critic_grad_norm"],
         "agent1/actor_loss": grad_norms[1]["actor_loss"],
+        "agent1/policy_loss": grad_norms[1]["policy_loss"],
+        "agent1/entropy": grad_norms[1]["entropy"],
+        "agent1/entropy_bonus": grad_norms[1]["entropy_bonus"],
         "agent1/critic_loss": grad_norms[1]["critic_loss"],
         # New diagnostic metrics for Agent 1
         "agent1/actor_grad_norm_before_clip": grad_norms[1]["actor_grad_norm_before_clip"],
@@ -1230,6 +1245,7 @@ else:
                     gamma=args.gamma,
                     agent_id = a,
                     use_od_prices = args.use_od_prices,
+                    entropy_coef=args.entropy_coef
                 )
                 for a in [0, 1]
             }
@@ -1286,6 +1302,23 @@ else:
 
     # Storage for trip data from last episode
     trip_data_last_episode = []
+    
+    # Storage for temporal visualization data from last episode (agent actions)
+    visualization_data = {
+        'agent_price_scalars': {0: [], 1: []},      # {agent_id: [timestep actions]} - List of price scalar arrays per timestep
+        'agent_reb_actions': {0: [], 1: []},        # {agent_id: [timestep actions]} - List of rebalancing action arrays per timestep
+        'agent_acc_temporal': {0: [], 1: []},       # {agent_id: [timestep states]} - Vehicle availability at each timestep
+        'metadata': {
+            'num_regions': env.nregion,
+            'num_timesteps': args.max_steps,
+            'city': city,
+            'mode': args.mode,
+            'fix_agent': args.fix_agent,
+            'max_episodes': args.max_episodes,
+            'checkpoint_path': args.checkpoint_path,
+            'regions': list(env.region)
+        }
+    }
     
     for episode in range(10):
         eps_reward = {0: 0, 1: 0}
@@ -1344,6 +1377,14 @@ else:
                     if a != args.fix_agent:
                         actions_concentration_dirichlet[a].append(np.mean(concentrations[a]))
 
+                # Track rebalancing actions for visualization (last episode only)
+                if episode == 9:
+                    for a in [0, 1]:
+                        visualization_data['agent_reb_actions'][a].append(action_rl[a].copy())
+                        # Track current vehicle availability
+                        acc_current = np.array([env.agent_acc[a].get(env.region[i], {}).get(env.time, 0) for i in range(env.nregion)])
+                        visualization_data['agent_acc_temporal'][a].append(acc_current)
+
                 # Compute desired accumulation for all agents
                 desiredAcc = {}
                 for a in [0, 1]:
@@ -1399,6 +1440,14 @@ else:
                         actions_concentration_alpha[a].append(np.mean(concentrations[a][:, 0]))
                         actions_concentration_beta[a].append(np.mean(concentrations[a][:, 1]))
 
+                # Track price scalars for visualization (last episode only)
+                if episode == 9:
+                    for a in [0, 1]:
+                        visualization_data['agent_price_scalars'][a].append(action_rl[a].copy())
+                        # Track current vehicle availability
+                        acc_current = np.array([env.agent_acc[a].get(env.region[i], {}).get(env.time, 0) for i in range(env.nregion)])
+                        visualization_data['agent_acc_temporal'][a].append(acc_current)
+
                 # Matching update (global step)
                 env.matching_update()
             
@@ -1445,6 +1494,15 @@ else:
                         actions_concentration_beta[a].append(np.mean(concentrations[a][:, 1]))
                         actions_concentration_dirichlet[a].append(np.mean(concentrations[a][:, 2]))
 
+                # Track price scalars and rebalancing actions for visualization (last episode only)
+                if episode == 9:
+                    for a in [0, 1]:
+                        visualization_data['agent_price_scalars'][a].append(action_rl[a][:, 0].copy())  # Price scalars
+                        visualization_data['agent_reb_actions'][a].append(action_rl[a][:, 1].copy())   # Reb actions
+                        # Track current vehicle availability
+                        acc_current = np.array([env.agent_acc[a].get(env.region[i], {}).get(env.time, 0) for i in range(env.nregion)])
+                        visualization_data['agent_acc_temporal'][a].append(acc_current)
+
                 # --- Desired Acc computation ---
                 # Compute desired accumulation for all agents
                 desiredAcc = {}
@@ -1488,6 +1546,14 @@ else:
                 for a in [0, 1]:
                     actions_price[a].append(1.0)
                 
+                # Track price scalars for visualization (last episode only)
+                if episode == 9:
+                    for a in [0, 1]:
+                        visualization_data['agent_price_scalars'][a].append(action_rl[a].copy())
+                        # Track current vehicle availability
+                        acc_current = np.array([env.agent_acc[a].get(env.region[i], {}).get(env.time, 0) for i in range(env.nregion)])
+                        visualization_data['agent_acc_temporal'][a].append(acc_current)
+                
                 # NO rebalancing step - just update vehicle arrivals from completed passenger trips
                 env.matching_update()
             
@@ -1521,6 +1587,17 @@ else:
                         env.region[i]: base_per_region + (1 if i < remainder else 0)
                         for i in range(env.nregion)
                     }
+                
+                # Track uniform rebalancing actions for visualization (last episode only)
+                if episode == 9:
+                    for a in [0, 1]:
+                        uniform_reb_action = np.array([base_per_region + (1 if i < remainder else 0) for i in range(env.nregion)])
+                        uniform_reb_action = uniform_reb_action / current_total if current_total > 0 else uniform_reb_action
+                        visualization_data['agent_reb_actions'][a].append(uniform_reb_action)
+                        visualization_data['agent_price_scalars'][a].append(action_rl[a].copy())
+                        # Track current vehicle availability
+                        acc_current = np.array([env.agent_acc[a].get(env.region[i], {}).get(env.time, 0) for i in range(env.nregion)])
+                        visualization_data['agent_acc_temporal'][a].append(acc_current)
                 
                 # Compute rebalancing flows for both agents
                 rebAction = {
@@ -1605,6 +1682,30 @@ else:
             trip_data_last_episode = env.get_trip_assignments()
 
     # After all episodes, compute statistics across episodes for multi-agent case
+    
+    # Save visualization data from last episode to pickle file
+    visualization_filename = f"{args.directory}/visualization_data/{args.checkpoint_path}_viz_data.pkl"
+    os.makedirs(f"{args.directory}/visualization_data", exist_ok=True)
+    
+    # Convert lists to numpy arrays for easier handling
+    for agent_id in [0, 1]:
+        if len(visualization_data['agent_price_scalars'][agent_id]) > 0:
+            visualization_data['agent_price_scalars'][agent_id] = np.array(visualization_data['agent_price_scalars'][agent_id])
+        if len(visualization_data['agent_reb_actions'][agent_id]) > 0:
+            visualization_data['agent_reb_actions'][agent_id] = np.array(visualization_data['agent_reb_actions'][agent_id])
+        if len(visualization_data['agent_acc_temporal'][agent_id]) > 0:
+            visualization_data['agent_acc_temporal'][agent_id] = np.array(visualization_data['agent_acc_temporal'][agent_id])
+    
+    with open(visualization_filename, 'wb') as f:
+        pickle.dump(visualization_data, f)
+    
+    print(f"\n{'='*80}")
+    print(f"Visualization data saved to {visualization_filename}")
+    print(f"Data structure:")
+    print(f"  - agent_price_scalars: {[visualization_data['agent_price_scalars'][a].shape if len(visualization_data['agent_price_scalars'][a]) > 0 else 'empty' for a in [0, 1]]}")
+    print(f"  - agent_reb_actions: {[visualization_data['agent_reb_actions'][a].shape if len(visualization_data['agent_reb_actions'][a]) > 0 else 'empty' for a in [0, 1]]}")
+    print(f"  - agent_acc_temporal: {[visualization_data['agent_acc_temporal'][a].shape if len(visualization_data['agent_acc_temporal'][a]) > 0 else 'empty' for a in [0, 1]]}")
+    print(f"{'='*80}\n")
     
     # Save trip data from last episode to CSV
     if trip_data_last_episode:

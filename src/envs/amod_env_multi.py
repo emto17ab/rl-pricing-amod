@@ -242,7 +242,8 @@ class AMoD:
                 # price[agent_id] is a list of scalars, one per region/node
                 # price[agent_id][n] is the price scalar for node n (from Beta distribution)
                 # Skip price update if price is None or all zeros (first step of episode). Then it just applies baseline prices.
-                if price is not None and np.sum([np.sum(price[a]) for a in self.agents]) != 0:
+                # Mode 0 (rebalancing only) should NOT modify prices at all
+                if self.mode != 0 and price is not None and np.sum([np.sum(price[a]) for a in self.agents]) != 0:
                     for agent_id in self.agents:
                         # Get baseline price for this O-D pair
                         baseline_price = self.agent_price[agent_id][n, j][t]
@@ -290,8 +291,8 @@ class AMoD:
                 income_effect = 25 / wage
 
                 # Compute utilities for all agents
-                U_0 = 7.84 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr0
-                U_1 = 7.84 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr1
+                U_0 = 15.0 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr0
+                U_1 = 15.0 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr1
                 
                 # Always include both agents in the choice set
                 # (Fixed agent will use base price due to scalar 0.5)

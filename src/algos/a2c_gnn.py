@@ -9,7 +9,7 @@ from collections import namedtuple
 from src.algos.reb_flow_solver import solveRebFlow
 from src.misc.utils import dictsum, nestdictsum
 
-SavedAction = namedtuple('SavedAction', ['log_prob', 'value'])
+SavedAction = namedtuple('SavedAction', ['log_prob', 'value', 'entropy'])
 
 class GNNParser:
     """
@@ -94,7 +94,8 @@ class A2C(nn.Module):
         critic_clip,   # gradient clipping value for critic
         scale_factor,
         json_file = None,
-        use_od_prices = False, 
+        use_od_prices = False,
+        entropy_coef = 0.2,  # entropy regularization coefficient
         eps=np.finfo(np.float32).eps.item()
     ):
         
@@ -132,6 +133,9 @@ class A2C(nn.Module):
 
         # Set gamma parameter
         self.gamma = gamma
+        
+        # Set entropy coefficient
+        self.entropy_coef = entropy_coef
 
         # Set gradient clipping values
         self.actor_clip = actor_clip
@@ -151,15 +155,15 @@ class A2C(nn.Module):
         # Parse the observation to get the graph data
         state = self.parse_obs(obs).to(self.device)
 
-        # Forward pass through actor network to get action and log probability        
-        a, logprob, concentration = self.actor(state, deterministic=deterministic)
+        # Forward pass through actor network to get action, log probability, and entropy
+        a, logprob, concentration, entropy = self.actor(state, deterministic=deterministic)
         
         # Forward pass through critic network to get state value estimate
         value = self.critic(state)
         
         # Only save actions for training (when not deterministic)
         if not deterministic:
-            self.saved_actions.append(SavedAction(logprob, value))
+            self.saved_actions.append(SavedAction(logprob, value, entropy))
     
         action_np = a.detach().cpu().numpy()
 
@@ -167,14 +171,11 @@ class A2C(nn.Module):
         # Mode 0 & 1: shape [nregion, 1] -> flatten to [nregion]
         # Mode 2: shape [nregion, 2] -> keep as 2D [[price, reb], ...]
         if action_np.shape[-1] == 1:
-            # Mode 0 or 1: squeeze last dimension
-            action_list = action_np.squeeze(-1).tolist()
+            # Mode 0 or 1: squeeze last dimension to get 1D array
+            return action_np.squeeze(-1)
         else:
-            # Mode 2: keep 2D structure
-            action_list = action_np.tolist()
-        
-        # Return the action to be executed in the environment
-        return action_list
+            # Mode 2: return 2D array as-is
+            return action_np
 
     def training_step(self):
         R = 0
@@ -182,6 +183,8 @@ class A2C(nn.Module):
         policy_losses = [] # list to save actor (policy) loss
         value_losses = [] # list to save critic (value) loss
         returns = [] # list to save the true values
+        advantages_list = [] # list to track advantages
+        entropies_list = [] # list to track entropies
 
         # calculate the true value using rewards returned from the environment
         for r in self.rewards[::-1]:
@@ -192,19 +195,37 @@ class A2C(nn.Module):
         returns = torch.tensor(returns).to(self.device)
         returns = (returns - returns.mean()) / (returns.std() + self.eps)
 
-        for (log_prob, value), R in zip(saved_actions, returns):
+        for (log_prob, value, entropy), R in zip(saved_actions, returns):
             advantage = R - value.item()
+            advantages_list.append(advantage)
 
-            # calculate actor (policy) loss with entropy regularization
+            # calculate actor (policy) loss: negative log prob * advantage
             policy_losses.append(-log_prob * advantage)
+            
+            # Store entropy for tracking and regularization
+            if entropy is not None:
+                entropies_list.append(entropy)
 
             # calculate critic (value) loss using L1 smooth loss
             #value_losses.append(F.smooth_l1_loss(value, R.unsqueeze(0)))
             value_losses.append(F.smooth_l1_loss(value, torch.tensor([R]).to(self.device)))
 
+        # Calculate mean policy loss
+        policy_loss_mean = torch.stack(policy_losses).mean()
+        
+        # Calculate entropy bonus (negative because we want to maximize entropy)
+        if len(entropies_list) > 0:
+            entropy_mean = torch.stack(entropies_list).mean()
+            entropy_bonus = self.entropy_coef * entropy_mean
+        else:
+            entropy_mean = torch.tensor(0.0).to(self.device)
+            entropy_bonus = torch.tensor(0.0).to(self.device)
+        
+        # Combined actor loss: policy loss - entropy bonus (subtract because we want to maximize entropy)
+        a_loss = policy_loss_mean - entropy_bonus
+
         # take gradient steps with clipping
         self.optimizers['a_optimizer'].zero_grad()
-        a_loss = torch.stack(policy_losses).mean()
         a_loss.backward()
 
         # Gradient clipping for actor
@@ -228,6 +249,11 @@ class A2C(nn.Module):
             "actor_grad_norm": actor_grad_norm.item(),
             "critic_grad_norm": critic_grad_norm.item(),
             "actor_loss": a_loss.item(),
+            "policy_loss": policy_loss_mean.item(),
+            "entropy": entropy_mean.item(),
+            "entropy_bonus": entropy_bonus.item(),
+            "advantage_mean": np.mean(advantages_list),
+            "advantage_std": np.std(advantages_list),
             "critic_loss": v_loss.item()
         }
 
@@ -279,7 +305,7 @@ class A2C(nn.Module):
             while not done:
 
                 if env.mode == 0:
-                    obs, paxreward, done, info, _, _ = env.match_step_simple()
+                    obs, paxreward, done, info, system_info, _, _ = env.match_step_simple()
                     eps_reward += paxreward
             
                     action_rl = self.select_action(obs, deterministic=True)  # Choose an action
@@ -298,17 +324,17 @@ class A2C(nn.Module):
                     )
 
                     # Take rebalancing action in environment
-                    _, rebreward, done, _, _, _ = env.reb_step(rebAction)
+                    _, rebreward, done, _, system_info, _, _ = env.reb_step(rebAction)
                     eps_reward += rebreward
                     
                 elif env.mode == 1:
-                    obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+                    obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
                     eps_reward += paxreward
                     action_rl = self.select_action(obs, deterministic=True)  # Choose an action
                     env.matching_update()
 
                 elif env.mode == 2:
-                    obs, paxreward, done, info, _, _ = env.match_step_simple(action_rl)
+                    obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
                     eps_reward += paxreward
 
                     action_rl = self.select_action(obs, deterministic=True)  # Choose an action)
@@ -330,7 +356,7 @@ class A2C(nn.Module):
                     )
 
                     # Take rebalancing action in environment
-                    _, rebreward, done, info, _, _ = env.reb_step(rebAction)
+                    _, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
                     eps_reward += rebreward 
                 else:
                     raise ValueError("Only mode 0, 1, and 2 are allowed")  

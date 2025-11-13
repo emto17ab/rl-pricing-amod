@@ -183,7 +183,7 @@ class AMoD:
 
                 income_effect = 25 / wage
 
-                utility_agent = 7.84 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * current_price
+                utility_agent = 15.0 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * current_price
 
                 exp_utilities.append(np.exp(utility_agent))
                 labels.append("agent")

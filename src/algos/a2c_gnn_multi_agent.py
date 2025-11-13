@@ -11,7 +11,7 @@ from src.misc.utils import dictsum, nestdictsum
 import datetime
 import os
 
-SavedAction = namedtuple('SavedAction', ['log_prob', 'value'])
+SavedAction = namedtuple('SavedAction', ['log_prob', 'value', 'entropy'])
 
 class GNNParser:
     """
@@ -128,6 +128,7 @@ class A2C(nn.Module):
         agent_id,
         json_file,
         use_od_prices,
+        entropy_coef = 0.2,  # entropy regularization coefficient
         eps=np.finfo(np.float32).eps.item(),
     ):
         
@@ -167,6 +168,9 @@ class A2C(nn.Module):
 
         # Set gamma parameter
         self.gamma = gamma
+        
+        # Set entropy coefficient
+        self.entropy_coef = entropy_coef
 
         # Set gradient clipping values
         self.actor_clip = actor_clip
@@ -283,8 +287,8 @@ class A2C(nn.Module):
         # Parse the observation to get the graph data
         state = self.parse_obs(obs).to(self.device)
 
-        # Forward pass through actor network to get action, log probability, and concentration
-        a, logprob, concentration = self.actor(state, deterministic=deterministic)
+        # Forward pass through actor network to get action, log probability, concentration, and entropy
+        a, logprob, concentration, entropy = self.actor(state, deterministic=deterministic)
         
         # Forward pass through critic network to get state value estimate
         value = self.critic(state)
@@ -304,7 +308,7 @@ class A2C(nn.Module):
             if (self.enable_step_logging or log_step) and step_num is not None:
                 self.log_step_details(step_num, reward_received=None)
             
-            self.saved_actions.append(SavedAction(logprob, value))
+            self.saved_actions.append(SavedAction(logprob, value, entropy))
     
         # Convert to numpy array
         action_np = a.detach().cpu().numpy()
@@ -313,18 +317,18 @@ class A2C(nn.Module):
         # Mode 0 & 1: shape [nregion, 1] -> flatten to [nregion]
         # Mode 2: shape [nregion, 2] -> keep as 2D [[price, reb], ...]
         if action_np.shape[-1] == 1:
-            # Mode 0 or 1: squeeze last dimension
-            action_list = action_np.squeeze(-1).tolist()
+            # Mode 0 or 1: squeeze last dimension to get 1D array
+            action_array = action_np.squeeze(-1)
         else:
-            # Mode 2: keep 2D structure
-            action_list = action_np.tolist()
+            # Mode 2: return 2D array as-is
+            action_array = action_np
         
         # Return the action and optionally concentration parameter
         if return_concentration:
             concentration_value = concentration.detach().cpu().numpy()
-            return action_list, concentration_value
+            return action_array, concentration_value
         else:
-            return action_list
+            return action_array
 
     def training_step(self):
         R = 0
@@ -357,13 +361,16 @@ class A2C(nn.Module):
         raw_advantages = []
         values_list = []
         log_probs_list = []
+        entropies_list = []
         
-        for (log_prob, value), R in zip(saved_actions, returns):
+        for (log_prob, value, entropy), R in zip(saved_actions, returns):
             advantage = R - value.item()
             advantages.append(advantage)
             raw_advantages.append(advantage)
             values_list.append(value.item())
             log_probs_list.append(log_prob.item())
+            if entropy is not None:
+                entropies_list.append(entropy)
         
         # ==== DIAGNOSTIC TRACKING: Advantage statistics ====
         raw_advantages_tensor = torch.tensor(raw_advantages)
@@ -399,7 +406,7 @@ class A2C(nn.Module):
                 log_prob_outliers.append((i, lp))
         
         # Calculate losses using normalized advantages
-        for i, ((log_prob, value), R) in enumerate(zip(saved_actions, returns)):
+        for i, ((log_prob, value, entropy), R) in enumerate(zip(saved_actions, returns)):
             policy_losses.append(-log_prob * advantages[i])
             value_losses.append(F.smooth_l1_loss(value, torch.tensor([R]).to(self.device)))
         
@@ -412,9 +419,22 @@ class A2C(nn.Module):
         value_loss_mean = np.mean(value_losses_values)
         value_loss_std = np.std(value_losses_values)
         
+        # Calculate mean policy loss
+        policy_loss_base = torch.stack(policy_losses).mean()
+        
+        # Calculate entropy bonus (negative because we want to maximize entropy)
+        if len(entropies_list) > 0:
+            entropy_mean = torch.stack(entropies_list).mean()
+            entropy_bonus = self.entropy_coef * entropy_mean
+        else:
+            entropy_mean = torch.tensor(0.0).to(self.device)
+            entropy_bonus = torch.tensor(0.0).to(self.device)
+        
+        # Combined actor loss: policy loss - entropy bonus (subtract because we want to maximize entropy)
+        a_loss = policy_loss_base - entropy_bonus
+        
         # take gradient steps
         self.optimizers['a_optimizer'].zero_grad()
-        a_loss = torch.stack(policy_losses).mean()
         a_loss.backward()
         
         # ==== DIAGNOSTIC TRACKING: Gradient norms BEFORE clipping ====
@@ -586,6 +606,9 @@ class A2C(nn.Module):
             "actor_grad_norm": actor_grad_norm.item(),
             "critic_grad_norm": critic_grad_norm.item(),
             "actor_loss": a_loss.item(),
+            "policy_loss": policy_loss_base.item(),
+            "entropy": entropy_mean.item(),
+            "entropy_bonus": entropy_bonus.item(),
             "critic_loss": v_loss.item(),
             "actor_grad_norm_before_clip": actor_grad_norm_before_clip,
             "critic_grad_norm_before_clip": critic_grad_norm_before_clip,
