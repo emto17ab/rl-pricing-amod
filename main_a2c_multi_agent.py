@@ -463,8 +463,8 @@ parser.add_argument(
 parser.add_argument(
     "--entropy_coef",
     type=float,
-    default=0.2,
-    help="Entropy regularization coefficient (default: 0.2)",
+    default=0.01,
+    help="Entropy regularization coefficient (default: 0.01). Use small values (0.001-0.01) since entropy is in nats.",
 )
 
 # Parser arguments
@@ -648,6 +648,9 @@ if not args.test:
             actions_concentration_alpha = {0: [], 1: []}
             actions_concentration_beta = {0: [], 1: []}
             actions_concentration_dirichlet = {0: [], 1: []}
+        
+        # Track log probabilities during episode
+        episode_logprobs = {0: [], 1: []}
 
         done = False
         step = 0
@@ -674,9 +677,8 @@ if not args.test:
                         ])
                         concentrations[a] = np.zeros((env.nregion, 1))  # Dummy for tracking
                     else:
-                        action_conc = model_agents[a].select_action(obs[a], return_concentration=True)
-                        action_rl[a] = action_conc[0]
-                        concentrations[a] = action_conc[1]
+                        action_rl[a], concentrations[a], logprob = model_agents[a].select_action(obs[a], return_concentration=True)
+                        episode_logprobs[a].append(logprob)
                 
                 # Track concentration (mode 0: Dirichlet concentration for rebalancing)
                 for a in [0, 1]:
@@ -734,9 +736,8 @@ if not args.test:
                         action_rl[a] = np.array([0.5] * env.nregion)
                         concentrations[a] = np.zeros((env.nregion, 2))  # Dummy for tracking
                     else:
-                        action_conc = model_agents[a].select_action(obs[a], return_concentration=True)
-                        action_rl[a] = action_conc[0]
-                        concentrations[a] = action_conc[1]
+                        action_rl[a], concentrations[a], logprob = model_agents[a].select_action(obs[a], return_concentration=True)
+                        episode_logprobs[a].append(logprob)
                 
                 # Track prices during episode (mode 1: action_rl is price scalar)
                 for a in [0, 1]:
@@ -779,9 +780,8 @@ if not args.test:
                         ])
                         concentrations[a] = np.zeros((env.nregion, 3))  # Dummy for tracking
                     else:
-                        action_conc = model_agents[a].select_action(obs[a], return_concentration=True)
-                        action_rl[a] = action_conc[0]
-                        concentrations[a] = action_conc[1]
+                        action_rl[a], concentrations[a], logprob = model_agents[a].select_action(obs[a], return_concentration=True)
+                        episode_logprobs[a].append(logprob)
                 
                 # Track prices during episode (mode 2: action_rl[:,0] is price scalar)
                 for a in [0, 1]:
@@ -1100,6 +1100,11 @@ if not args.test:
             log_dict["agent1/mean_concentration_alpha"] = mean_concentration_alpha[1]
             log_dict["agent1/mean_concentration_beta"] = mean_concentration_beta[1]
             log_dict["agent1/mean_concentration_dirichlet"] = mean_concentration_dirichlet[1]
+        
+        # Add log probability tracking for both agents
+        for agent_id in [0, 1]:
+            if len(episode_logprobs[agent_id]) > 0 and agent_id != args.fix_agent:
+                log_dict[f"agent{agent_id}/mean_log_prob"] = np.mean(episode_logprobs[agent_id])
         
         wandb.log(log_dict)
 

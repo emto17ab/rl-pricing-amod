@@ -151,7 +151,7 @@ class A2C(nn.Module):
         return state
     
     # Combines select action and forward steps of actor and critic
-    def select_action(self, obs, deterministic=False):
+    def select_action(self, obs, deterministic=False, return_params=False):
         # Parse the observation to get the graph data
         state = self.parse_obs(obs).to(self.device)
 
@@ -172,10 +172,18 @@ class A2C(nn.Module):
         # Mode 2: shape [nregion, 2] -> keep as 2D [[price, reb], ...]
         if action_np.shape[-1] == 1:
             # Mode 0 or 1: squeeze last dimension to get 1D array
-            return action_np.squeeze(-1)
+            action_result = action_np.squeeze(-1)
         else:
             # Mode 2: return 2D array as-is
-            return action_np
+            action_result = action_np
+        
+        # Return additional parameters if requested (for tracking)
+        if return_params:
+            concentration_np = concentration.detach().cpu().numpy()
+            logprob_np = logprob.item() if logprob is not None else None
+            return action_result, concentration_np, logprob_np
+        else:
+            return action_result
 
     def training_step(self):
         R = 0
@@ -213,7 +221,10 @@ class A2C(nn.Module):
         # Calculate mean policy loss
         policy_loss_mean = torch.stack(policy_losses).mean()
         
-        # Calculate entropy bonus (negative because we want to maximize entropy)
+        # Calculate entropy bonus
+        # Note: Entropy is in nats (natural log units) and can be very large (e.g., 10-20 for Dirichlet)
+        # or negative (high-dimensional Dirichlet). Advantages are normalized to std=1.
+        # Use a small entropy_coef (e.g., 0.001-0.01) to balance the scales.
         if len(entropies_list) > 0:
             entropy_mean = torch.stack(entropies_list).mean()
             entropy_bonus = self.entropy_coef * entropy_mean

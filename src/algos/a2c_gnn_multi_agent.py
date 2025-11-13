@@ -323,10 +323,11 @@ class A2C(nn.Module):
             # Mode 2: return 2D array as-is
             action_array = action_np
         
-        # Return the action and optionally concentration parameter
+        # Return the action and optionally concentration parameter and log probability
         if return_concentration:
             concentration_value = concentration.detach().cpu().numpy()
-            return action_array, concentration_value
+            logprob_value = logprob.item() if logprob is not None else None
+            return action_array, concentration_value, logprob_value
         else:
             return action_array
 
@@ -422,7 +423,10 @@ class A2C(nn.Module):
         # Calculate mean policy loss
         policy_loss_base = torch.stack(policy_losses).mean()
         
-        # Calculate entropy bonus (negative because we want to maximize entropy)
+        # Calculate entropy bonus
+        # Note: Entropy is in nats (natural log units) and can be very large (e.g., 10-20 for Dirichlet)
+        # or negative (high-dimensional Dirichlet). Advantages are normalized to std=1.
+        # Use a small entropy_coef (e.g., 0.001-0.01) to balance the scales.
         if len(entropies_list) > 0:
             entropy_mean = torch.stack(entropies_list).mean()
             entropy_bonus = self.entropy_coef * entropy_mean

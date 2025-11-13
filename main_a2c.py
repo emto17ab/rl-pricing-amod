@@ -248,8 +248,8 @@ parser.add_argument(
 parser.add_argument(
     "--entropy_coef",
     type=float,
-    default=0.2,
-    help="Entropy regularization coefficient (default: 0.2)",
+    default=0.01,
+    help="Entropy regularization coefficient (default: 0.01). Use small values (0.001-0.01) since entropy is in nats.",
 )
 
 # Parser arguments
@@ -407,6 +407,10 @@ if not args.test:
         episode_unprofitable_trips = 0
         actions = []
         actions_price = []  # Track price scalars during episode
+        
+        # Track concentration parameters and log probabilities per step
+        episode_concentrations = []  # List of concentration arrays per step
+        episode_logprobs = []  # List of log probabilities per step
 
         current_eps = []
         done = False
@@ -429,7 +433,9 @@ if not args.test:
                         for i in range(env.nregion)
                     }
                 else:
-                    action_rl = model.select_action(obs)
+                    action_rl, concentration, logprob = model.select_action(obs, return_params=True)
+                    episode_concentrations.append(concentration)
+                    episode_logprobs.append(logprob)
                     # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
                     desiredAcc = {env.region[i]: int(action_rl[i] *dictsum(env.acc,env.time+1))for i in range(len(env.region))}
 
@@ -464,7 +470,9 @@ if not args.test:
                     # Fixed baseline: use price scalar of 0.5 (keeps base price)
                     action_rl = np.array([0.5] * env.nregion)
                 else:
-                    action_rl = model.select_action(obs)
+                    action_rl, concentration, logprob = model.select_action(obs, return_params=True)
+                    episode_concentrations.append(concentration)
+                    episode_logprobs.append(logprob)
                     
                 env.matching_update()
 
@@ -492,7 +500,9 @@ if not args.test:
                         reb_action_prop  # Rebalancing proportions from initial distribution
                     ])
                 else:
-                    action_rl = model.select_action(obs)
+                    action_rl, concentration, logprob = model.select_action(obs, return_params=True)
+                    episode_concentrations.append(concentration)
+                    episode_logprobs.append(logprob)
 
                 # Compute desired accumulation for rebalancing
                 if args.fix_baseline:
@@ -692,6 +702,47 @@ if not args.test:
         # Add price scalar only for modes 1 and 2
         if args.mode != 0:
             log_dict["pricing/mean_price_scalar"] = mean_price_scalar
+        
+        # Add concentration parameters and log probabilities tracking (skip baseline modes)
+        if args.mode not in [3, 4] and not args.fix_baseline and len(episode_concentrations) > 0:
+            # Stack all concentrations across the episode
+            concentrations_array = np.array(episode_concentrations)  # Shape: [num_steps, batch, nregion, n_params]
+            
+            # Mean log probability across the episode
+            log_dict["training/mean_log_prob"] = np.mean(episode_logprobs)
+            
+            if args.mode == 0:
+                # Mode 0: Dirichlet - shape [batch, nregion, 1]
+                # Track mean concentration (alpha) per region
+                mean_concentrations = concentrations_array.mean(axis=0).squeeze()  # [nregion, 1] -> [nregion]
+                for region_idx in range(env.nregion):
+                    log_dict[f"concentration/region_{region_idx}_alpha"] = mean_concentrations[region_idx]
+                # Track overall mean
+                log_dict["concentration/mean_alpha"] = mean_concentrations.mean()
+                
+            elif args.mode == 1:
+                # Mode 1: Beta - shape [batch, nregion, 2]
+                # Track mean alpha and beta per region
+                mean_concentrations = concentrations_array.mean(axis=0).squeeze()  # [nregion, 2]
+                for region_idx in range(env.nregion):
+                    log_dict[f"concentration/region_{region_idx}_alpha"] = mean_concentrations[region_idx, 0]
+                    log_dict[f"concentration/region_{region_idx}_beta"] = mean_concentrations[region_idx, 1]
+                # Track overall means
+                log_dict["concentration/mean_alpha"] = mean_concentrations[:, 0].mean()
+                log_dict["concentration/mean_beta"] = mean_concentrations[:, 1].mean()
+                
+            elif args.mode == 2:
+                # Mode 2: Beta + Dirichlet - shape [batch, nregion, 3]
+                # Track pricing (alpha, beta) and rebalancing (alpha_reb) per region
+                mean_concentrations = concentrations_array.mean(axis=0).squeeze()  # [nregion, 3]
+                for region_idx in range(env.nregion):
+                    log_dict[f"concentration/region_{region_idx}_price_alpha"] = mean_concentrations[region_idx, 0]
+                    log_dict[f"concentration/region_{region_idx}_price_beta"] = mean_concentrations[region_idx, 1]
+                    log_dict[f"concentration/region_{region_idx}_reb_alpha"] = mean_concentrations[region_idx, 2]
+                # Track overall means
+                log_dict["concentration/mean_price_alpha"] = mean_concentrations[:, 0].mean()
+                log_dict["concentration/mean_price_beta"] = mean_concentrations[:, 1].mean()
+                log_dict["concentration/mean_reb_alpha"] = mean_concentrations[:, 2].mean()
         
         wandb.log(log_dict)
 
