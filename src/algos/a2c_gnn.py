@@ -8,6 +8,8 @@ import torch.nn.functional as F
 from collections import namedtuple
 from src.algos.reb_flow_solver import solveRebFlow
 from src.misc.utils import dictsum, nestdictsum
+import datetime
+import os
 
 SavedAction = namedtuple('SavedAction', ['log_prob', 'value', 'entropy'])
 
@@ -95,8 +97,9 @@ class A2C(nn.Module):
         scale_factor,
         json_file = None,
         use_od_prices = False,
-        entropy_coef = 0.2,  # entropy regularization coefficient
-        eps=np.finfo(np.float32).eps.item()
+        reward_scale = 0.00005,  # reward scaling factor
+        eps=np.finfo(np.float32).eps.item(),
+        job_id = None  # unique identifier for this model instance
     ):
         
         super(A2C, self).__init__()
@@ -106,6 +109,9 @@ class A2C(nn.Module):
 
         # Set the mode
         self.mode = mode
+        
+        # Store job_id for unique file naming in parallel runs
+        self.job_id = job_id
 
         # Set very small number to avoid division by zero
         self.eps = eps
@@ -134,8 +140,8 @@ class A2C(nn.Module):
         # Set gamma parameter
         self.gamma = gamma
         
-        # Set entropy coefficient
-        self.entropy_coef = entropy_coef
+        # Set reward scale factor
+        self.reward_scale = reward_scale
 
         # Set gradient clipping values
         self.actor_clip = actor_clip
@@ -144,6 +150,8 @@ class A2C(nn.Module):
         # Action & reward buffer
         self.saved_actions = []
         self.rewards = []
+        self.concentration_history = []  # Track concentration parameters per step
+        
         self.to(self.device)
 
     def parse_obs(self, obs):
@@ -151,11 +159,11 @@ class A2C(nn.Module):
         return state
     
     # Combines select action and forward steps of actor and critic
-    def select_action(self, obs, deterministic=False, return_params=False):
+    def select_action(self, obs, deterministic=False, return_concentration=False, log_step=False, step_num=None):
         # Parse the observation to get the graph data
         state = self.parse_obs(obs).to(self.device)
 
-        # Forward pass through actor network to get action, log probability, and entropy
+        # Forward pass through actor network to get action, log probability, concentration, and entropy
         a, logprob, concentration, entropy = self.actor(state, deterministic=deterministic)
         
         # Forward pass through critic network to get state value estimate
@@ -163,27 +171,38 @@ class A2C(nn.Module):
         
         # Only save actions for training (when not deterministic)
         if not deterministic:
+            # Store all relevant info for diagnostic logging
+            self.last_concentration = concentration.detach()
+            self.last_action = a.detach()
+            self.last_value = value.detach()
+            self.last_log_prob = logprob.detach() if logprob is not None else None
+            
+            # Track concentration for episode-level statistics
+            self.concentration_history.append(concentration.detach().cpu().numpy())
+            
+            # Save action with entropy for regularization
             self.saved_actions.append(SavedAction(logprob, value, entropy))
     
+        # Convert to numpy array
         action_np = a.detach().cpu().numpy()
-
+        
         # Handle different action shapes based on mode:
         # Mode 0 & 1: shape [nregion, 1] -> flatten to [nregion]
         # Mode 2: shape [nregion, 2] -> keep as 2D [[price, reb], ...]
         if action_np.shape[-1] == 1:
             # Mode 0 or 1: squeeze last dimension to get 1D array
-            action_result = action_np.squeeze(-1)
+            action_array = action_np.squeeze(-1)
         else:
             # Mode 2: return 2D array as-is
-            action_result = action_np
+            action_array = action_np
         
-        # Return additional parameters if requested (for tracking)
-        if return_params:
-            concentration_np = concentration.detach().cpu().numpy()
-            logprob_np = logprob.item() if logprob is not None else None
-            return action_result, concentration_np, logprob_np
+        # Return the action and optionally concentration parameter and log probability
+        if return_concentration:
+            concentration_value = concentration.detach().cpu().numpy()
+            logprob_value = logprob.item() if logprob is not None else None
+            return action_array, concentration_value, logprob_value
         else:
-            return action_result
+            return action_array
 
     def training_step(self):
         R = 0
@@ -191,54 +210,47 @@ class A2C(nn.Module):
         policy_losses = [] # list to save actor (policy) loss
         value_losses = [] # list to save critic (value) loss
         returns = [] # list to save the true values
-        advantages_list = [] # list to track advantages
-        entropies_list = [] # list to track entropies
 
-        # calculate the true value using rewards returned from the environment
-        for r in self.rewards[::-1]:
+        # Apply reward scaling
+        scaled_rewards = [r * self.reward_scale for r in self.rewards]
+        #scaled_rewards = [(r - np.mean(self.rewards)) / (np.std(self.rewards) + self.eps) for r in self.rewards]
+        
+        # calculate the true value using scaled rewards
+        for r in scaled_rewards[::-1]:
             # calculate the discounted value
             R = r + self.gamma * R
             returns.insert(0, R)
 
         returns = torch.tensor(returns).to(self.device)
-        returns = (returns - returns.mean()) / (returns.std() + self.eps)
-
+        
+        # Calculate advantages
+        advantages = []
+        
         for (log_prob, value, entropy), R in zip(saved_actions, returns):
             advantage = R - value.item()
-            advantages_list.append(advantage)
-
-            # calculate actor (policy) loss: negative log prob * advantage
-            policy_losses.append(-log_prob * advantage)
+            advantages.append(advantage)
+        
+        # Calculate advantage statistics for logging
+        advantages_tensor = torch.tensor(advantages)
+        adv_mean = advantages_tensor.mean().item()
+        adv_std = advantages_tensor.std().item()
+        
+        # Calculate losses using advantages (no entropy regularization)
+        for i, ((log_prob, value, entropy), R) in enumerate(zip(saved_actions, returns)):
+            # Policy loss is just the advantage term
+            policy_loss = -log_prob * advantages[i]
+            policy_losses.append(policy_loss)
             
-            # Store entropy for tracking and regularization
-            if entropy is not None:
-                entropies_list.append(entropy)
-
-            # calculate critic (value) loss using L1 smooth loss
-            #value_losses.append(F.smooth_l1_loss(value, R.unsqueeze(0)))
+            # Value loss unchanged
             value_losses.append(F.smooth_l1_loss(value, torch.tensor([R]).to(self.device)))
-
-        # Calculate mean policy loss
-        policy_loss_mean = torch.stack(policy_losses).mean()
         
-        # Calculate entropy bonus
-        # Note: Entropy is in nats (natural log units) and can be very large (e.g., 10-20 for Dirichlet)
-        # or negative (high-dimensional Dirichlet). Advantages are normalized to std=1.
-        # Use a small entropy_coef (e.g., 0.001-0.01) to balance the scales.
-        if len(entropies_list) > 0:
-            entropy_mean = torch.stack(entropies_list).mean()
-            entropy_bonus = self.entropy_coef * entropy_mean
-        else:
-            entropy_mean = torch.tensor(0.0).to(self.device)
-            entropy_bonus = torch.tensor(0.0).to(self.device)
+        # Actor loss is the policy loss
+        a_loss = torch.stack(policy_losses).mean()
         
-        # Combined actor loss: policy loss - entropy bonus (subtract because we want to maximize entropy)
-        a_loss = policy_loss_mean - entropy_bonus
-
-        # take gradient steps with clipping
+        # take gradient steps
         self.optimizers['a_optimizer'].zero_grad()
         a_loss.backward()
-
+        
         # Gradient clipping for actor
         actor_grad_norm = torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.actor_clip)
         self.optimizers['a_optimizer'].step()
@@ -246,7 +258,7 @@ class A2C(nn.Module):
         self.optimizers['c_optimizer'].zero_grad()
         v_loss = torch.stack(value_losses).mean()
         v_loss.backward()
-
+        
         # Gradient clipping for critic
         critic_grad_norm = torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.critic_clip)
         self.optimizers['c_optimizer'].step()
@@ -254,18 +266,16 @@ class A2C(nn.Module):
         # reset rewards and action buffer
         del self.rewards[:]
         del self.saved_actions[:]
+        del self.concentration_history[:]  # Clear concentration history
 
         # Return metrics for logging
         return {
             "actor_grad_norm": actor_grad_norm.item(),
             "critic_grad_norm": critic_grad_norm.item(),
             "actor_loss": a_loss.item(),
-            "policy_loss": policy_loss_mean.item(),
-            "entropy": entropy_mean.item(),
-            "entropy_bonus": entropy_bonus.item(),
-            "advantage_mean": np.mean(advantages_list),
-            "advantage_std": np.std(advantages_list),
-            "critic_loss": v_loss.item()
+            "critic_loss": v_loss.item(),
+            "advantage_mean": adv_mean,
+            "advantage_std": adv_std,
         }
 
     def configure_optimizers(self):
@@ -331,7 +341,8 @@ class A2C(nn.Module):
                         "nyc_manhattan",
                         desiredAcc,
                         cplexpath,
-                        directory, 
+                        directory,
+                        job_id=self.job_id
                     )
 
                     # Take rebalancing action in environment
@@ -363,7 +374,8 @@ class A2C(nn.Module):
                         "nyc_manhattan",
                         desiredAcc,
                         cplexpath,
-                        directory, 
+                        directory,
+                        job_id=self.job_id
                     )
 
                     # Take rebalancing action in environment

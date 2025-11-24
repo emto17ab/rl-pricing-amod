@@ -245,13 +245,6 @@ parser.add_argument(
     help="Fix baseline behavior: use base price and initial vehicle distribution (default: False)",
 )
 
-parser.add_argument(
-    "--entropy_coef",
-    type=float,
-    default=0.01,
-    help="Entropy regularization coefficient (default: 0.01). Use small values (0.001-0.01) since entropy is in nats.",
-)
-
 # Parser arguments
 args = parser.parse_args()
 
@@ -346,8 +339,7 @@ if not args.test:
                 actor_clip=args.actor_clip,
                 critic_clip=args.critic_clip,
                 gamma=args.gamma,
-                use_od_prices=args.use_od_prices,
-                entropy_coef=args.entropy_coef
+                use_od_prices=args.use_od_prices
             )
 
         if args.load:
@@ -433,7 +425,7 @@ if not args.test:
                         for i in range(env.nregion)
                     }
                 else:
-                    action_rl, concentration, logprob = model.select_action(obs, return_params=True)
+                    action_rl, concentration, logprob = model.select_action(obs, return_concentration=True)
                     episode_concentrations.append(concentration)
                     episode_logprobs.append(logprob)
                     # transform sample from Dirichlet into actual vehicle counts (i.e. (x1*x2*..*xn)*num_vehicles)
@@ -470,7 +462,7 @@ if not args.test:
                     # Fixed baseline: use price scalar of 0.5 (keeps base price)
                     action_rl = np.array([0.5] * env.nregion)
                 else:
-                    action_rl, concentration, logprob = model.select_action(obs, return_params=True)
+                    action_rl, concentration, logprob = model.select_action(obs, return_concentration=True)
                     episode_concentrations.append(concentration)
                     episode_logprobs.append(logprob)
                     
@@ -500,7 +492,7 @@ if not args.test:
                         reb_action_prop  # Rebalancing proportions from initial distribution
                     ])
                 else:
-                    action_rl, concentration, logprob = model.select_action(obs, return_params=True)
+                    action_rl, concentration, logprob = model.select_action(obs, return_concentration=True)
                     episode_concentrations.append(concentration)
                     episode_logprobs.append(logprob)
 
@@ -684,9 +676,6 @@ if not args.test:
             
             # Training metrics section
             "training/actor_loss": grad_norms['actor_loss'],
-            "training/policy_loss": grad_norms.get('policy_loss', 0.0),
-            "training/entropy": grad_norms.get('entropy', 0.0),
-            "training/entropy_bonus": grad_norms.get('entropy_bonus', 0.0),
             "training/advantage_mean": grad_norms.get('advantage_mean', 0.0),
             "training/advantage_std": grad_norms.get('advantage_std', 0.0),
             "training/critic_loss": grad_norms['critic_loss'],
@@ -830,8 +819,7 @@ else:
                 actor_clip=args.actor_clip,
                 critic_clip=args.critic_clip,
                 gamma=args.gamma,
-                use_od_prices=args.use_od_prices,
-                entropy_coef=args.entropy_coef
+                use_od_prices=args.use_od_prices
             )
 
         if args.load:
