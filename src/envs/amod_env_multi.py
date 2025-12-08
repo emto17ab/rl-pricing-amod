@@ -291,8 +291,8 @@ class AMoD:
                 income_effect = 25 / wage
 
                 # Compute utilities for all agents
-                U_0 = 15.0 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr0
-                U_1 = 15.0 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr1
+                U_0 = 12.1 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr0
+                U_1 = 12.1 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr1
                 
                 # Always include both agents in the choice set
                 # (Fixed agent will use base price due to scalar 0.5)

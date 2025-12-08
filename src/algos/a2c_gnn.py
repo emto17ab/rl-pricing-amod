@@ -212,8 +212,8 @@ class A2C(nn.Module):
         returns = [] # list to save the true values
 
         # Apply reward scaling
-        scaled_rewards = [r * self.reward_scale for r in self.rewards]
-        #scaled_rewards = [(r - np.mean(self.rewards)) / (np.std(self.rewards) + self.eps) for r in self.rewards]
+        #scaled_rewards = [r * self.reward_scale for r in self.rewards]
+        scaled_rewards = [(r - np.mean(self.rewards)) / (np.std(self.rewards) + self.eps) for r in self.rewards]
         
         # calculate the true value using scaled rewards
         for r in scaled_rewards[::-1]:

@@ -16,15 +16,15 @@ load_dotenv()
 
 # Define calibrated simulation parameters
 demand_ratio = {'san_francisco': 2, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1.8,
-                'nyc_man_south': 1.8, 'nyc_brooklyn': 9, 'nyc_manhattan': 2, 'porto': 4, 'rome': 1.8, 'shenzhen_baoan': 2.5,
+                'nyc_man_south': 2.0, 'nyc_brooklyn': 9, 'nyc_manhattan': 2, 'porto': 4, 'rome': 1.8, 'shenzhen_baoan': 2.5,
                 'shenzhen_downtown_west': 2.5, 'shenzhen_downtown_east': 3, 'shenzhen_north': 3
                }
 json_hr = {'san_francisco':19, 'washington_dc': 19, 'chicago': 19, 'nyc_man_north': 19, 'nyc_man_middle': 19,
            'nyc_man_south': 19, 'nyc_brooklyn': 19, 'nyc_manhattan': 19, 'porto': 8, 'rome': 8, 'shenzhen_baoan': 8,
            'shenzhen_downtown_west': 8, 'shenzhen_downtown_east': 8, 'shenzhen_north': 8
           }
-beta = {'san_francisco': 0.2, 'washington_dc': 0.5, 'chicago': 0.5, 'nyc_man_north': 0.5, 'nyc_man_middle': 0.5,
-                'nyc_man_south': 0.5, 'nyc_brooklyn':0.5, 'nyc_manhattan': 0.3, 'porto': 0.1, 'rome': 0.1, 'shenzhen_baoan': 0.5,
+beta = {'san_francisco': 0.3, 'washington_dc': 0.5, 'chicago': 0.5, 'nyc_man_north': 0.5, 'nyc_man_middle': 0.5,
+                'nyc_man_south': 0.3, 'nyc_brooklyn':0.5, 'nyc_manhattan': 0.3, 'porto': 0.1, 'rome': 0.1, 'shenzhen_baoan': 0.5,
                 'shenzhen_downtown_west': 0.5, 'shenzhen_downtown_east': 0.5, 'shenzhen_north': 0.5}
 
 test_tstep = {'san_francisco': 3, 'nyc_brooklyn': 4, 'shenzhen_downtown_west': 3, 'nyc_manhattan': 3, 'nyc_man_middle': 3, 'nyc_man_south': 3, 'nyc_man_north': 3, 'washington_dc':3, 'chicago':3}
@@ -148,6 +148,14 @@ parser.add_argument(
 )
 
 parser.add_argument(
+    "--model_type",
+    type=str,
+    default="running",
+    choices=["running", "test", "sample"],
+    help="which checkpoint variant to load: running, test, or sample (default: running)",
+)
+
+parser.add_argument(
     "--actor_clip",
     type=float,
     default=500,
@@ -178,7 +186,7 @@ parser.add_argument(
 parser.add_argument(
     "--city",
     type=str,
-    default="nyc_manhattan",
+    default="nyc_man_south",
     help="city to train on",
 )
 
@@ -339,12 +347,13 @@ if not args.test:
                 actor_clip=args.actor_clip,
                 critic_clip=args.critic_clip,
                 gamma=args.gamma,
-                use_od_prices=args.use_od_prices
+                use_od_prices=args.use_od_prices,
+                job_id=args.checkpoint_path
             )
 
         if args.load:
             print("load checkpoint")
-            checkpoint_path = f"ckpt/{args.checkpoint_path}_running.pth"
+            checkpoint_path = f"ckpt/{args.checkpoint_path}_{args.model_type}.pth"
             model.load_checkpoint(path=checkpoint_path)
             print("loaded checkpoint from", checkpoint_path)
         
@@ -819,12 +828,13 @@ else:
                 actor_clip=args.actor_clip,
                 critic_clip=args.critic_clip,
                 gamma=args.gamma,
-                use_od_prices=args.use_od_prices
+                use_od_prices=args.use_od_prices,
+                job_id=args.checkpoint_path
             )
 
         if args.load:
             print("load checkpoint")
-            checkpoint_path = f"ckpt/{args.checkpoint_path}_running.pth"
+            checkpoint_path = f"ckpt/{args.checkpoint_path}_{args.model_type}.pth"
             model.load_checkpoint(path=checkpoint_path)
             print("loaded checkpoint from", checkpoint_path)
         

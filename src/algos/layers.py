@@ -53,7 +53,7 @@ class GNNActor(nn.Module):
         
         # Output concentration parameters
         # Use softplus for positivity (output >= 0), add small epsilon for numerical stability
-        x = F.softplus(self.lin3(x)) + 1e-5
+        x = F.softplus(self.lin3(x)) + 0.1
         
         # Handle concentration parameters based on mode
         # x shape: [1, nregion, output_dim] where output_dim = 1 (mode 0), 2 (mode 1), or 3 (mode 2)

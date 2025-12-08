@@ -183,7 +183,7 @@ class AMoD:
 
                 income_effect = 25 / wage
 
-                utility_agent = 15.0 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * current_price
+                utility_agent = 12.1 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * current_price
 
                 exp_utilities.append(np.exp(utility_agent))
                 labels.append("agent")
@@ -505,9 +505,24 @@ class Scenario:
                     self.rebTime[i, j][t] = (
                         (abs(i//N1-j//N1) + abs(i % N1-j % N1))*grid_travel_time)
 
-            for n in self.G.nodes:
-                # initial number of vehicles at station
-                self.G.nodes[n]['accInit'] = int(ninit)
+            # Total fleet = ninit vehicles per node
+            total_fleet = ninit * len(self.G.nodes)
+            
+            # Distribute fleet evenly across nodes with remainder handling
+            num_nodes = len(self.G.nodes)
+            base_vehicles_per_node = total_fleet // num_nodes
+            remainder = total_fleet % num_nodes
+            
+            # Create list of nodes and shuffle for random remainder assignment
+            nodes_list = list(self.G.nodes)
+            random.seed(sd)
+            random.shuffle(nodes_list)
+            
+            # Assign vehicles to each node
+            for idx, n in enumerate(nodes_list):
+                vehicles = base_vehicles_per_node + (1 if idx < remainder else 0)
+                self.G.nodes[n]['accInit'] = vehicles
+            
             self.tf = tf
             self.demand_ratio = defaultdict(list)
 
@@ -757,14 +772,27 @@ class Scenario:
                             self.p[o,d][t] = float(y_pred)
 
             # Initial vehicle distribution
-            # Data contains hour and total number of vechiles in network
+            # Data contains hour and total number of vehicles in network
             for item in data["totalAcc"]:
                 hr, acc = item["hour"], item["acc"]
                 if hr == json_hr+int(round(json_tstep/2*tf/60)):
-                    # Loop over all nodes
-                    for n in self.G.nodes:
-                        # Distribute number of vehicles uniformly across nodes
-                        self.G.nodes[n]['accInit'] = int(supply_ratio*acc/len(self.G))
+                    # Total fleet with supply ratio applied
+                    total_fleet = int(supply_ratio * acc)
+                    
+                    # Distribute fleet evenly across nodes with remainder handling
+                    num_nodes = len(self.G)
+                    base_vehicles_per_node = total_fleet // num_nodes
+                    remainder = total_fleet % num_nodes
+                    
+                    # Create list of nodes and shuffle for random remainder assignment
+                    nodes_list = list(self.G.nodes)
+                    random.seed(sd)  # Use scenario seed for reproducibility
+                    random.shuffle(nodes_list)
+                    
+                    # Assign vehicles to each node
+                    for idx, n in enumerate(nodes_list):
+                        vehicles = base_vehicles_per_node + (1 if idx < remainder else 0)
+                        self.G.nodes[n]['accInit'] = vehicles
 
 
             self.tripAttr = self.get_random_demand()

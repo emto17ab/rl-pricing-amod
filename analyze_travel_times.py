@@ -83,11 +83,11 @@ def analyze_dataset(file_path, city_name):
         'avg_reb': avg_reb_time
     }
 
-nyc_path = '/work3/s233791/rl-pricing-amod/data/scenario_nyc_manhattan.json'
+man_south_path = '/work3/s233791/rl-pricing-amod/data/scenario_nyc_man_south.json'
 sf_path = '/work3/s233791/rl-pricing-amod/data/scenario_san_francisco.json'
 
-print("--- NYC Manhattan ---")
-nyc_stats = analyze_dataset(nyc_path, "NYC Manhattan")
+print("--- NYC Manhattan South ---")
+man_south_stats = analyze_dataset(man_south_path, "NYC Manhattan South")
 print("\n--- San Francisco ---")
 sf_stats = analyze_dataset(sf_path, "San Francisco")
 
@@ -96,7 +96,7 @@ plt.figure(figsize=(18, 6))
 
 # Travel Time Histogram
 plt.subplot(1, 3, 1)
-plt.hist(nyc_stats['travel_times'], weights=nyc_stats['weights'], bins=30, alpha=0.5, label='NYC', density=True)
+plt.hist(man_south_stats['travel_times'], weights=man_south_stats['weights'], bins=30, alpha=0.5, label='NYC Man South', density=True)
 plt.hist(sf_stats['travel_times'], weights=sf_stats['weights'], bins=30, alpha=0.5, label='SF', density=True)
 plt.title('Travel Time Distribution (7-8 PM)')
 plt.xlabel('Travel Time (min)')
@@ -105,8 +105,8 @@ plt.legend()
 
 # Rebalancing Time Histogram
 plt.subplot(1, 3, 2)
-if nyc_stats['reb_times']:
-    plt.hist(nyc_stats['reb_times'], bins=30, alpha=0.5, label='NYC', density=True)
+if man_south_stats['reb_times']:
+    plt.hist(man_south_stats['reb_times'], bins=30, alpha=0.5, label='NYC Man South', density=True)
 if sf_stats['reb_times']:
     plt.hist(sf_stats['reb_times'], bins=30, alpha=0.5, label='SF', density=True)
 plt.title('Rebalancing Time Distribution (7-8 PM)')
@@ -116,7 +116,7 @@ plt.legend()
 
 # Price Histogram
 plt.subplot(1, 3, 3)
-plt.hist(nyc_stats['prices'], weights=nyc_stats['weights'], bins=30, alpha=0.5, label='NYC', density=True)
+plt.hist(man_south_stats['prices'], weights=man_south_stats['weights'], bins=30, alpha=0.5, label='NYC Man South', density=True)
 plt.hist(sf_stats['prices'], weights=sf_stats['weights'], bins=30, alpha=0.5, label='SF', density=True)
 plt.title('Price Distribution (7-8 PM)')
 plt.xlabel('Price')

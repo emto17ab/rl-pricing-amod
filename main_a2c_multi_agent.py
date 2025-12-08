@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_episodes, mode, fix_agent=2):
+def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_episodes, mode, fix_agent=2, job_id=None):
         epochs = range(test_episodes)  # epoch iterator
         episode_reward = []
         episode_served_demand = []
@@ -62,7 +62,7 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
 
                     # Compute rebalancing flows for both agents
                     rebAction = {
-                        a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], cplexpath, directory, a, max_episodes, mode)
+                        a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], cplexpath, directory, a, max_episodes, mode, job_id=job_id)
                         for a in [0, 1]
                     }
                     
@@ -128,7 +128,7 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
                     # --- Rebalancing step ---
                     # Compute rebalancing flows for both agents
                     rebAction = {
-                        a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], cplexpath, directory, a, max_episodes, mode)
+                        a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], cplexpath, directory, a, max_episodes, mode, job_id=job_id)
                         for a in [0, 1]
                     }
                 
@@ -180,7 +180,7 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
                     
                     # Solve rebalancing flows
                     rebAction = {
-                        a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], cplexpath, directory, a, max_episodes, mode)
+                        a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], cplexpath, directory, a, max_episodes, mode, job_id=job_id)
                         for a in [0, 1]
                     }
                     
@@ -221,7 +221,7 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
 
 # Define calibrated simulation parameters
 demand_ratio = {'san_francisco': 2, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1.8,
-                'nyc_man_south': 1.8, 'nyc_brooklyn': 9, 'nyc_manhattan': 2.0, 'porto': 4, 'rome': 1.8, 'shenzhen_baoan': 2.5,
+                'nyc_man_south': 2.0, 'nyc_brooklyn': 9, 'nyc_manhattan': 2.0, 'porto': 4, 'rome': 1.8, 'shenzhen_baoan': 2.5,
                 'shenzhen_downtown_west': 2.5, 'shenzhen_downtown_east': 3, 'shenzhen_north': 3
                }
 # Downscaled demand = 0.06
@@ -229,8 +229,8 @@ json_hr = {'san_francisco':19, 'washington_dc': 19, 'chicago': 19, 'nyc_man_nort
            'nyc_man_south': 19, 'nyc_brooklyn': 19, 'nyc_manhattan': 19, 'porto': 8, 'rome': 8, 'shenzhen_baoan': 8,
            'shenzhen_downtown_west': 8, 'shenzhen_downtown_east': 8, 'shenzhen_north': 8
           }
-beta = {'san_francisco': 0.2, 'washington_dc': 0.5, 'chicago': 0.5, 'nyc_man_north': 0.5, 'nyc_man_middle': 0.5,
-                'nyc_man_south': 0.5, 'nyc_brooklyn':0.5, 'nyc_manhattan': 0.3, 'porto': 0.1, 'rome': 0.1, 'shenzhen_baoan': 0.5,
+beta = {'san_francisco': 0.3, 'washington_dc': 0.5, 'chicago': 0.5, 'nyc_man_north': 0.5, 'nyc_man_middle': 0.5,
+                'nyc_man_south': 0.3, 'nyc_brooklyn':0.5, 'nyc_manhattan': 0.3, 'porto': 0.1, 'rome': 0.1, 'shenzhen_baoan': 0.5,
                 'shenzhen_downtown_west': 0.5, 'shenzhen_downtown_east': 0.5, 'shenzhen_north': 0.5}
 
 test_tstep = {'san_francisco': 3, 'nyc_brooklyn': 4, 'shenzhen_downtown_west': 3, 'nyc_manhattan': 3, 'nyc_man_middle': 3, 'nyc_man_south': 3, 'nyc_man_north': 3, 'washington_dc':3, 'chicago':3}
@@ -460,13 +460,6 @@ parser.add_argument(
     help="Loss aversion multiplier for unprofitable trips (default: 2.0)",
 )
 
-parser.add_argument(
-    "--entropy_coef",
-    type=float,
-    default=0.01,
-    help="Entropy regularization coefficient (default: 0.01). Use small values (0.001-0.01) since entropy is in nats.",
-)
-
 # Parser arguments
 args = parser.parse_args()
 
@@ -551,7 +544,6 @@ if not args.test:
                     gamma=args.gamma,
                     agent_id = a,
                     use_od_prices = args.use_od_prices,
-                    entropy_coef=args.entropy_coef
                 )
                 for a in [0, 1]
             }
@@ -708,7 +700,7 @@ if not args.test:
 
                 # Compute rebalancing flows for both agents
                 rebAction = {
-                    a: solveRebFlow(env, "nyc_manhattan", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode)
+                    a: solveRebFlow(env, "nyc_manhattan", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode, job_id=args.checkpoint_path)
                     for a in [0, 1]
                 }
                 
@@ -822,7 +814,7 @@ if not args.test:
                 # --- Rebalancing step ---
                 # Compute rebalancing flows for both agents
                 rebAction = {
-                    a: solveRebFlow(env, "nyc_manhattan", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode)
+                    a: solveRebFlow(env, "nyc_manhattan", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode, job_id=args.checkpoint_path)
                     for a in [0, 1]
                 }
             
@@ -878,7 +870,7 @@ if not args.test:
                 
                 # Compute rebalancing flows for both agents
                 rebAction = {
-                    a: solveRebFlow(env, "nyc_manhattan", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode)
+                    a: solveRebFlow(env, "nyc_manhattan", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode, job_id=args.checkpoint_path)
                     for a in [0, 1]
                 }
                 
@@ -914,22 +906,14 @@ if not args.test:
             # Normal modes: update models
             for a in [0, 1]:
                 if a == args.fix_agent:
-                    # Fixed agent: skip learning, return dummy metrics
+                    # Fixed agent: skip learning, return dummy metrics (same as single agent)
                     grad_norms[a] = {
                         "actor_grad_norm": 0.0,
                         "critic_grad_norm": 0.0,
                         "actor_loss": 0.0,
                         "critic_loss": 0.0,
-                        "actor_grad_norm_before_clip": 0.0,
-                        "critic_grad_norm_before_clip": 0.0,
                         "advantage_mean": 0.0,
                         "advantage_std": 0.0,
-                        "value_mean": 0.0,
-                        "value_std": 0.0,
-                        "log_prob_mean": 0.0,
-                        "log_prob_std": 0.0,
-                        "return_mean": 0.0,
-                        "return_std": 0.0,
                     }
                     # Clear the fixed agent's buffers without updating
                     model_agents[a].rewards = []
@@ -944,18 +928,8 @@ if not args.test:
                     "critic_grad_norm": 0.0,
                     "actor_loss": 0.0,
                     "critic_loss": 0.0,
-                    "actor_grad_norm_before_clip": 0.0,
-                    "critic_grad_norm_before_clip": 0.0,
                     "advantage_mean": 0.0,
                     "advantage_std": 0.0,
-                    "value_mean": 0.0,
-                    "value_std": 0.0,
-                    "log_prob_mean": 0.0,
-                    "log_prob_std": 0.0,
-                    "return_mean": 0.0,
-                    "return_std": 0.0,
-                    "concentration_max": 0.0,
-                    "concentration_min": 0.0,
                 }
 
         # Get total vehicles for verification (returns dict with {agent_id: total_vehicles})
@@ -1005,23 +979,9 @@ if not args.test:
         "agent0/actor_grad_norm": grad_norms[0]["actor_grad_norm"],
         "agent0/critic_grad_norm": grad_norms[0]["critic_grad_norm"],
         "agent0/actor_loss": grad_norms[0]["actor_loss"],
-        "agent0/policy_loss": grad_norms[0]["policy_loss"],
-        "agent0/entropy": grad_norms[0]["entropy"],
-        "agent0/entropy_bonus": grad_norms[0]["entropy_bonus"],
         "agent0/critic_loss": grad_norms[0]["critic_loss"],
-        # New diagnostic metrics for Agent 0
-        "agent0/actor_grad_norm_before_clip": grad_norms[0]["actor_grad_norm_before_clip"],
-        "agent0/critic_grad_norm_before_clip": grad_norms[0]["critic_grad_norm_before_clip"],
         "agent0/advantage_mean": grad_norms[0]["advantage_mean"],
         "agent0/advantage_std": grad_norms[0]["advantage_std"],
-        "agent0/value_mean": grad_norms[0]["value_mean"],
-        "agent0/value_std": grad_norms[0]["value_std"],
-        "agent0/log_prob_mean": grad_norms[0]["log_prob_mean"],
-        "agent0/log_prob_std": grad_norms[0]["log_prob_std"],
-        "agent0/return_mean": grad_norms[0]["return_mean"],
-        "agent0/return_std": grad_norms[0]["return_std"],
-        "agent0/concentration_max": grad_norms[0]["concentration_max"],
-        "agent0/concentration_min": grad_norms[0]["concentration_min"],
         # Agent 0 profitability metrics
         "agent0/true_profit": episode_true_profit[0],
         "agent0/adjusted_profit": episode_adjusted_profit[0],
@@ -1037,23 +997,9 @@ if not args.test:
         "agent1/actor_grad_norm": grad_norms[1]["actor_grad_norm"],
         "agent1/critic_grad_norm": grad_norms[1]["critic_grad_norm"],
         "agent1/actor_loss": grad_norms[1]["actor_loss"],
-        "agent1/policy_loss": grad_norms[1]["policy_loss"],
-        "agent1/entropy": grad_norms[1]["entropy"],
-        "agent1/entropy_bonus": grad_norms[1]["entropy_bonus"],
         "agent1/critic_loss": grad_norms[1]["critic_loss"],
-        # New diagnostic metrics for Agent 1
-        "agent1/actor_grad_norm_before_clip": grad_norms[1]["actor_grad_norm_before_clip"],
-        "agent1/critic_grad_norm_before_clip": grad_norms[1]["critic_grad_norm_before_clip"],
         "agent1/advantage_mean": grad_norms[1]["advantage_mean"],
         "agent1/advantage_std": grad_norms[1]["advantage_std"],
-        "agent1/value_mean": grad_norms[1]["value_mean"],
-        "agent1/value_std": grad_norms[1]["value_std"],
-        "agent1/log_prob_mean": grad_norms[1]["log_prob_mean"],
-        "agent1/log_prob_std": grad_norms[1]["log_prob_std"],
-        "agent1/return_mean": grad_norms[1]["return_mean"],
-        "agent1/return_std": grad_norms[1]["return_std"],
-        "agent1/concentration_max": grad_norms[1]["concentration_max"],
-        "agent1/concentration_min": grad_norms[1]["concentration_min"],
         # Agent 1 profitability metrics
         "agent1/true_profit": episode_true_profit[1],
         "agent1/adjusted_profit": episode_adjusted_profit[1],
@@ -1153,7 +1099,7 @@ if not args.test:
             for agent_id in [0, 1]:
                 model_agents[agent_id].eval()
             test_reward, test_served_demand, test_rebalancing_cost = test_agents(
-                    model_agents=model_agents, test_episodes=10, env=env, cplexpath=args.cplexpath, directory=args.directory, max_episodes=args.max_episodes, mode=args.mode)
+                    model_agents=model_agents, test_episodes=10, env=env, cplexpath=args.cplexpath, directory=args.directory, max_episodes=args.max_episodes, mode=args.mode, job_id=args.checkpoint_path)
             for agent_id in [0, 1]:
                 model_agents[agent_id].train()
 
@@ -1250,7 +1196,6 @@ else:
                     gamma=args.gamma,
                     agent_id = a,
                     use_od_prices = args.use_od_prices,
-                    entropy_coef=args.entropy_coef
                 )
                 for a in [0, 1]
             }
@@ -1405,7 +1350,7 @@ else:
 
                 # Compute rebalancing flows for both agents
                 rebAction = {
-                    a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode)
+                    a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode, job_id=args.checkpoint_path)
                     for a in [0, 1]
                 }
                 
@@ -1525,7 +1470,7 @@ else:
                 # --- Rebalancing step ---
                 # Compute rebalancing flows for both agents
                 rebAction = {
-                    a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode)
+                    a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode, job_id=args.checkpoint_path)
                     for a in [0, 1]
                 }
             
@@ -1606,7 +1551,7 @@ else:
                 
                 # Compute rebalancing flows for both agents
                 rebAction = {
-                    a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode)
+                    a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode, job_id=args.checkpoint_path)
                     for a in [0, 1]
                 }
                 
@@ -1780,8 +1725,6 @@ else:
     if args.mode != 0:
         price_agent0 = [ep[0] for ep in epoch_price_mean_list]
         price_agent1 = [ep[1] for ep in epoch_price_mean_list]
-        print(price_agent0)
-        print(price_agent1)
         print(f"  Agent 0 price scalar (mean, std): {np.mean(price_agent0):.2f}, {np.std(price_agent0):.2f}")
         print(f"  Agent 1 price scalar (mean, std): {np.mean(price_agent1):.2f}, {np.std(price_agent1):.2f}")
     
