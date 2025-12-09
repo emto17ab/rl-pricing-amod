@@ -8,8 +8,8 @@ import re
 import sys
 
 # Configuration
-CHECKPOINT_BASE = "base_case_single_agent_mode{}_sf"
-CITY = "san_francisco"
+CHECKPOINT_BASE = "base_case_single_agent_mode{}_cars_2200"
+CITY = "nyc_man_south"
 MODEL_TYPE = "test"
 
 # Metrics to collect (in order for the table)
@@ -75,10 +75,10 @@ def parse_output(output, mode):
     return results
 
 def format_value(mean, std):
-    """Format a value as 'mean (std)' with 1 decimal place."""
+    """Format a value as 'mean (std)' with 2 decimal places."""
     if mean is None:
         return "-"
-    return f"{mean:.1f} ({std:.1f})"
+    return f"{mean:.2f} ({std:.2f})"
 
 def main():
     # Collect results for all modes
