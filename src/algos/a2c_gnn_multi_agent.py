@@ -175,6 +175,10 @@ class A2C(nn.Module):
         self.rewards = []
         self.concentration_history = []  # Track concentration parameters per step
         
+        # Reward scaling (starts with default, updated after warmup)
+        self.reward_scale = 1000.0  # Default scaling factor
+        self.warmup_episode_rewards = []  # Track episode total rewards during warmup
+        
         self.to(self.device)
 
     def parse_obs(self, obs):
@@ -186,8 +190,8 @@ class A2C(nn.Module):
         # Parse the observation to get the graph data
         state = self.parse_obs(obs).to(self.device)
 
-        # Forward pass through actor network to get action, log probability, concentration, and entropy
-        a, logprob, concentration, entropy = self.actor(state, deterministic=deterministic)
+        # Forward pass through actor network to get action, log probability, and concentration
+        a, logprob, concentration = self.actor(state, deterministic=deterministic)
         
         # Forward pass through critic network to get state value estimate
         value = self.critic(state)
@@ -226,7 +230,24 @@ class A2C(nn.Module):
         else:
             return action_array
 
-    def training_step(self):
+    def update_reward_scale(self, warmup_rewards):
+        """
+        Update reward scaling factor based on average rewards from warmup phase.
+        
+        Args:
+            warmup_rewards: List of episode total rewards from warmup phase
+        """
+        if len(warmup_rewards) > 0:
+            avg_reward = np.mean(warmup_rewards)
+            if abs(avg_reward) > 1e-6:  # Avoid division by very small numbers
+                self.reward_scale = abs(avg_reward)  # Use absolute value for scaling
+                print(f"Agent {self.agent_id}: Updated reward scale to {self.reward_scale:.2f} (based on {len(warmup_rewards)} warmup episodes)")
+            else:
+                print(f"Agent {self.agent_id}: Keeping default reward scale {self.reward_scale:.2f} (warmup average too small: {avg_reward:.6f})")
+        else:
+            print(f"Agent {self.agent_id}: No warmup episodes available, keeping default reward scale {self.reward_scale:.2f}")
+    
+    def training_step(self, update_actor=True):
         R = 0
         saved_actions = self.saved_actions
         policy_losses = [] # list to save actor (policy) loss
@@ -234,15 +255,16 @@ class A2C(nn.Module):
         returns = [] # list to save the true values
 
         # Normalize rewards (same as single agent)
-        scaled_rewards = [(r - np.mean(self.rewards)) / (np.std(self.rewards) + self.eps) for r in self.rewards]
-        
+        #scaled_rewards = [(r - np.mean(self.rewards)) / (np.std(self.rewards) + self.eps) for r in self.rewards]
+        scaled_rewards = self.rewards
+
         # calculate the true value using scaled rewards
         for r in scaled_rewards[::-1]:
             # calculate the discounted value
             R = r + self.gamma * R
             returns.insert(0, R)
 
-        returns = torch.tensor(returns).to(self.device)
+        returns = torch.tensor(returns).to(self.device) / self.reward_scale
         
         # Calculate advantages
         advantages = []
@@ -268,13 +290,17 @@ class A2C(nn.Module):
         # Actor loss is the policy loss
         a_loss = torch.stack(policy_losses).mean()
         
-        # take gradient steps
-        self.optimizers['a_optimizer'].zero_grad()
-        a_loss.backward()
-        
-        # Gradient clipping for actor
-        actor_grad_norm = torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.actor_clip)
-        self.optimizers['a_optimizer'].step()
+        # take gradient steps for actor only if update_actor=True
+        if update_actor:
+            self.optimizers['a_optimizer'].zero_grad()
+            a_loss.backward()
+            
+            # Gradient clipping for actor
+            actor_grad_norm = torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.actor_clip)
+            self.optimizers['a_optimizer'].step()
+        else:
+            # During warmup, don't update actor
+            actor_grad_norm = torch.tensor(0.0)
         
         self.optimizers['c_optimizer'].zero_grad()
         v_loss = torch.stack(value_losses).mean()
@@ -283,6 +309,10 @@ class A2C(nn.Module):
         # Gradient clipping for critic
         critic_grad_norm = torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.critic_clip)
         self.optimizers['c_optimizer'].step()
+        
+        # Store episode total reward for warmup tracking (before clearing)
+        episode_total_reward = sum(self.rewards)
+        self.warmup_episode_rewards.append(episode_total_reward)
         
         # reset rewards and action buffer
         del self.rewards[:]

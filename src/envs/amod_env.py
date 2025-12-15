@@ -20,16 +20,15 @@ import random
 class AMoD:
     # initialization
     # updated to take scenario and beta (cost for rebalancing) as input
-    def __init__(self, scenario, mode, beta, jitter, max_wait, choice_price_mult, seed, loss_aversion, fix_baseline=False):
+    def __init__(self, scenario, mode, beta, jitter, max_wait, choice_price_mult, seed, choice_intercept, fix_baseline=False):
         # I changed it to deep copy so that the scenario input is not modified by env
         self.scenario = deepcopy(scenario)
         self.mode = mode  # Mode of rebalancing (0:manul, 1:pricing, 2:both. default 1)
         self.jitter = jitter # Jitter for zero demand
         self.max_wait = max_wait # Maximum passenger waiting time
         self.fix_baseline = fix_baseline  # Fix baseline behavior (base price + initial distribution)
-        # Add loss aversion parameter for unprofitable trip penalty
-        self.loss_aversion = loss_aversion  # Multiplier for loss penalty (λ)
-        self.unprofitable_trips = 0
+        # Choice model intercept (utility of using ridehailing service)
+        self.choice_intercept = choice_intercept
         self.G = scenario.G  # Road Graph: node - regiocon'dn, edge - connection of regions, node attr: 'accInit', edge attr: 'time'
         self.demandTime = self.scenario.demandTime
         self.rebTime = self.scenario.rebTime
@@ -183,7 +182,7 @@ class AMoD:
 
                 income_effect = 25 / wage
 
-                utility_agent = 12.1 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * current_price
+                utility_agent = self.choice_intercept - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * current_price
 
                 exp_utilities.append(np.exp(utility_agent))
                 labels.append("agent")
@@ -246,15 +245,7 @@ class AMoD:
                         # Calculate profitability-aware reward
                         base_reward = trip_revenue - trip_cost
 
-                        # Penalty for unprofitable trips (loss aversion)
-                        if base_reward < 0:
-                            self.unprofitable_trips += 1
-                            loss_penalty = self.loss_aversion * (base_reward ** 2)
-                            adjusted_reward = base_reward - loss_penalty
-                        else:
-                            adjusted_reward = base_reward
-
-                        self.reward += adjusted_reward
+                        self.reward += base_reward
 
                         self.ext_reward[n] += max(0, trip_cost)
 
@@ -263,7 +254,6 @@ class AMoD:
                         self.info['operating_cost'] += trip_cost
                         self.info['served_waiting'] += wait_t
                         self.info['true_profit'] += base_reward
-                        self.info['adjusted_profit'] += adjusted_reward
 
                     else:
                         if pax.unmatched_update():

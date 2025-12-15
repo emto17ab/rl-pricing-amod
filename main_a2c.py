@@ -27,6 +27,8 @@ beta = {'san_francisco': 0.3, 'washington_dc': 0.5, 'chicago': 0.5, 'nyc_man_nor
                 'nyc_man_south': 0.3, 'nyc_brooklyn':0.5, 'nyc_manhattan': 0.3, 'porto': 0.1, 'rome': 0.1, 'shenzhen_baoan': 0.5,
                 'shenzhen_downtown_west': 0.5, 'shenzhen_downtown_east': 0.5, 'shenzhen_north': 0.5}
 
+choice_intercept = {'san_francisco': 12.1, 'nyc_man_south': 12.1}
+
 test_tstep = {'san_francisco': 3, 'nyc_brooklyn': 4, 'shenzhen_downtown_west': 3, 'nyc_manhattan': 3, 'nyc_man_middle': 3, 'nyc_man_south': 3, 'nyc_man_north': 3, 'washington_dc':3, 'chicago':3}
 
 parser = argparse.ArgumentParser(description="A2C-GNN")
@@ -170,6 +172,13 @@ parser.add_argument(
 )
 
 parser.add_argument(
+    "--critic_warmup_episodes",
+    type=int,
+    default=1000,
+    help="number of episodes to train only critic before training actor (default: 1000)",
+)
+
+parser.add_argument(
     "--p_lr",
     type=float,
     default=1e-4,
@@ -239,12 +248,7 @@ parser.add_argument(
     help="Use OD price matrices instead of aggregated prices per region (default: False)",
 )
 
-parser.add_argument(
-    "--loss_aversion",
-    type=float,
-    default=2.0,
-    help="Loss aversion multiplier for unprofitable trips (default: 2.0)",
-)
+
 
 parser.add_argument(
     "--fix_baseline",
@@ -285,7 +289,7 @@ if not args.test:
                 supply_ratio=args.supply_ratio)
 
     # Create the environment
-    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, loss_aversion=args.loss_aversion, fix_baseline=args.fix_baseline)
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_baseline=args.fix_baseline, choice_intercept=choice_intercept[city])
     
     # Print baseline information
     if args.fix_baseline:
@@ -637,7 +641,24 @@ if not args.test:
 
         # Only perform training step if not in baseline mode
         if args.mode not in [3, 4] and not args.fix_baseline:
-            grad_norms = model.training_step()  # update model after episode and get metrics
+            # Determine if we should update actor based on warmup period
+            update_actor = (i_episode >= args.critic_warmup_episodes)
+            
+            # Check if warmup just finished and update reward scaling
+            if i_episode == args.critic_warmup_episodes and args.critic_warmup_episodes > 0:
+                print("\n" + "="*80)
+                print("WARMUP PHASE COMPLETED - Updating reward scaling factor")
+                print("="*80)
+                # Get last 10 episodes (or all if fewer than 10)
+                num_episodes = min(10, len(model.warmup_episode_rewards))
+                if num_episodes > 0:
+                    recent_rewards = model.warmup_episode_rewards[-num_episodes:]
+                    model.update_reward_scale(recent_rewards)
+                else:
+                    print("No warmup episodes to calculate scaling from")
+                print("="*80 + "\n")
+            
+            grad_norms = model.training_step(update_actor=update_actor)  # update model after episode and get metrics
         else:
             # In baseline mode, provide dummy grad norms for logging
             grad_norms = {
@@ -689,6 +710,7 @@ if not args.test:
             "training/advantage_std": grad_norms.get('advantage_std', 0.0),
             "training/critic_loss": grad_norms['critic_loss'],
             "training/actor_grad_norm": grad_norms['actor_grad_norm'],
+            "training/reward_scale": model.reward_scale if args.mode not in [3, 4] and not args.fix_baseline else 1000.0,
             "training/critic_grad_norm": grad_norms['critic_grad_norm'],
             
             # Vehicles section
@@ -696,6 +718,11 @@ if not args.test:
             "vehicles/initial": initial_vehicles,
             "vehicles/discrepancy": vehicle_discrepancy,
         }
+        
+        # Add warmup tracking
+        if args.critic_warmup_episodes > 0:
+            log_dict["training/critic_warmup_active"] = 1 if i_episode < args.critic_warmup_episodes else 0
+            log_dict["training/warmup_progress"] = min(1.0, i_episode / args.critic_warmup_episodes)
         
         # Add price scalar only for modes 1 and 2
         if args.mode != 0:
@@ -801,7 +828,7 @@ else:
                 supply_ratio=args.supply_ratio)
     
     # Create the environment
-    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, loss_aversion=args.loss_aversion, fix_baseline=args.fix_baseline)
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_baseline=args.fix_baseline, choice_intercept=choice_intercept[city])
 
     # Only create model if not in baseline mode (mode 3 or 4)
     if args.mode not in [3, 4]:

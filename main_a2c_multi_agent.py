@@ -229,9 +229,11 @@ json_hr = {'san_francisco':19, 'washington_dc': 19, 'chicago': 19, 'nyc_man_nort
            'nyc_man_south': 19, 'nyc_brooklyn': 19, 'nyc_manhattan': 19, 'porto': 8, 'rome': 8, 'shenzhen_baoan': 8,
            'shenzhen_downtown_west': 8, 'shenzhen_downtown_east': 8, 'shenzhen_north': 8
           }
-beta = {'san_francisco': 0.3, 'washington_dc': 0.5, 'chicago': 0.5, 'nyc_man_north': 0.5, 'nyc_man_middle': 0.5,
+beta = {'san_francisco': 0.2, 'washington_dc': 0.5, 'chicago': 0.5, 'nyc_man_north': 0.5, 'nyc_man_middle': 0.5,
                 'nyc_man_south': 0.3, 'nyc_brooklyn':0.5, 'nyc_manhattan': 0.3, 'porto': 0.1, 'rome': 0.1, 'shenzhen_baoan': 0.5,
                 'shenzhen_downtown_west': 0.5, 'shenzhen_downtown_east': 0.5, 'shenzhen_north': 0.5}
+
+choice_intercept = {'san_francisco': 17.25, 'nyc_man_south': 12.1}
 
 test_tstep = {'san_francisco': 3, 'nyc_brooklyn': 4, 'shenzhen_downtown_west': 3, 'nyc_manhattan': 3, 'nyc_man_middle': 3, 'nyc_man_south': 3, 'nyc_man_north': 3, 'washington_dc':3, 'chicago':3}
 
@@ -376,6 +378,13 @@ parser.add_argument(
 )
 
 parser.add_argument(
+    "--critic_warmup_episodes",
+    type=int,
+    default=1000,
+    help="number of episodes to train only critic before training actor (default: 0, no warmup)",
+)
+
+parser.add_argument(
     "--p_lr",
     type=float,
     default=1e-4,
@@ -453,12 +462,7 @@ parser.add_argument(
     help="Use OD price matrices instead of aggregated prices per region (default: False)",
 )
 
-parser.add_argument(
-    "--loss_aversion",
-    type=float,
-    default=2.0,
-    help="Loss aversion multiplier for unprofitable trips (default: 2.0)",
-)
+
 
 # Parser arguments
 args = parser.parse_args()
@@ -491,7 +495,7 @@ if not args.test:
                 supply_ratio=args.supply_ratio)
 
     # Create the environment
-    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_agent=args.fix_agent, loss_aversion=args.loss_aversion)
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_agent=args.fix_agent, choice_intercept=choice_intercept[city])
     
     # Print fixed agent information
     if args.fix_agent == 0:
@@ -582,6 +586,14 @@ if not args.test:
     if args.mode not in [3, 4]:
         for agent_id in [0, 1]:
             model_agents[agent_id].train()
+        
+        # Print critic warmup information
+        if args.critic_warmup_episodes > 0:
+            print("=" * 80)
+            print(f"CRITIC WARMUP ENABLED: {args.critic_warmup_episodes} episodes")
+            print(f"- Episodes 0-{args.critic_warmup_episodes-1}: Critic only (actor frozen)")
+            print(f"- Episodes {args.critic_warmup_episodes}+: Both actor and critic training")
+            print("=" * 80 + "\n")
     else:
         # Mode 3 or 4: Baseline modes - skip model training, run simulation with fixed policy
         print("\nRunning baseline mode with fixed policy...")
@@ -903,6 +915,25 @@ if not args.test:
         # Update both agent models after episode and collect training metrics
         grad_norms = {}
         if args.mode not in [3, 4]:
+            # Determine if we should update actor based on warmup period
+            update_actor = (i_episode >= args.critic_warmup_episodes)
+            
+            # Check if warmup just finished and update reward scaling
+            if i_episode == args.critic_warmup_episodes and args.critic_warmup_episodes > 0:
+                print("\n" + "="*80)
+                print("WARMUP PHASE COMPLETED - Updating reward scaling factors")
+                print("="*80)
+                for a in [0, 1]:
+                    if a != args.fix_agent:
+                        # Get last 10 episodes (or all if fewer than 10)
+                        num_episodes = min(10, len(model_agents[a].warmup_episode_rewards))
+                        if num_episodes > 0:
+                            recent_rewards = model_agents[a].warmup_episode_rewards[-num_episodes:]
+                            model_agents[a].update_reward_scale(recent_rewards)
+                        else:
+                            print(f"Agent {a}: No warmup episodes to calculate scaling from")
+                print("="*80 + "\n")
+            
             # Normal modes: update models
             for a in [0, 1]:
                 if a == args.fix_agent:
@@ -919,7 +950,7 @@ if not args.test:
                     model_agents[a].rewards = []
                     model_agents[a].saved_actions = []
                 else:
-                    grad_norms[a] = model_agents[a].training_step()  # update model after episode and get metrics
+                    grad_norms[a] = model_agents[a].training_step(update_actor=update_actor)  # update model after episode and get metrics
         else:
             # Baseline modes (mode 3 or 4): no training, return dummy metrics for both agents
             for a in [0, 1]:
@@ -1052,6 +1083,17 @@ if not args.test:
             if len(episode_logprobs[agent_id]) > 0 and agent_id != args.fix_agent:
                 log_dict[f"agent{agent_id}/mean_log_prob"] = np.mean(episode_logprobs[agent_id])
         
+        # Add warmup tracking
+        if args.critic_warmup_episodes > 0:
+            log_dict["training/critic_warmup_active"] = 1 if i_episode < args.critic_warmup_episodes else 0
+            log_dict["training/warmup_progress"] = min(1.0, i_episode / args.critic_warmup_episodes)
+        
+        # Add reward scaling factors for both agents (in non-baseline modes)
+        if args.mode not in [3, 4]:
+            for a in [0, 1]:
+                if a != args.fix_agent:
+                    log_dict[f"agent{a}/reward_scale"] = model_agents[a].reward_scale
+        
         wandb.log(log_dict)
 
         # Keep metrics for both agents
@@ -1144,7 +1186,7 @@ else:
                 impute=args.impute,
                 supply_ratio=args.supply_ratio)
 
-    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_agent=args.fix_agent, loss_aversion=args.loss_aversion)
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_agent=args.fix_agent, choice_intercept=choice_intercept[city])
     
     # Print fixed agent information
     if args.fix_agent == 0:

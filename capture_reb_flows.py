@@ -17,7 +17,7 @@ from src.misc.utils import dictsum
 
 def capture_rebalancing_flows(
     city="nyc_man_south",
-    checkpoint_base="base_case_dual_agent_mode2_1000_cars",
+    checkpoint_base="dual_no_standardization_warmup_1200_mode2_scaled",
     mode=2,
     max_steps=20,
     output_file="saved_files/reb_flows_visualization.pkl"
@@ -52,6 +52,11 @@ def capture_rebalancing_flows(
         'nyc_man_north': 0.5, 'nyc_man_middle': 0.5, 'nyc_man_south': 0.3, 
         'nyc_brooklyn': 0.5, 'nyc_manhattan': 0.3, 'porto': 0.1, 'rome': 0.1
     }
+    choice_intercept = {
+        'san_francisco': 0.0, 'washington_dc': 0.0, 'chicago': 0.0,
+        'nyc_man_north': 0.0, 'nyc_man_middle': 0.0, 'nyc_man_south': 12.1,
+        'nyc_brooklyn': 0.0, 'nyc_manhattan': 0.0, 'porto': 0.0, 'rome': 0.0
+    }
     
     # Device
     device = torch.device("cpu")
@@ -77,7 +82,7 @@ def capture_rebalancing_flows(
         choice_price_mult=1.0, 
         seed=10, 
         fix_agent=2,  # No fixing
-        loss_aversion=0.0
+        choice_intercept=choice_intercept[city]
     )
     
     print(f"Environment created with {env.nregion} regions and {len(env.edges)} edges")
@@ -120,7 +125,7 @@ def capture_rebalancing_flows(
     # Load checkpoints
     print("Loading checkpoints...")
     for agent_id, agent_suffix in [(0, "agent1"), (1, "agent2")]:
-        ckpt_path = f"ckpt/{checkpoint_base}_{agent_suffix}_test.pth"
+        ckpt_path = f"ckpt/{checkpoint_base}_{agent_suffix}_running.pth"
         print(f"  Loading {ckpt_path}")
         model_agents[agent_id].load_checkpoint(ckpt_path)
         model_agents[agent_id].eval()
@@ -286,8 +291,8 @@ def capture_rebalancing_flows(
 if __name__ == "__main__":
     flow_data = capture_rebalancing_flows(
         city="nyc_man_south",
-        checkpoint_base="base_case_dual_agent_mode2_1000_cars",
+        checkpoint_base="base_case_dual_agent_mode2_cars_1200",
         mode=2,
         max_steps=20,
-        output_file="saved_files/reb_flows_mode2_1000cars_nyc_man_south.pkl"
+        output_file="saved_files/reb_flows_mode2_1200cars_nyc_man_south.pkl"
     )

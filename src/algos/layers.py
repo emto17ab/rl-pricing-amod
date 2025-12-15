@@ -53,7 +53,7 @@ class GNNActor(nn.Module):
         
         # Output concentration parameters
         # Use softplus for positivity (output >= 0), add small epsilon for numerical stability
-        x = F.softplus(self.lin3(x)) + 0.1
+        x = F.softplus(self.lin3(x))
         
         # Handle concentration parameters based on mode
         # x shape: [1, nregion, output_dim] where output_dim = 1 (mode 0), 2 (mode 1), or 3 (mode 2)
@@ -93,7 +93,6 @@ class GNNActor(nn.Module):
                 # Combined shape: [nregion, 2]
                 action = torch.stack((action_o.squeeze(0), action_reb.squeeze(0)), dim=-1)
             log_prob = None
-            entropy = None
         else:
             if self.mode == 0:
                 # Dirichlet: single joint distribution over nregion categories
@@ -101,7 +100,6 @@ class GNNActor(nn.Module):
                 m = Dirichlet(concentration)
                 action = m.rsample()  # Shape: [1, nregion]
                 log_prob = m.log_prob(action)  # Shape: [1] (scalar for joint distribution)
-                entropy = m.entropy()  # Shape: [1] (scalar)
                 action = action.squeeze(0)  # Shape: [nregion]
                 assert action.shape == (self.act_dim,), f"Mode 0: Expected action shape ({self.act_dim},), got {action.shape}"
                 assert log_prob.shape == (1,), f"Mode 0: Expected log_prob shape (1,), got {log_prob.shape}"
@@ -112,7 +110,6 @@ class GNNActor(nn.Module):
                 action_o = m_o.rsample()  # Shape: [1, nregion]
                 # Sum log probs across independent distributions (not mean!)
                 log_prob = m_o.log_prob(action_o).sum(dim=-1)  # Shape: [1]
-                entropy = m_o.entropy().sum()  # Shape: scalar (sum across all regions)
                 action = action_o.squeeze(0)  # Shape: [nregion]
                 assert action.shape == (self.act_dim,), f"Mode 1: Expected action shape ({self.act_dim},), got {action.shape}"
                 assert log_prob.shape == (1,), f"Mode 1: Expected log_prob shape (1,), got {log_prob.shape}"
@@ -127,11 +124,9 @@ class GNNActor(nn.Module):
                 action_reb = m_reb.rsample()  # Shape: [1, nregion]
                 # Joint log prob: sum of Beta log probs + Dirichlet log prob
                 log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_reb.log_prob(action_reb)  # Shape: [1]
-                # Entropy: sum of Beta entropies + Dirichlet entropy
-                entropy = m_o.entropy().sum() + m_reb.entropy()  # Shape: scalar
                 # Combined action shape: [nregion, 2]
                 action = torch.stack((action_o.squeeze(0), action_reb.squeeze(0)), dim=-1)
                 assert action.shape == (self.act_dim, 2), f"Mode 2: Expected action shape ({self.act_dim}, 2), got {action.shape}"
                 assert log_prob.shape == (1,), f"Mode 2: Expected log_prob shape (1,), got {log_prob.shape}"
             
-        return action, log_prob, concentration, entropy
+        return action, log_prob, concentration

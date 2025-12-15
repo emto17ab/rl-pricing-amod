@@ -14,7 +14,7 @@ import random
 class AMoD:
     # initialization
     # updated to take scenario and beta (cost for rebalancing) as input
-    def __init__(self, scenario, mode, beta, jitter, max_wait, choice_price_mult, seed, loss_aversion, fix_agent):
+    def __init__(self, scenario, mode, beta, jitter, max_wait, choice_price_mult, seed, fix_agent, choice_intercept):
         # Setting the scenario
         self.scenario = deepcopy(scenario)
 
@@ -28,8 +28,8 @@ class AMoD:
         # Setting which agent to fix (0=fix agent 0, 1=fix agent 1, 2=no fixing)
         self.fix_agent = fix_agent
         
-        # Add loss aversion parameter for unprofitable trip penalty
-        self.loss_aversion = loss_aversion  # Multiplier for loss penalty (λ)
+        # Choice model intercept (utility of using ridehailing service)
+        self.choice_intercept = choice_intercept
         
         # Track unprofitable trips for logging
         self.agent_unprofitable_trips = {agent_id: 0 for agent_id in [0, 1]}
@@ -291,8 +291,8 @@ class AMoD:
                 income_effect = 25 / wage
 
                 # Compute utilities for all agents
-                U_0 = 12.1 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr0
-                U_1 = 12.1 - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr1
+                U_0 = self.choice_intercept - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr0
+                U_1 = self.choice_intercept - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr1
                 
                 # Always include both agents in the choice set
                 # (Fixed agent will use base price due to scalar 0.5)
@@ -409,16 +409,7 @@ class AMoD:
                             # Calculate profitability-aware reward
                             base_reward = trip_revenue - trip_cost
                             
-                            # Penalty for unprofitable trips (loss aversion)
-                            if base_reward < 0:
-                                self.agent_unprofitable_trips[agent_id] += 1
-                                # Apply quadratic penalty: λ × (loss)²
-                                loss_penalty = self.loss_aversion * (base_reward ** 2)
-                                adjusted_reward = base_reward - loss_penalty
-                            else:
-                                adjusted_reward = base_reward
-                            
-                            paxreward[agent_id] += adjusted_reward
+                            paxreward[agent_id] += base_reward
 
                             # Update the operating costs
                             self.ext_reward_agents[agent_id][n] += max(0, trip_cost)
@@ -429,7 +420,6 @@ class AMoD:
                             self.agent_info[agent_id]['operating_cost'] += trip_cost
                             self.agent_info[agent_id]['served_waiting'] += wait_t
                             self.agent_info[agent_id]['true_profit'] += base_reward
-                            self.agent_info[agent_id]['adjusted_profit'] += adjusted_reward
                         else:
                             if pax.unmatched_update():
                                 matched_leave_index.append(i)
