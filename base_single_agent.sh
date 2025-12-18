@@ -13,4 +13,4 @@ source /work3/s233791/rl-pricing-amod/thesis_env/bin/activate
 # Subtract 1 from job index to get mode 0-2
 MODE=$((LSB_JOBINDEX - 1))
 
-python main_a2c.py --critic_warmup_episodes 500 --mode ${MODE} --city "nyc_man_south" --q_lr 0.001 --p_lr 0.001 --actor_clip 20000 --critic_clip 20000 --max_episodes 1000000 --use_od_prices --checkpoint_path single_agent_cars_1200_nyc_south_mode${MODE}_model_test
+python main_a2c.py --reward_scalar 1000 --critic_warmup_episodes 500 --mode ${MODE} --city "nyc_man_south" --q_lr 0.001 --p_lr 0.001 --actor_clip 20000 --critic_clip 20000 --max_episodes 1000000 --use_od_prices --checkpoint_path single_agent_cars_1200_nyc_south_mode${MODE}

@@ -126,6 +126,7 @@ class A2C(nn.Module):
         agent_id,
         json_file,
         use_od_prices,
+        reward_scale=1000.0,  # reward scaling factor
         eps=np.finfo(np.float32).eps.item(),
     ):
         
@@ -169,15 +170,14 @@ class A2C(nn.Module):
         # Set gradient clipping values
         self.actor_clip = actor_clip
         self.critic_clip = critic_clip
+        
+        # Reward scaling
+        self.reward_scale = reward_scale
 
         # Action & reward buffer
         self.saved_actions = []
         self.rewards = []
         self.concentration_history = []  # Track concentration parameters per step
-        
-        # Reward scaling (starts with default, updated after warmup)
-        self.reward_scale = 1000.0  # Default scaling factor
-        self.warmup_episode_rewards = []  # Track episode total rewards during warmup
         
         self.to(self.device)
 
@@ -229,23 +229,6 @@ class A2C(nn.Module):
             return action_array, concentration_value, logprob_value
         else:
             return action_array
-
-    def update_reward_scale(self, warmup_rewards):
-        """
-        Update reward scaling factor based on average rewards from warmup phase.
-        
-        Args:
-            warmup_rewards: List of episode total rewards from warmup phase
-        """
-        if len(warmup_rewards) > 0:
-            avg_reward = np.mean(warmup_rewards)
-            if abs(avg_reward) > 1e-6:  # Avoid division by very small numbers
-                self.reward_scale = abs(avg_reward)  # Use absolute value for scaling
-                print(f"Agent {self.agent_id}: Updated reward scale to {self.reward_scale:.2f} (based on {len(warmup_rewards)} warmup episodes)")
-            else:
-                print(f"Agent {self.agent_id}: Keeping default reward scale {self.reward_scale:.2f} (warmup average too small: {avg_reward:.6f})")
-        else:
-            print(f"Agent {self.agent_id}: No warmup episodes available, keeping default reward scale {self.reward_scale:.2f}")
     
     def training_step(self, update_actor=True):
         R = 0
@@ -309,10 +292,6 @@ class A2C(nn.Module):
         # Gradient clipping for critic
         critic_grad_norm = torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.critic_clip)
         self.optimizers['c_optimizer'].step()
-        
-        # Store episode total reward for warmup tracking (before clearing)
-        episode_total_reward = sum(self.rewards)
-        self.warmup_episode_rewards.append(episode_total_reward)
         
         # reset rewards and action buffer
         del self.rewards[:]

@@ -462,6 +462,13 @@ parser.add_argument(
     help="Use OD price matrices instead of aggregated prices per region (default: False)",
 )
 
+parser.add_argument(
+    "--reward_scalar",
+    type=float,
+    default=1000.0,
+    help="Reward scaling factor (default: 1000.0)",
+)
+
 
 
 # Parser arguments
@@ -548,6 +555,7 @@ if not args.test:
                     gamma=args.gamma,
                     agent_id = a,
                     use_od_prices = args.use_od_prices,
+                    reward_scale=args.reward_scalar,
                 )
                 for a in [0, 1]
             }
@@ -918,22 +926,6 @@ if not args.test:
             # Determine if we should update actor based on warmup period
             update_actor = (i_episode >= args.critic_warmup_episodes)
             
-            # Check if warmup just finished and update reward scaling
-            if i_episode == args.critic_warmup_episodes and args.critic_warmup_episodes > 0:
-                print("\n" + "="*80)
-                print("WARMUP PHASE COMPLETED - Updating reward scaling factors")
-                print("="*80)
-                for a in [0, 1]:
-                    if a != args.fix_agent:
-                        # Get last 10 episodes (or all if fewer than 10)
-                        num_episodes = min(10, len(model_agents[a].warmup_episode_rewards))
-                        if num_episodes > 0:
-                            recent_rewards = model_agents[a].warmup_episode_rewards[-num_episodes:]
-                            model_agents[a].update_reward_scale(recent_rewards)
-                        else:
-                            print(f"Agent {a}: No warmup episodes to calculate scaling from")
-                print("="*80 + "\n")
-            
             # Normal modes: update models
             for a in [0, 1]:
                 if a == args.fix_agent:
@@ -1238,6 +1230,7 @@ else:
                     gamma=args.gamma,
                     agent_id = a,
                     use_od_prices = args.use_od_prices,
+                    reward_scale=args.reward_scalar,
                 )
                 for a in [0, 1]
             }

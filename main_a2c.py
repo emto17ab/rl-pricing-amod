@@ -248,6 +248,13 @@ parser.add_argument(
     help="Use OD price matrices instead of aggregated prices per region (default: False)",
 )
 
+parser.add_argument(
+    "--reward_scalar",
+    type=float,
+    default=1000.0,
+    help="Reward scaling factor (default: 1000.0)",
+)
+
 
 
 parser.add_argument(
@@ -352,6 +359,7 @@ if not args.test:
                 critic_clip=args.critic_clip,
                 gamma=args.gamma,
                 use_od_prices=args.use_od_prices,
+                reward_scale=args.reward_scalar,
                 job_id=args.checkpoint_path
             )
 
@@ -644,20 +652,6 @@ if not args.test:
             # Determine if we should update actor based on warmup period
             update_actor = (i_episode >= args.critic_warmup_episodes)
             
-            # Check if warmup just finished and update reward scaling
-            if i_episode == args.critic_warmup_episodes and args.critic_warmup_episodes > 0:
-                print("\n" + "="*80)
-                print("WARMUP PHASE COMPLETED - Updating reward scaling factor")
-                print("="*80)
-                # Get last 10 episodes (or all if fewer than 10)
-                num_episodes = min(10, len(model.warmup_episode_rewards))
-                if num_episodes > 0:
-                    recent_rewards = model.warmup_episode_rewards[-num_episodes:]
-                    model.update_reward_scale(recent_rewards)
-                else:
-                    print("No warmup episodes to calculate scaling from")
-                print("="*80 + "\n")
-            
             grad_norms = model.training_step(update_actor=update_actor)  # update model after episode and get metrics
         else:
             # In baseline mode, provide dummy grad norms for logging
@@ -856,6 +850,7 @@ else:
                 critic_clip=args.critic_clip,
                 gamma=args.gamma,
                 use_od_prices=args.use_od_prices,
+                reward_scale=args.reward_scalar,
                 job_id=args.checkpoint_path
             )
 
