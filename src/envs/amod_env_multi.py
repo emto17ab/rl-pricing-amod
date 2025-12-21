@@ -14,7 +14,7 @@ import random
 class AMoD:
     # initialization
     # updated to take scenario and beta (cost for rebalancing) as input
-    def __init__(self, scenario, mode, beta, jitter, max_wait, choice_price_mult, seed, fix_agent, choice_intercept):
+    def __init__(self, scenario, mode, beta, jitter, max_wait, choice_price_mult, seed, fix_agent, choice_intercept, wage, dynamic_wage):
         # Setting the scenario
         self.scenario = deepcopy(scenario)
 
@@ -30,6 +30,12 @@ class AMoD:
         
         # Choice model intercept (utility of using ridehailing service)
         self.choice_intercept = choice_intercept
+        
+        # Wage parameter for choice model
+        self.wage = wage
+        
+        # Dynamic wage flag (not used yet)
+        self.dynamic_wage = dynamic_wage
         
         # Track unprofitable trips for logging
         self.agent_unprofitable_trips = {agent_id: 0 for agent_id in [0, 1]}
@@ -286,13 +292,11 @@ class AMoD:
                 exp_utilities = []
                 labels = []
 
-                wage = 25
-
-                income_effect = 25 / wage
+                income_effect = 25 / self.wage
 
                 # Compute utilities for all agents
-                U_0 = self.choice_intercept - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr0
-                U_1 = self.choice_intercept - 0.71 * wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr1
+                U_0 = self.choice_intercept - 0.71 * self.wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr0
+                U_1 = self.choice_intercept - 0.71 * self.wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr1
                 
                 # Always include both agents in the choice set
                 # (Fixed agent will use base price due to scalar 0.5)
@@ -940,7 +944,7 @@ class Scenario:
 
                 # The demand is incremented for specific OD and time index by the demand volume v, scaled by a demand_ratio factor.
                 self.demand_input[o, d][(
-                    t-self.json_start)//json_tstep] += v*demand_ratio
+                    t-self.json_start)//json_tstep] += v*demand_ratio*2
 
                 # The price p is accumulated in a volume-weighted manner (p*v) for the same OD and time index. 
                 # This is not just summing prices: it's building a demand-weighted sum. Later we divide by total demand to get average price.

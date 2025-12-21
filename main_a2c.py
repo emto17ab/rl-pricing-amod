@@ -15,21 +15,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Define calibrated simulation parameters
-demand_ratio = {'san_francisco': 2, 'washington_dc': 4.2, 'chicago': 1.8, 'nyc_man_north': 1.8, 'nyc_man_middle': 1.8,
-                'nyc_man_south': 2.0, 'nyc_brooklyn': 9, 'nyc_manhattan': 2, 'porto': 4, 'rome': 1.8, 'shenzhen_baoan': 2.5,
-                'shenzhen_downtown_west': 2.5, 'shenzhen_downtown_east': 3, 'shenzhen_north': 3
-               }
-json_hr = {'san_francisco':19, 'washington_dc': 19, 'chicago': 19, 'nyc_man_north': 19, 'nyc_man_middle': 19,
-           'nyc_man_south': 19, 'nyc_brooklyn': 19, 'nyc_manhattan': 19, 'porto': 8, 'rome': 8, 'shenzhen_baoan': 8,
-           'shenzhen_downtown_west': 8, 'shenzhen_downtown_east': 8, 'shenzhen_north': 8
-          }
-beta = {'san_francisco': 0.3, 'washington_dc': 0.5, 'chicago': 0.5, 'nyc_man_north': 0.5, 'nyc_man_middle': 0.5,
-                'nyc_man_south': 0.3, 'nyc_brooklyn':0.5, 'nyc_manhattan': 0.3, 'porto': 0.1, 'rome': 0.1, 'shenzhen_baoan': 0.5,
-                'shenzhen_downtown_west': 0.5, 'shenzhen_downtown_east': 0.5, 'shenzhen_north': 0.5}
+demand_ratio = {'san_francisco': 2,'nyc_man_south': 1.0, 'nyc_brooklyn': 9}
 
-choice_intercept = {'san_francisco': 12.1, 'nyc_man_south': 12.1}
+json_hr = {'san_francisco':19,'nyc_man_south': 19, 'nyc_brooklyn': 19, 'nyc_manhattan': 19}
 
-test_tstep = {'san_francisco': 3, 'nyc_brooklyn': 4, 'shenzhen_downtown_west': 3, 'nyc_manhattan': 3, 'nyc_man_middle': 3, 'nyc_man_south': 3, 'nyc_man_north': 3, 'washington_dc':3, 'chicago':3}
+beta = {'san_francisco': 0.2,'nyc_man_south': 0.5, 'nyc_brooklyn':0.5}
+
+choice_intercept = {'san_francisco': 16.32, 'nyc_man_south': 12.65, 'nyc_brooklyn':13.92}
+#2008->2009: 0.3%, 2009->2010: 1.6%, 2010->2011: 3.1%, 2011->2012: 2.1%, 2012->2013: 1.5%
+# Total: approximately 8.9% cumulative increase from 2008 to 2013
+#inflation_factor = 1.089  # To convert 2013 dollars to 2008 dollars, divide by this
+wage = {'san_francisco': 21.40,'nyc_man_south': 33.39, 'nyc_brooklyn': 12.16}
+
+test_tstep = {'san_francisco': 3, 'nyc_man_south': 3, 'nyc_brooklyn': 4}
 
 parser = argparse.ArgumentParser(description="A2C-GNN")
 
@@ -255,13 +253,18 @@ parser.add_argument(
     help="Reward scaling factor (default: 1000.0)",
 )
 
-
-
 parser.add_argument(
     "--fix_baseline",
     action="store_true",
     default=False,
     help="Fix baseline behavior: use base price and initial vehicle distribution (default: False)",
+)
+
+parser.add_argument(
+    "--dynamic_wage",
+    action="store_true",
+    default=False,
+    help="Enable dynamic wage adjustment (default: False)",
 )
 
 # Parser arguments
@@ -296,7 +299,7 @@ if not args.test:
                 supply_ratio=args.supply_ratio)
 
     # Create the environment
-    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_baseline=args.fix_baseline, choice_intercept=choice_intercept[city])
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_baseline=args.fix_baseline, choice_intercept=choice_intercept[city], wage=wage[city], dynamic_wage=args.dynamic_wage)
     
     # Print baseline information
     if args.fix_baseline:
@@ -822,7 +825,7 @@ else:
                 supply_ratio=args.supply_ratio)
     
     # Create the environment
-    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_baseline=args.fix_baseline, choice_intercept=choice_intercept[city])
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_baseline=args.fix_baseline, choice_intercept=choice_intercept[city], wage=wage[city], dynamic_wage=args.dynamic_wage)
 
     # Only create model if not in baseline mode (mode 3 or 4)
     if args.mode not in [3, 4]:
