@@ -56,14 +56,17 @@ class GNNParser:
                                                      for j in self.env.region] 
                                                     for i in self.env.region]).view(1, self.env.nregion, self.env.nregion).float()
             
-            # Concatenate: [1, 1+T+1+1+nregion+nregion, nregion]
+            # Price difference: own - competitor (shape [1, nregion, nregion])
+            price_difference = own_current_price - competitor_current_price
+            
+            # Concatenate: [1, 1+T+1+1+nregion+nregion+nregion, nregion]
             x = (
                 torch.cat(
-                    [current_avb, future_avb, queue_length, current_demand, own_current_price, competitor_current_price], 
+                    [current_avb, future_avb, queue_length, current_demand, own_current_price, competitor_current_price, price_difference], 
                     dim=1
                 )
                 .squeeze(0)
-                .view(1 + self.T + 1 + 1 + self.env.nregion + self.env.nregion, self.env.nregion)
+                .view(1 + self.T + 1 + 1 + self.env.nregion + self.env.nregion + self.env.nregion, self.env.nregion)
                 .T
             )
         else:
@@ -72,13 +75,16 @@ class GNNParser:
 
             competitor_current_price = torch.tensor([sum([(self.env.agent_price[self.opponent_id][i, j][time])* self.s for j in self.env.region]) for i in self.env.region]).view(1, 1, self.env.nregion).float()
 
+            # Price difference: own - competitor (shape [1, 1, nregion])
+            price_difference = own_current_price - competitor_current_price
+
             x = (
                 torch.cat(
-                    [current_avb, future_avb, queue_length, current_demand, own_current_price, competitor_current_price], 
+                    [current_avb, future_avb, queue_length, current_demand, own_current_price, competitor_current_price, price_difference], 
                     dim=1
                 )
                 .squeeze(0)
-                .view(1 + self.T + 1 + 1 + 1 + 1, self.env.nregion)
+                .view(1 + self.T + 1 + 1 + 1 + 1 + 1, self.env.nregion)
                 .T
             )
 
@@ -173,6 +179,9 @@ class A2C(nn.Module):
         
         # Reward scaling
         self.reward_scale = reward_scale
+        
+        # Episode counter
+        self.current_episode = 0
 
         # Action & reward buffer
         self.saved_actions = []
@@ -261,7 +270,7 @@ class A2C(nn.Module):
         adv_mean = advantages_tensor.mean().item()
         adv_std = advantages_tensor.std().item()
         
-        # Calculate losses using advantages (no normalization of advantages)
+        # Calculate losses using raw advantages (no normalization)
         for i, ((log_prob, value), R) in enumerate(zip(saved_actions, returns)):
             # Policy loss is just the advantage term
             policy_loss = -log_prob * advantages[i]
@@ -270,7 +279,7 @@ class A2C(nn.Module):
             # Value loss unchanged
             value_losses.append(F.smooth_l1_loss(value, torch.tensor([R]).to(self.device)))
         
-        # Actor loss is the policy loss
+        # Actor loss is just the policy loss
         a_loss = torch.stack(policy_losses).mean()
         
         # take gradient steps for actor only if update_actor=True
@@ -298,7 +307,7 @@ class A2C(nn.Module):
         del self.saved_actions[:]
         del self.concentration_history[:]  # Clear concentration history
 
-        # Return metrics for logging (same as single agent)
+        # Return metrics for logging
         return {
             "actor_grad_norm": actor_grad_norm.item(),
             "critic_grad_norm": critic_grad_norm.item(),

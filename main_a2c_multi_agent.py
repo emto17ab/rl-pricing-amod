@@ -55,8 +55,19 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
                             desiredAcc[a] = {env.region[i]: env.agent_initial_acc[a][env.region[i]] for i in range(env.nregion)}
                         else:
                             # For active agent, use action to determine desired distribution
+                            total_vehicles = dictsum(env.agent_acc[a], env.time + 1)
+                            desired_floats = action_rl[a] * total_vehicles
+                            desired_ints = np.floor(desired_floats).astype(int)
+                            remainder = int(total_vehicles - desired_ints.sum())
+                            
+                            # Distribute remainder to preserve exact vehicle count
+                            if remainder > 0:
+                                fractional_parts = desired_floats - desired_ints
+                                top_indices = np.argpartition(fractional_parts, -remainder)[-remainder:]
+                                desired_ints[top_indices] += 1
+                            
                             desiredAcc[a] = {
-                                env.region[i]: int(action_rl[a][i] * dictsum(env.agent_acc[a], env.time + 1))
+                                env.region[i]: desired_ints[i]
                                 for i in range(env.nregion)
                             }
 
@@ -120,8 +131,19 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
                             desiredAcc[a] = {env.region[i]: env.agent_initial_acc[a][env.region[i]] for i in range(env.nregion)}
                         else:
                             # For active agent, use action to determine desired distribution
+                            total_vehicles = dictsum(env.agent_acc[a], env.time + 1)
+                            desired_floats = action_rl[a][:, -1] * total_vehicles
+                            desired_ints = np.floor(desired_floats).astype(int)
+                            remainder = int(total_vehicles - desired_ints.sum())
+                            
+                            # Distribute remainder to preserve exact vehicle count
+                            if remainder > 0:
+                                fractional_parts = desired_floats - desired_ints
+                                top_indices = np.argpartition(fractional_parts, -remainder)[-remainder:]
+                                desired_ints[top_indices] += 1
+                            
                             desiredAcc[a] = {
-                                env.region[i]: int(action_rl[a][i][-1] * dictsum(env.agent_acc[a], env.time + 1))
+                                env.region[i]: desired_ints[i]
                                 for i in range(env.nregion)
                             }
                     
@@ -220,19 +242,19 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
         )
 
 # Define calibrated simulation parameters
-demand_ratio = {'san_francisco': 2,'nyc_man_south': 1.0, 'nyc_brooklyn': 9}
+demand_ratio = {'san_francisco': 2,'nyc_man_south': 1.0, 'nyc_brooklyn': 9, 'washington_dc': 4.2}
 
-json_hr = {'san_francisco':19,'nyc_man_south': 19, 'nyc_brooklyn': 19, 'nyc_manhattan': 19}
+json_hr = {'san_francisco':19,'nyc_man_south': 19, 'nyc_brooklyn': 19, 'washington_dc': 19}
 
-beta = {'san_francisco': 0.2,'nyc_man_south': 0.5, 'nyc_brooklyn':0.5}
+beta = {'san_francisco': 0.2,'nyc_man_south': 0.5, 'nyc_brooklyn':0.5, 'washington_dc': 0.5}
 
-choice_intercept = {'san_francisco': 16.32, 'nyc_man_south': 12.65, 'nyc_brooklyn':13.92}
+choice_intercept = {'san_francisco': 16.32, 'nyc_man_south': 12.65, 'nyc_brooklyn':31.52, 'washington_dc': 13.49}
 #2008->2009: 0.3%, 2009->2010: 1.6%, 2010->2011: 3.1%, 2011->2012: 2.1%, 2012->2013: 1.5%
 # Total: approximately 8.9% cumulative increase from 2008 to 2013
 #inflation_factor = 1.089  # To convert 2013 dollars to 2008 dollars, divide by this
-wage = {'san_francisco': 21.40,'nyc_man_south': 33.39, 'nyc_brooklyn': 12.16}
+wage = {'san_francisco': 21.40,'nyc_man_south': 33.39, 'nyc_brooklyn': 12.16, 'washington_dc': 26.99}
 
-test_tstep = {'san_francisco': 3, 'nyc_man_south': 3, 'nyc_brooklyn': 4}
+test_tstep = {'san_francisco': 3, 'nyc_man_south': 3, 'nyc_brooklyn': 4, 'washington_dc':3}
 
 parser = argparse.ArgumentParser(description="A2C-GNN")
 
@@ -480,6 +502,27 @@ parser.add_argument(
     help="Enable dynamic wage adjustment (default: False)",
 )
 
+parser.add_argument(
+    "--entropy_coef_max",
+    type=float,
+    default=0.1,
+    help="Maximum entropy coefficient at start of training (default: 0.1)",
+)
+
+parser.add_argument(
+    "--entropy_coef_min",
+    type=float,
+    default=0.005,
+    help="Minimum entropy coefficient at end of training (default: 0.0)",
+)
+
+parser.add_argument(
+    "--entropy_decay_rate",
+    type=float,
+    default=0.001,
+    help="Entropy coefficient decay rate - 0.001 decays to ~2%% over 4000 episodes (default: 0.001)",
+)
+
 
 
 # Parser arguments
@@ -504,7 +547,7 @@ if not args.test:
     # Create the scenario
     scenario = Scenario(
                 json_file=f"data/scenario_{city}.json",
-                demand_ratio=demand_ratio[city],
+                demand_ratio=demand_ratio[city]*2,
                 json_hr=json_hr[city],
                 sd=args.seed,
                 json_tstep=args.json_tstep,
@@ -543,11 +586,11 @@ if not args.test:
     if args.mode not in [3, 4]:
         # Calculate input size based on price type
         if args.use_od_prices:
-            # OD price matrices: T (future) + 3 (current_avb, queue, demand) + 2*nregion (own and competitor OD prices)
-            input_size = args.look_ahead + 3 + 2 * env.nregion
+            # OD price matrices: T (future) + 3 (current_avb, queue, demand) + 3*nregion (own, competitor, and difference OD prices)
+            input_size = args.look_ahead + 3 + 3 * env.nregion
         else:
-            # Aggregated prices: T (future) + 3 (current_avb, queue, demand) + 2 (own and competitor aggregated prices)
-            input_size = args.look_ahead + 5
+            # Aggregated prices: T (future) + 3 (current_avb, queue, demand) + 3 (own, competitor, and difference aggregated prices)
+            input_size = args.look_ahead + 6
         
         model_agents = {
                 a: A2C(
@@ -629,6 +672,11 @@ if not args.test:
     initial_vehicles = env.get_initial_vehicles()
 
     for i_episode in epochs:
+        # Update episode counter for entropy scheduling
+        if args.mode not in [3, 4]:
+            for agent_id in [0, 1]:
+                model_agents[agent_id].current_episode = i_episode
+        
         obs = env.reset()  # initialize environment
 
         action_rl = {
@@ -662,15 +710,28 @@ if not args.test:
         if env.mode == 0:
             # Mode 0: Only Dirichlet for rebalancing
             actions_concentration_dirichlet = {0: [], 1: []}
+            # Track episode-level min/max across all regions and timesteps
+            episode_min_concentration_dirichlet = {0: float('inf'), 1: float('inf')}
+            episode_max_concentration_dirichlet = {0: float('-inf'), 1: float('-inf')}
         elif env.mode == 1:
             # Mode 1: Only Beta (alpha, beta) for pricing
             actions_concentration_alpha = {0: [], 1: []}
             actions_concentration_beta = {0: [], 1: []}
+            episode_min_concentration_alpha = {0: float('inf'), 1: float('inf')}
+            episode_max_concentration_alpha = {0: float('-inf'), 1: float('-inf')}
+            episode_min_concentration_beta = {0: float('inf'), 1: float('inf')}
+            episode_max_concentration_beta = {0: float('-inf'), 1: float('-inf')}
         else:  # mode 2
             # Mode 2: Beta (alpha, beta) for pricing + Dirichlet for rebalancing
             actions_concentration_alpha = {0: [], 1: []}
             actions_concentration_beta = {0: [], 1: []}
             actions_concentration_dirichlet = {0: [], 1: []}
+            episode_min_concentration_alpha = {0: float('inf'), 1: float('inf')}
+            episode_max_concentration_alpha = {0: float('-inf'), 1: float('-inf')}
+            episode_min_concentration_beta = {0: float('inf'), 1: float('inf')}
+            episode_max_concentration_beta = {0: float('-inf'), 1: float('-inf')}
+            episode_min_concentration_dirichlet = {0: float('inf'), 1: float('inf')}
+            episode_max_concentration_dirichlet = {0: float('-inf'), 1: float('-inf')}
         
         # Track log probabilities during episode
         episode_logprobs = {0: [], 1: []}
@@ -707,6 +768,9 @@ if not args.test:
                 for a in [0, 1]:
                     if a != args.fix_agent:
                         actions_concentration_dirichlet[a].append(np.mean(concentrations[a]))
+                        # Update episode-level min/max
+                        episode_min_concentration_dirichlet[a] = min(episode_min_concentration_dirichlet[a], np.min(concentrations[a]))
+                        episode_max_concentration_dirichlet[a] = max(episode_max_concentration_dirichlet[a], np.max(concentrations[a]))
 
                 # Determine which agents are active (not fixed)
                 # Compute desired accumulation for all agents
@@ -724,8 +788,19 @@ if not args.test:
                         }
                     else:
                         # For active agent, use action to determine desired distribution
+                        total_vehicles = dictsum(env.agent_acc[a], env.time + 1)
+                        desired_floats = action_rl[a] * total_vehicles
+                        desired_ints = np.floor(desired_floats).astype(int)
+                        remainder = int(total_vehicles - desired_ints.sum())
+                        
+                        # Distribute remainder to preserve exact vehicle count
+                        if remainder > 0:
+                            fractional_parts = desired_floats - desired_ints
+                            top_indices = np.argpartition(fractional_parts, -remainder)[-remainder:]
+                            desired_ints[top_indices] += 1
+                        
                         desiredAcc[a] = {
-                            env.region[i]: int(action_rl[a][i] * dictsum(env.agent_acc[a], env.time + 1))
+                            env.region[i]: desired_ints[i]
                             for i in range(env.nregion)
                         }
 
@@ -773,8 +848,13 @@ if not args.test:
                 # Track concentration (mode 1: Beta distribution - alpha and beta)
                 for a in [0, 1]:
                     if a != args.fix_agent:
-                        actions_concentration_alpha[a].append(np.mean(concentrations[a][:, 0]))
-                        actions_concentration_beta[a].append(np.mean(concentrations[a][:, 1]))
+                        actions_concentration_alpha[a].append(np.mean(concentrations[a][0, :, 0]))
+                        actions_concentration_beta[a].append(np.mean(concentrations[a][0, :, 1]))
+                        # Update episode-level min/max
+                        episode_min_concentration_alpha[a] = min(episode_min_concentration_alpha[a], np.min(concentrations[a][0, :, 0]))
+                        episode_max_concentration_alpha[a] = max(episode_max_concentration_alpha[a], np.max(concentrations[a][0, :, 0]))
+                        episode_min_concentration_beta[a] = min(episode_min_concentration_beta[a], np.min(concentrations[a][0, :, 1]))
+                        episode_max_concentration_beta[a] = max(episode_max_concentration_beta[a], np.max(concentrations[a][0, :, 1]))
 
                 # Matching update (global step)
                 env.matching_update()
@@ -817,9 +897,20 @@ if not args.test:
                 # Track concentration (mode 2: Beta + Dirichlet)
                 for a in [0, 1]:
                     if a != args.fix_agent:
-                        actions_concentration_alpha[a].append(np.mean(concentrations[a][:, 0]))
-                        actions_concentration_beta[a].append(np.mean(concentrations[a][:, 1]))
-                        actions_concentration_dirichlet[a].append(np.mean(concentrations[a][:, 2]))
+                        # concentrations[a] has shape (1, nregion, 3)
+                        # [:, :, 0] = all regions' Beta alpha
+                        # [:, :, 1] = all regions' Beta beta
+                        # [:, :, 2] = all regions' Dirichlet concentration
+                        actions_concentration_alpha[a].append(np.mean(concentrations[a][0, :, 0]))
+                        actions_concentration_beta[a].append(np.mean(concentrations[a][0, :, 1]))
+                        actions_concentration_dirichlet[a].append(np.mean(concentrations[a][0, :, 2]))
+                        # Update episode-level min/max
+                        episode_min_concentration_alpha[a] = min(episode_min_concentration_alpha[a], np.min(concentrations[a][0, :, 0]))
+                        episode_max_concentration_alpha[a] = max(episode_max_concentration_alpha[a], np.max(concentrations[a][0, :, 0]))
+                        episode_min_concentration_beta[a] = min(episode_min_concentration_beta[a], np.min(concentrations[a][0, :, 1]))
+                        episode_max_concentration_beta[a] = max(episode_max_concentration_beta[a], np.max(concentrations[a][0, :, 1]))
+                        episode_min_concentration_dirichlet[a] = min(episode_min_concentration_dirichlet[a], np.min(concentrations[a][0, :, 2]))
+                        episode_max_concentration_dirichlet[a] = max(episode_max_concentration_dirichlet[a], np.max(concentrations[a][0, :, 2]))
                     
                 # --- Desired Acc computation ---
                 # Compute desired accumulation for all agents
@@ -837,8 +928,19 @@ if not args.test:
                         }
                     else:
                         # For active agent, use action to determine desired distribution
+                        total_vehicles = dictsum(env.agent_acc[a], env.time + 1)
+                        desired_floats = action_rl[a][:, -1] * total_vehicles
+                        desired_ints = np.floor(desired_floats).astype(int)
+                        remainder = int(total_vehicles - desired_ints.sum())
+                        
+                        # Distribute remainder to preserve exact vehicle count
+                        if remainder > 0:
+                            fractional_parts = desired_floats - desired_ints
+                            top_indices = np.argpartition(fractional_parts, -remainder)[-remainder:]
+                            desired_ints[top_indices] += 1
+                        
                         desiredAcc[a] = {
-                            env.region[i]: int(action_rl[a][i][-1] * dictsum(env.agent_acc[a], env.time + 1))
+                            env.region[i]: desired_ints[i]
                             for i in range(env.nregion)
                         }
                 
@@ -979,25 +1081,61 @@ if not args.test:
             for a in [0, 1]:
                 mean_price_scalar[a] = np.mean(actions_price[a]) if len(actions_price[a]) > 0 else 0
 
-        # Calculate mean concentration parameters per agent (mode-specific)
+        # Calculate concentration statistics per agent (mode-specific)
         if env.mode == 0:
             mean_concentration_dirichlet = {0: 0, 1: 0}
+            min_concentration_dirichlet = {0: 0, 1: 0}
+            max_concentration_dirichlet = {0: 0, 1: 0}
             for a in [0, 1]:
-                mean_concentration_dirichlet[a] = np.mean(actions_concentration_dirichlet[a]) if len(actions_concentration_dirichlet[a]) > 0 else 0
+                if len(actions_concentration_dirichlet[a]) > 0:
+                    mean_concentration_dirichlet[a] = np.mean(actions_concentration_dirichlet[a])
+                    # Use episode-level tracked min/max
+                    min_concentration_dirichlet[a] = episode_min_concentration_dirichlet[a]
+                    max_concentration_dirichlet[a] = episode_max_concentration_dirichlet[a]
         elif env.mode == 1:
             mean_concentration_alpha = {0: 0, 1: 0}
             mean_concentration_beta = {0: 0, 1: 0}
+            min_concentration_alpha = {0: 0, 1: 0}
+            min_concentration_beta = {0: 0, 1: 0}
+            max_concentration_alpha = {0: 0, 1: 0}
+            max_concentration_beta = {0: 0, 1: 0}
             for a in [0, 1]:
-                mean_concentration_alpha[a] = np.mean(actions_concentration_alpha[a]) if len(actions_concentration_alpha[a]) > 0 else 0
-                mean_concentration_beta[a] = np.mean(actions_concentration_beta[a]) if len(actions_concentration_beta[a]) > 0 else 0
+                if len(actions_concentration_alpha[a]) > 0:
+                    mean_concentration_alpha[a] = np.mean(actions_concentration_alpha[a])
+                    mean_concentration_beta[a] = np.mean(actions_concentration_beta[a])
+                    # Use episode-level tracked min/max
+                    min_concentration_alpha[a] = episode_min_concentration_alpha[a]
+                    max_concentration_alpha[a] = episode_max_concentration_alpha[a]
+                    min_concentration_beta[a] = episode_min_concentration_beta[a]
+                    max_concentration_beta[a] = episode_max_concentration_beta[a]
         else:  # mode 2
             mean_concentration_alpha = {0: 0, 1: 0}
             mean_concentration_beta = {0: 0, 1: 0}
             mean_concentration_dirichlet = {0: 0, 1: 0}
+            min_concentration_alpha = {0: 0, 1: 0}
+            min_concentration_beta = {0: 0, 1: 0}
+            min_concentration_dirichlet = {0: 0, 1: 0}
+            max_concentration_alpha = {0: 0, 1: 0}
+            max_concentration_beta = {0: 0, 1: 0}
+            max_concentration_dirichlet = {0: 0, 1: 0}
             for a in [0, 1]:
-                mean_concentration_alpha[a] = np.mean(actions_concentration_alpha[a]) if len(actions_concentration_alpha[a]) > 0 else 0
-                mean_concentration_beta[a] = np.mean(actions_concentration_beta[a]) if len(actions_concentration_beta[a]) > 0 else 0
-                mean_concentration_dirichlet[a] = np.mean(actions_concentration_dirichlet[a]) if len(actions_concentration_dirichlet[a]) > 0 else 0
+                if len(actions_concentration_alpha[a]) > 0:
+                    mean_concentration_alpha[a] = np.mean(actions_concentration_alpha[a])
+                    mean_concentration_beta[a] = np.mean(actions_concentration_beta[a])
+                    mean_concentration_dirichlet[a] = np.mean(actions_concentration_dirichlet[a])
+                    # Use episode-level tracked min/max
+                    min_concentration_alpha[a] = episode_min_concentration_alpha[a]
+                    max_concentration_alpha[a] = episode_max_concentration_alpha[a]
+                    min_concentration_beta[a] = episode_min_concentration_beta[a]
+                    max_concentration_beta[a] = episode_max_concentration_beta[a]
+                    min_concentration_dirichlet[a] = episode_min_concentration_dirichlet[a]
+                    max_concentration_dirichlet[a] = episode_max_concentration_dirichlet[a]
+                    min_concentration_alpha[a] = np.min(actions_concentration_alpha[a])
+                    min_concentration_beta[a] = np.min(actions_concentration_beta[a])
+                    min_concentration_dirichlet[a] = np.min(actions_concentration_dirichlet[a])
+                    max_concentration_alpha[a] = np.max(actions_concentration_alpha[a])
+                    max_concentration_beta[a] = np.max(actions_concentration_beta[a])
+                    max_concentration_dirichlet[a] = np.max(actions_concentration_dirichlet[a])
 
         # Add training metrics to wandb
         log_dict = {
@@ -1067,19 +1205,43 @@ if not args.test:
         # Add concentration metrics (mode-specific)
         if env.mode == 0:
             log_dict["agent0/mean_concentration_dirichlet"] = mean_concentration_dirichlet[0]
+            log_dict["agent0/min_concentration_dirichlet"] = min_concentration_dirichlet[0]
+            log_dict["agent0/max_concentration_dirichlet"] = max_concentration_dirichlet[0]
             log_dict["agent1/mean_concentration_dirichlet"] = mean_concentration_dirichlet[1]
+            log_dict["agent1/min_concentration_dirichlet"] = min_concentration_dirichlet[1]
+            log_dict["agent1/max_concentration_dirichlet"] = max_concentration_dirichlet[1]
         elif env.mode == 1:
             log_dict["agent0/mean_concentration_alpha"] = mean_concentration_alpha[0]
             log_dict["agent0/mean_concentration_beta"] = mean_concentration_beta[0]
+            log_dict["agent0/min_concentration_alpha"] = min_concentration_alpha[0]
+            log_dict["agent0/min_concentration_beta"] = min_concentration_beta[0]
+            log_dict["agent0/max_concentration_alpha"] = max_concentration_alpha[0]
+            log_dict["agent0/max_concentration_beta"] = max_concentration_beta[0]
             log_dict["agent1/mean_concentration_alpha"] = mean_concentration_alpha[1]
             log_dict["agent1/mean_concentration_beta"] = mean_concentration_beta[1]
+            log_dict["agent1/min_concentration_alpha"] = min_concentration_alpha[1]
+            log_dict["agent1/min_concentration_beta"] = min_concentration_beta[1]
+            log_dict["agent1/max_concentration_alpha"] = max_concentration_alpha[1]
+            log_dict["agent1/max_concentration_beta"] = max_concentration_beta[1]
         else:  # mode 2
             log_dict["agent0/mean_concentration_alpha"] = mean_concentration_alpha[0]
             log_dict["agent0/mean_concentration_beta"] = mean_concentration_beta[0]
             log_dict["agent0/mean_concentration_dirichlet"] = mean_concentration_dirichlet[0]
+            log_dict["agent0/min_concentration_alpha"] = min_concentration_alpha[0]
+            log_dict["agent0/min_concentration_beta"] = min_concentration_beta[0]
+            log_dict["agent0/min_concentration_dirichlet"] = min_concentration_dirichlet[0]
+            log_dict["agent0/max_concentration_alpha"] = max_concentration_alpha[0]
+            log_dict["agent0/max_concentration_beta"] = max_concentration_beta[0]
+            log_dict["agent0/max_concentration_dirichlet"] = max_concentration_dirichlet[0]
             log_dict["agent1/mean_concentration_alpha"] = mean_concentration_alpha[1]
             log_dict["agent1/mean_concentration_beta"] = mean_concentration_beta[1]
             log_dict["agent1/mean_concentration_dirichlet"] = mean_concentration_dirichlet[1]
+            log_dict["agent1/min_concentration_alpha"] = min_concentration_alpha[1]
+            log_dict["agent1/min_concentration_beta"] = min_concentration_beta[1]
+            log_dict["agent1/min_concentration_dirichlet"] = min_concentration_dirichlet[1]
+            log_dict["agent1/max_concentration_alpha"] = max_concentration_alpha[1]
+            log_dict["agent1/max_concentration_beta"] = max_concentration_beta[1]
+            log_dict["agent1/max_concentration_dirichlet"] = max_concentration_dirichlet[1]
         
         # Add log probability tracking for both agents
         for agent_id in [0, 1]:
@@ -1181,7 +1343,7 @@ if not args.test:
 else:
     scenario = Scenario(
                 json_file=f"data/scenario_{city}.json",
-                demand_ratio=demand_ratio[city],
+                demand_ratio=demand_ratio[city]*2,
                 json_hr=json_hr[city],
                 sd=args.seed,
                 json_tstep=args.json_tstep,
@@ -1216,11 +1378,11 @@ else:
 
     # Calculate input size based on price type
     if args.use_od_prices:
-        # OD price matrices: T (future) + 3 (current_avb, queue, demand) + 2*nregion (own and competitor OD prices)
-        input_size = args.look_ahead + 3 + 2 * env.nregion
+        # OD price matrices: T (future) + 3 (current_avb, queue, demand) + 3*nregion (own, competitor, and difference OD prices)
+        input_size = args.look_ahead + 3 + 3 * env.nregion
     else:
-        # Aggregated prices: T (future) + 3 (current_avb, queue, demand) + 2 (own and competitor aggregated prices)
-        input_size = args.look_ahead + 5
+        # Aggregated prices: T (future) + 3 (current_avb, queue, demand) + 3 (own, competitor, and difference aggregated prices)
+        input_size = args.look_ahead + 6
     
     # Only create models if not in baseline mode (mode 3 or 4)
     if args.mode not in [3, 4]:
@@ -1389,8 +1551,19 @@ else:
                         desiredAcc[a] = {env.region[i]: env.agent_initial_acc[a][env.region[i]] for i in range(env.nregion)}
                     else:
                         # For active agent, use action to determine desired distribution
+                        total_vehicles = dictsum(env.agent_acc[a], env.time + 1)
+                        desired_floats = action_rl[a] * total_vehicles
+                        desired_ints = np.floor(desired_floats).astype(int)
+                        remainder = int(total_vehicles - desired_ints.sum())
+                        
+                        # Distribute remainder to preserve exact vehicle count
+                        if remainder > 0:
+                            fractional_parts = desired_floats - desired_ints
+                            top_indices = np.argpartition(fractional_parts, -remainder)[-remainder:]
+                            desired_ints[top_indices] += 1
+                        
                         desiredAcc[a] = {
-                            env.region[i]: int(action_rl[a][i] * dictsum(env.agent_acc[a], env.time + 1))
+                            env.region[i]: desired_ints[i]
                             for i in range(env.nregion)
                         }
 
@@ -1433,8 +1606,8 @@ else:
                 # Track concentration (mode 1: Beta distribution - alpha and beta)
                 for a in [0, 1]:
                     if a != args.fix_agent:
-                        actions_concentration_alpha[a].append(np.mean(concentrations[a][:, 0]))
-                        actions_concentration_beta[a].append(np.mean(concentrations[a][:, 1]))
+                        actions_concentration_alpha[a].append(np.mean(concentrations[a][0, :, 0]))
+                        actions_concentration_beta[a].append(np.mean(concentrations[a][0, :, 1]))
 
                 # Track price scalars for visualization (last episode only)
                 if episode == 9:
@@ -1508,8 +1681,19 @@ else:
                         desiredAcc[a] = {env.region[i]: env.agent_initial_acc[a][env.region[i]] for i in range(env.nregion)}
                     else:
                         # For active agent, use action to determine desired distribution
+                        total_vehicles = dictsum(env.agent_acc[a], env.time + 1)
+                        desired_floats = action_rl[a][:, -1] * total_vehicles
+                        desired_ints = np.floor(desired_floats).astype(int)
+                        remainder = int(total_vehicles - desired_ints.sum())
+                        
+                        # Distribute remainder to preserve exact vehicle count
+                        if remainder > 0:
+                            fractional_parts = desired_floats - desired_ints
+                            top_indices = np.argpartition(fractional_parts, -remainder)[-remainder:]
+                            desired_ints[top_indices] += 1
+                        
                         desiredAcc[a] = {
-                            env.region[i]: int(action_rl[a][i][-1] * dictsum(env.agent_acc[a], env.time + 1))
+                            env.region[i]: desired_ints[i]
                             for i in range(env.nregion)
                         }
                 

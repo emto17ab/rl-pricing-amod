@@ -290,7 +290,7 @@ if not args.test:
     # Create the scenario
     scenario = Scenario(
                 json_file=f"data/scenario_{city}.json",
-                demand_ratio=demand_ratio[city],
+                demand_ratio=demand_ratio[city]*2,
                 json_hr=json_hr[city],
                 sd=args.seed,
                 json_tstep=args.json_tstep,

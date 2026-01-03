@@ -292,7 +292,7 @@ class AMoD:
                 exp_utilities = []
                 labels = []
 
-                income_effect = 25 / self.wage
+                income_effect = self.wage / self.wage
 
                 # Compute utilities for all agents
                 U_0 = self.choice_intercept - 0.71 * self.wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr0
@@ -944,7 +944,7 @@ class Scenario:
 
                 # The demand is incremented for specific OD and time index by the demand volume v, scaled by a demand_ratio factor.
                 self.demand_input[o, d][(
-                    t-self.json_start)//json_tstep] += v*demand_ratio*2
+                    t-self.json_start)//json_tstep] += v*demand_ratio
 
                 # The price p is accumulated in a volume-weighted manner (p*v) for the same OD and time index. 
                 # This is not just summing prices: it's building a demand-weighted sum. Later we divide by total demand to get average price.
