@@ -15,19 +15,21 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Define calibrated simulation parameters
-demand_ratio = {'san_francisco': 2,'nyc_man_south': 1.0, 'nyc_brooklyn': 9}
 
-json_hr = {'san_francisco':19,'nyc_man_south': 19, 'nyc_brooklyn': 19, 'nyc_manhattan': 19}
+# Define calibrated simulation parameters
+demand_ratio = {'san_francisco': 2,'nyc_man_south': 1.0, 'nyc_brooklyn': 9, 'washington_dc': 4.2}
 
-beta = {'san_francisco': 0.2,'nyc_man_south': 0.5, 'nyc_brooklyn':0.5}
+json_hr = {'san_francisco':19,'nyc_man_south': 19, 'nyc_brooklyn': 19, 'washington_dc': 19}
 
-choice_intercept = {'san_francisco': 16.32, 'nyc_man_south': 12.65, 'nyc_brooklyn':13.92}
+beta = {'san_francisco': 0.2,'nyc_man_south': 0.5, 'nyc_brooklyn':0.5, 'washington_dc': 0.5}
+
+choice_intercept = {'san_francisco': 16.32, 'nyc_man_south': 12.65, 'nyc_brooklyn':31.52, 'washington_dc': 13.49}
 #2008->2009: 0.3%, 2009->2010: 1.6%, 2010->2011: 3.1%, 2011->2012: 2.1%, 2012->2013: 1.5%
 # Total: approximately 8.9% cumulative increase from 2008 to 2013
 #inflation_factor = 1.089  # To convert 2013 dollars to 2008 dollars, divide by this
-wage = {'san_francisco': 21.40,'nyc_man_south': 33.39, 'nyc_brooklyn': 12.16}
+wage = {'san_francisco': 21.40,'nyc_man_south': 33.39, 'nyc_brooklyn': 12.16, 'washington_dc': 26.99}
 
-test_tstep = {'san_francisco': 3, 'nyc_man_south': 3, 'nyc_brooklyn': 4}
+test_tstep = {'san_francisco': 3, 'nyc_man_south': 3, 'nyc_brooklyn': 4, 'washington_dc':3}
 
 parser = argparse.ArgumentParser(description="A2C-GNN")
 
