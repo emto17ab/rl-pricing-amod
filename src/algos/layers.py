@@ -97,7 +97,7 @@ class GNNActor(nn.Module):
             if self.mode == 0:
                 # Dirichlet: single joint distribution over nregion categories
                 # concentration shape: [1, nregion]
-                m = Dirichlet(concentration)
+                m = Dirichlet(concentration + 0.01)
                 action = m.rsample()  # Shape: [1, nregion]
                 log_prob = m.log_prob(action)  # Shape: [1] (scalar for joint distribution)
                 action = action.squeeze(0)  # Shape: [nregion]
@@ -106,7 +106,7 @@ class GNNActor(nn.Module):
             elif self.mode == 1:
                 # Beta: nregion independent distributions
                 # concentration shape: [1, nregion, 2]
-                m_o = Beta(concentration[:,:,0], concentration[:,:,1])
+                m_o = Beta(concentration[:,:,0] + 1, concentration[:,:,1] + 1)
                 action_o = m_o.rsample()  # Shape: [1, nregion]
                 # Sum log probs across independent distributions (not mean!)
                 log_prob = m_o.log_prob(action_o).sum(dim=-1)  # Shape: [1]
@@ -116,11 +116,11 @@ class GNNActor(nn.Module):
             else:
                 # Mode 2: nregion independent Beta distributions + 1 Dirichlet
                 # Beta concentration shape: [1, nregion, 2]
-                m_o = Beta(concentration[:,:,0], concentration[:,:,1])
+                m_o = Beta(concentration[:,:,0] + 1, concentration[:,:,1] + 1)
                 action_o = m_o.rsample()  # Shape: [1, nregion]
                 # Dirichlet for rebalancing
                 # Rebalancing concentration shape: [1, nregion]
-                m_reb = Dirichlet(concentration[:,:,-1])
+                m_reb = Dirichlet(concentration[:,:,-1] + 0.01)
                 action_reb = m_reb.rsample()  # Shape: [1, nregion]
                 # Joint log prob: sum of Beta log probs + Dirichlet log prob
                 log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_reb.log_prob(action_reb)  # Shape: [1]
