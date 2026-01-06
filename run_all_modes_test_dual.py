@@ -8,9 +8,9 @@ import re
 import sys
 
 # Configuration
-CHECKPOINT_BASE = "base_case_dual_agent_mode{}_sf"
-CITY = "san_francisco"
-MODEL_TYPE = "test"
+CHECKPOINT_BASE = "dual_agent_nyc_man_south_cars_1000_mode{}"
+CITY = "nyc_man_south"
+MODEL_TYPE = "running"
 
 # Metrics to collect for Combined totals (in order for the table)
 METRIC_PATTERNS = {
@@ -41,7 +41,6 @@ def run_mode(mode):
         "--checkpoint_path", checkpoint_path,
         "--model_type", MODEL_TYPE,
         "--use_od_prices",
-        "--loss_aversion", "0.0"
     ]
     
     # Only add --load for modes that need checkpoints (0, 1, 2)

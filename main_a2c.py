@@ -23,7 +23,7 @@ json_hr = {'san_francisco':19,'nyc_man_south': 19, 'nyc_brooklyn': 19, 'washingt
 
 beta = {'san_francisco': 0.2,'nyc_man_south': 0.5, 'nyc_brooklyn':0.5, 'washington_dc': 0.5}
 
-choice_intercept = {'san_francisco': 16.32, 'nyc_man_south': 12.65, 'nyc_brooklyn':31.52, 'washington_dc': 13.49}
+choice_intercept = {'san_francisco': 11.52, 'nyc_man_south': 10.24, 'washington_dc': 11.80}
 #2008->2009: 0.3%, 2009->2010: 1.6%, 2010->2011: 3.1%, 2011->2012: 2.1%, 2012->2013: 1.5%
 # Total: approximately 8.9% cumulative increase from 2008 to 2013
 #inflation_factor = 1.089  # To convert 2013 dollars to 2008 dollars, divide by this
