@@ -756,7 +756,7 @@ class AMoD:
 
 class Scenario:
     def __init__(self, N1=2, N2=4, tf=60, sd=None, ninit=5, tripAttr=None, demand_input=None, demand_ratio=None, supply_ratio=1,
-                 trip_length_preference=0.25, grid_travel_time=1, fix_price=True, alpha=0.0, json_file=None, json_hr=19, json_tstep=3, varying_time=False, json_regions=None, impute=False):
+                 trip_length_preference=0.25, grid_travel_time=1, fix_price=True, alpha=0.0, json_file=None, json_hr=19, json_tstep=3, varying_time=False, json_regions=None, impute=False, agent0_vehicle_ratio=0.5):
         # trip_length_preference: positive - more shorter trips, negative - more longer trips
         # grid_travel_time: travel time between grids
         # demand_input： list - total demand out of each region,
@@ -766,6 +766,7 @@ class Scenario:
         # static_demand will then be sampled according to a Poisson distributionjson_tstep
         # alpha: parameter for uniform distribution of demand levels - [1-alpha, 1+alpha] * demand_input
         self.sd = sd
+        self.agent0_vehicle_ratio = agent0_vehicle_ratio
         if sd != None:
             np.random.seed(self.sd)
         if json_file == None:
@@ -796,24 +797,30 @@ class Scenario:
             # Total fleet = ninit vehicles per node
             total_fleet = ninit * len(self.G.nodes)
             
-            # Split fleet between two agents (round down)
-            fleet_per_agent = int(total_fleet // 2)
-            
-            # Distribute each agent's fleet evenly across nodes
-            num_nodes = len(self.G.nodes)
-            base_vehicles_per_node = fleet_per_agent // num_nodes
-            remainder = fleet_per_agent % num_nodes
+            # Split fleet between two agents using agent0_vehicle_ratio
+            fleet_agent0 = int(total_fleet * self.agent0_vehicle_ratio)
+            fleet_agent1 = total_fleet - fleet_agent0
             
             # Create list of nodes and shuffle for random remainder assignment
             nodes_list = list(self.G.nodes)
             random.seed(sd)
             random.shuffle(nodes_list)
+            num_nodes = len(nodes_list)
+            
+            # Distribute agent 0's fleet
+            base_vehicles_agent0 = fleet_agent0 // num_nodes
+            remainder_agent0 = fleet_agent0 % num_nodes
+            
+            # Distribute agent 1's fleet
+            base_vehicles_agent1 = fleet_agent1 // num_nodes
+            remainder_agent1 = fleet_agent1 % num_nodes
             
             # Assign vehicles to each node for both agents
             for idx, n in enumerate(nodes_list):
-                vehicles_for_agent = base_vehicles_per_node + (1 if idx < remainder else 0)
-                self.G.nodes[n]['accInit_agent0'] = vehicles_for_agent
-                self.G.nodes[n]['accInit_agent1'] = vehicles_for_agent
+                vehicles_agent0 = base_vehicles_agent0 + (1 if idx < remainder_agent0 else 0)
+                vehicles_agent1 = base_vehicles_agent1 + (1 if idx < remainder_agent1 else 0)
+                self.G.nodes[n]['accInit_agent0'] = vehicles_agent0
+                self.G.nodes[n]['accInit_agent1'] = vehicles_agent1
             
             self.tf = tf
             self.demand_ratio = defaultdict(list)
@@ -1069,27 +1076,32 @@ class Scenario:
                 hr, acc = item["hour"], item["acc"]
                 if hr == json_hr+int(round(json_tstep/2*tf/60)):
                     # Total fleet with supply ratio applied
-                    total_fleet = supply_ratio * acc
+                    total_fleet = int(supply_ratio * acc)
                     
-                    # Split fleet between two agents (round down to ensure integers)
-                    fleet_per_agent = int(total_fleet // 2)
-                    
-                    # Distribute each agent's fleet evenly across nodes
-                    num_nodes = len(self.G)
-                    base_vehicles_per_node = fleet_per_agent // num_nodes
-                    remainder = fleet_per_agent % num_nodes
+                    # Split fleet between two agents using agent0_vehicle_ratio
+                    fleet_agent0 = int(total_fleet * self.agent0_vehicle_ratio)
+                    fleet_agent1 = total_fleet - fleet_agent0
                     
                     # Create list of nodes and shuffle for random remainder assignment
                     nodes_list = list(self.G.nodes)
                     random.seed(sd)  # Use scenario seed for reproducibility
                     random.shuffle(nodes_list)
+                    num_nodes = len(nodes_list)
+                    
+                    # Distribute agent 0's fleet
+                    base_vehicles_agent0 = fleet_agent0 // num_nodes
+                    remainder_agent0 = fleet_agent0 % num_nodes
+                    
+                    # Distribute agent 1's fleet
+                    base_vehicles_agent1 = fleet_agent1 // num_nodes
+                    remainder_agent1 = fleet_agent1 % num_nodes
                     
                     # Assign vehicles to each node for both agents
                     for idx, n in enumerate(nodes_list):
-                        # Each agent gets base amount, plus 1 extra if within remainder
-                        vehicles_for_agent = base_vehicles_per_node + (1 if idx < remainder else 0)
-                        self.G.nodes[n]['accInit_agent0'] = vehicles_for_agent
-                        self.G.nodes[n]['accInit_agent1'] = vehicles_for_agent
+                        vehicles_agent0 = base_vehicles_agent0 + (1 if idx < remainder_agent0 else 0)
+                        vehicles_agent1 = base_vehicles_agent1 + (1 if idx < remainder_agent1 else 0)
+                        self.G.nodes[n]['accInit_agent0'] = vehicles_agent0
+                        self.G.nodes[n]['accInit_agent1'] = vehicles_agent1
 
 
             self.tripAttr = self.get_random_demand()

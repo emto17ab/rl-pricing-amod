@@ -248,11 +248,11 @@ json_hr = {'san_francisco':19,'nyc_man_south': 19, 'nyc_brooklyn': 19, 'washingt
 
 beta = {'san_francisco': 0.2,'nyc_man_south': 0.5, 'nyc_brooklyn':0.5, 'washington_dc': 0.5}
 
-choice_intercept = {'san_francisco': 14.29, 'nyc_man_south': 10.24, 'washington_dc': 11.80}
+choice_intercept = {'san_francisco': 14.15, 'nyc_man_south': 9.84, 'washington_dc': 11.75}
 #2008->2009: 0.3%, 2009->2010: 1.6%, 2010->2011: 3.1%, 2011->2012: 2.1%, 2012->2013: 1.5%
 # Total: approximately 8.9% cumulative increase from 2008 to 2013
 #inflation_factor = 1.089  # To convert 2013 dollars to 2008 dollars, divide by this
-wage = {'san_francisco': 21.40,'nyc_man_south': 33.39, 'nyc_brooklyn': 12.16, 'washington_dc': 26.99}
+wage = {'san_francisco': 17.76, 'nyc_man_south': 22.77, 'washington_dc': 25.26}
 
 test_tstep = {'san_francisco': 3, 'nyc_man_south': 3, 'nyc_brooklyn': 4, 'washington_dc':3}
 
@@ -439,6 +439,13 @@ parser.add_argument(
 )
 
 parser.add_argument(
+    "--agent0_vehicle_ratio",
+    type=float,
+    default=0.5,
+    help="Proportion of vehicles for agent 0 (default: 0.5, range: 0.0-1.0)",
+)
+
+parser.add_argument(
     "--look_ahead",
     type=int,
     default=6,
@@ -528,6 +535,10 @@ parser.add_argument(
 # Parser arguments
 args = parser.parse_args()
 
+# Validate agent0_vehicle_ratio
+if not (0.0 <= args.agent0_vehicle_ratio <= 1.0):
+    raise ValueError(f"agent0_vehicle_ratio must be between 0.0 and 1.0, got {args.agent0_vehicle_ratio}")
+
 # Set device
 args.cuda = args.cuda and torch.cuda.is_available()
 device = torch.device("cuda" if args.cuda else "cpu")
@@ -553,7 +564,8 @@ if not args.test:
                 json_tstep=args.json_tstep,
                 tf=args.max_steps,
                 impute=args.impute,
-                supply_ratio=args.supply_ratio)
+                supply_ratio=args.supply_ratio,
+                agent0_vehicle_ratio=args.agent0_vehicle_ratio)
 
     # Create the environment
     env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_agent=args.fix_agent, choice_intercept=choice_intercept[city], wage=wage[city], dynamic_wage=args.dynamic_wage)
@@ -1349,7 +1361,8 @@ else:
                 json_tstep=args.json_tstep,
                 tf=args.max_steps,
                 impute=args.impute,
-                supply_ratio=args.supply_ratio)
+                supply_ratio=args.supply_ratio,
+                agent0_vehicle_ratio=args.agent0_vehicle_ratio)
 
     env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_agent=args.fix_agent, choice_intercept=choice_intercept[city], wage=wage[city], dynamic_wage=args.dynamic_wage)
     
