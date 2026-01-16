@@ -1,0 +1,17 @@
+\begin{table}[h]
+\centering
+\caption{Performance of the Training Policies in the Three Scenarios. We perform 10 tests for each policy and report the average performance with standard deviations in parentheses. Bold indicates the best-performing policies. In the columns, the policy ``NC'' represents No Control, ``UD'' represents Uniform Distribution, ``Reb.'' represents Rebalancing, and ``Joint'' represents the joint Pricing and Rebalancing policy.}
+\label{tab:policy_performance}
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{l c c c c c}
+\toprule
+City & NC & UD & Reb. & Pricing & Joint \\
+\midrule
+San Francisco & \makecell{5176.54 \\ \footnotesize (272.35)} & \makecell{7643.64 \\ \footnotesize (267.39)} & \makecell{8163.97 \\ \footnotesize (314.45)} & \makecell{8545.13 \\ \footnotesize (207.07)} & \makecell{\textbf{11478.36} \\ \footnotesize \textbf{(177.05)}} \\[0.5em]
+Washington DC & \makecell{12117.43 \\ \footnotesize (270.51)} & \makecell{13359.84 \\ \footnotesize (473.37)} & \makecell{13915.43 \\ \footnotesize (384.43)} & \makecell{12646.18 \\ \footnotesize (240.33)} & \makecell{\textbf{14283.53} \\ \footnotesize \textbf{(334.48)}} \\[0.5em]
+NYC Man. South & \makecell{15040.96 \\ \footnotesize (453.63)} & \makecell{15775.44 \\ \footnotesize (359.30)} & \makecell{16245.34 \\ \footnotesize (344.95)} & \makecell{\textbf{17015.96} \\ \footnotesize \textbf{(303.68)}} & \makecell{16909.78 \\ \footnotesize (269.13)} \\[0.5em]
+\bottomrule
+\multicolumn{6}{l}{\footnotesize \textit{Note:} All values represent average reward across 10 test episodes.}
+\end{tabular}%
+}
+\end{table}

@@ -782,8 +782,7 @@ class Scenario:
             self.G = self.G.to_directed()
             # Add self-loops to the graph for within-region trips
             self.G.add_edges_from([(i, i) for i in self.G.nodes])
-            self.demandTime = defaultdict(dict)  # traveling time between nodes
-            self.rebTime = defaultdict(dict)
+           
             # Self-loops are now part of G.edges, no need to add them separately
             self.edges = list(self.G.edges)
             self.tstep = json_tstep

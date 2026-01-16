@@ -57,6 +57,11 @@ def capture_rebalancing_flows(
         'nyc_man_north': 0.0, 'nyc_man_middle': 0.0, 'nyc_man_south': 12.1,
         'nyc_brooklyn': 0.0, 'nyc_manhattan': 0.0, 'porto': 0.0, 'rome': 0.0
     }
+    wage = {
+        'san_francisco': 21.40, 'nyc_man_south': 33.39, 'nyc_brooklyn': 12.16, 
+        'washington_dc': 26.99, 'nyc_man_north': 33.39, 'nyc_man_middle': 33.39,
+        'nyc_manhattan': 33.39, 'chicago': 26.99, 'porto': 21.40, 'rome': 21.40
+    }
     
     # Device
     device = torch.device("cpu")
@@ -82,7 +87,9 @@ def capture_rebalancing_flows(
         choice_price_mult=1.0, 
         seed=10, 
         fix_agent=2,  # No fixing
-        choice_intercept=choice_intercept[city]
+        choice_intercept=choice_intercept[city],
+        wage=wage[city],
+        dynamic_wage=False
     )
     
     print(f"Environment created with {env.nregion} regions and {len(env.edges)} edges")
@@ -289,10 +296,28 @@ def capture_rebalancing_flows(
 
 
 if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Capture rebalancing flows for visualization")
+    parser.add_argument("--city", type=str, default="nyc_man_south", help="City to use")
+    parser.add_argument("--checkpoint_path", type=str, required=True, help="Checkpoint base name")
+    parser.add_argument("--mode", type=int, default=2, help="Simulation mode")
+    parser.add_argument("--max_steps", type=int, default=20, help="Timesteps per episode")
+    parser.add_argument("--supply_ratio", type=float, default=1.0, help="Supply ratio")
+    parser.add_argument("--output_file", type=str, default=None, help="Output file path")
+    
+    args = parser.parse_args()
+    
+    # Determine output filename if not provided
+    if args.output_file is None:
+        # Estimate number of cars based on supply_ratio (approximate)
+        num_cars = int(1200 * args.supply_ratio)  # Adjust base number as needed
+        args.output_file = f"saved_files/reb_flows_mode{args.mode}_{num_cars}cars_{args.city}.pkl"
+    
     flow_data = capture_rebalancing_flows(
-        city="nyc_man_south",
-        checkpoint_base="base_case_dual_agent_mode2_cars_1200",
-        mode=2,
-        max_steps=20,
-        output_file="saved_files/reb_flows_mode2_1200cars_nyc_man_south.pkl"
+        city=args.city,
+        checkpoint_base=args.checkpoint_path,
+        mode=args.mode,
+        max_steps=args.max_steps,
+        output_file=args.output_file
     )

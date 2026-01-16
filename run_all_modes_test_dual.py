@@ -8,9 +8,9 @@ import re
 import sys
 
 # Configuration
-CHECKPOINT_BASE = "dual_agent_nyc_man_south_cars_1000_mode{}"
+CHECKPOINT_BASE = "dual_agent_nyc_man_south_mode{}"
 CITY = "nyc_man_south"
-MODEL_TYPE = "running"
+MODEL_TYPE = "test"
 
 # Metrics to collect for Combined totals (in order for the table)
 METRIC_PATTERNS = {
@@ -24,9 +24,12 @@ METRIC_PATTERNS = {
     "Queue Agent 0": r"Agent 0 Metrics:[\s\S]*?Queue length \(mean, std\): ([\d.-]+), ([\d.-]+)",
     "Queue Agent 1": r"Agent 1 Metrics:[\s\S]*?Queue length \(mean, std\): ([\d.-]+), ([\d.-]+)",
     "Served Demand": r"Total served demand \(mean, std\): ([\d.-]+), ([\d.-]+)",
+    "Arrivals Agent 0": r"Agent 0 Metrics:[\s\S]*?Arrivals \(mean, std\): ([\d.-]+), ([\d.-]+)",
+    "Arrivals Agent 1": r"Agent 1 Metrics:[\s\S]*?Arrivals \(mean, std\): ([\d.-]+), ([\d.-]+)",
+    "Total Arrivals": r"Total arrivals \(mean, std\): ([\d.-]+), ([\d.-]+)",
 }
 
-METRIC_ORDER = ["Reward", "Rebalancing Costs", "Rebalance Trips", "Price Agent 0", "Price Agent 1", "Wait/mins Agent 0", "Wait/mins Agent 1", "Queue Agent 0", "Queue Agent 1", "Served Demand"]
+METRIC_ORDER = ["Reward", "Rebalancing Costs", "Rebalance Trips", "Price Agent 0", "Price Agent 1", "Wait/mins Agent 0", "Wait/mins Agent 1", "Queue Agent 0", "Queue Agent 1", "Served Demand", "Arrivals Agent 0", "Arrivals Agent 1", "Total Arrivals"]
 
 def run_mode(mode):
     """Run a single mode and return the output."""
@@ -89,8 +92,9 @@ def format_value(mean, std):
 def main():
     # Collect results for all modes
     all_results = {}
+    modes_to_run = [2]
     
-    for mode in range(5):  # Modes 0-4
+    for mode in modes_to_run:
         output = run_mode(mode)
         results = parse_output(output, mode)
         all_results[mode] = results
@@ -100,12 +104,12 @@ def main():
     output_file = "results_table_dual.tsv"
     with open(output_file, "w") as f:
         # Header row
-        f.write("Metric\t" + "\t".join([f"Mode {m}" for m in range(5)]) + "\n")
+        f.write("Metric\t" + "\t".join([f"Mode {m}" for m in modes_to_run]) + "\n")
         
         # Data rows
         for metric in METRIC_ORDER:
             row = metric
-            for mode in range(5):
+            for mode in modes_to_run:
                 mean, std = all_results[mode].get(metric, (None, None))
                 row += "\t" + format_value(mean, std)
             f.write(row + "\n")

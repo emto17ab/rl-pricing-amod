@@ -1464,8 +1464,11 @@ else:
     # Storage for temporal visualization data from last episode (agent actions)
     visualization_data = {
         'agent_price_scalars': {0: [], 1: []},      # {agent_id: [timestep actions]} - List of price scalar arrays per timestep
-        'agent_reb_actions': {0: [], 1: []},        # {agent_id: [timestep actions]} - List of rebalancing action arrays per timestep
+        'agent_reb_actions': {0: [], 1: []},        # {agent_id: [timestep actions]} - List of rebalancing action arrays per timestep (Dirichlet)
+        'agent_reb_flows': {0: [], 1: []},          # {agent_id: [timestep flows]} - Actual rebAction flows per edge per timestep
         'agent_acc_temporal': {0: [], 1: []},       # {agent_id: [timestep states]} - Vehicle availability at each timestep
+        'agent_demand': {0: [], 1: []},             # {agent_id: [timestep demand]} - Demand assigned to each agent per region per timestep
+        'edges': list(env.edges),                   # List of (origin, destination) tuples
         'metadata': {
             'num_regions': env.nregion,
             'num_timesteps': args.max_steps,
@@ -1542,6 +1545,9 @@ else:
                         # Track current vehicle availability
                         acc_current = np.array([env.agent_acc[a].get(env.region[i], {}).get(env.time, 0) for i in range(env.nregion)])
                         visualization_data['agent_acc_temporal'][a].append(acc_current)
+                        # Track demand per region for this agent
+                        demand_current = np.array([sum(env.agent_demand[a].get((env.region[i], j), {}).get(env.time, 0) for j in env.region) for i in range(env.nregion)])
+                        visualization_data['agent_demand'][a].append(demand_current)
 
                 # Compute desired accumulation for all agents
                 desiredAcc = {}
@@ -1572,6 +1578,11 @@ else:
                     a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode, job_id=args.checkpoint_path)
                     for a in [0, 1]
                 }
+                
+                # Capture actual rebalancing flows for visualization (last episode only)
+                if episode == 9:
+                    for a in [0, 1]:
+                        visualization_data['agent_reb_flows'][a].append(np.array(rebAction[a]))
                 
                 _, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
                 eps_reward = {a: eps_reward[a] + rebreward[a] for a in [0, 1]}
@@ -1616,6 +1627,9 @@ else:
                         # Track current vehicle availability
                         acc_current = np.array([env.agent_acc[a].get(env.region[i], {}).get(env.time, 0) for i in range(env.nregion)])
                         visualization_data['agent_acc_temporal'][a].append(acc_current)
+                        # Track demand per region for this agent
+                        demand_current = np.array([sum(env.agent_demand[a].get((env.region[i], j), {}).get(env.time, 0) for j in env.region) for i in range(env.nregion)])
+                        visualization_data['agent_demand'][a].append(demand_current)
 
                 # Matching update (global step)
                 env.matching_update()
@@ -1671,6 +1685,9 @@ else:
                         # Track current vehicle availability
                         acc_current = np.array([env.agent_acc[a].get(env.region[i], {}).get(env.time, 0) for i in range(env.nregion)])
                         visualization_data['agent_acc_temporal'][a].append(acc_current)
+                        # Track demand per region for this agent
+                        demand_current = np.array([sum(env.agent_demand[a].get((env.region[i], j), {}).get(env.time, 0) for j in env.region) for i in range(env.nregion)])
+                        visualization_data['agent_demand'][a].append(demand_current)
 
                 # --- Desired Acc computation ---
                 # Compute desired accumulation for all agents
@@ -1703,6 +1720,11 @@ else:
                     a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode, job_id=args.checkpoint_path)
                     for a in [0, 1]
                 }
+                
+                # Capture actual rebalancing flows for visualization (last episode only)
+                if episode == 9:
+                    for a in [0, 1]:
+                        visualization_data['agent_reb_flows'][a].append(np.array(rebAction[a]))
             
                 _, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
             
@@ -1733,6 +1755,9 @@ else:
                         # Track current vehicle availability
                         acc_current = np.array([env.agent_acc[a].get(env.region[i], {}).get(env.time, 0) for i in range(env.nregion)])
                         visualization_data['agent_acc_temporal'][a].append(acc_current)
+                        # Track demand per region for this agent
+                        demand_current = np.array([sum(env.agent_demand[a].get((env.region[i], j), {}).get(env.time, 0) for j in env.region) for i in range(env.nregion)])
+                        visualization_data['agent_demand'][a].append(demand_current)
                 
                 # NO rebalancing step - just update vehicle arrivals from completed passenger trips
                 env.matching_update()
@@ -1778,6 +1803,9 @@ else:
                         # Track current vehicle availability
                         acc_current = np.array([env.agent_acc[a].get(env.region[i], {}).get(env.time, 0) for i in range(env.nregion)])
                         visualization_data['agent_acc_temporal'][a].append(acc_current)
+                        # Track demand per region for this agent
+                        demand_current = np.array([sum(env.agent_demand[a].get((env.region[i], j), {}).get(env.time, 0) for j in env.region) for i in range(env.nregion)])
+                        visualization_data['agent_demand'][a].append(demand_current)
                 
                 # Compute rebalancing flows for both agents
                 rebAction = {
@@ -1873,8 +1901,12 @@ else:
             visualization_data['agent_price_scalars'][agent_id] = np.array(visualization_data['agent_price_scalars'][agent_id])
         if len(visualization_data['agent_reb_actions'][agent_id]) > 0:
             visualization_data['agent_reb_actions'][agent_id] = np.array(visualization_data['agent_reb_actions'][agent_id])
+        if len(visualization_data['agent_reb_flows'][agent_id]) > 0:
+            visualization_data['agent_reb_flows'][agent_id] = np.array(visualization_data['agent_reb_flows'][agent_id])
         if len(visualization_data['agent_acc_temporal'][agent_id]) > 0:
             visualization_data['agent_acc_temporal'][agent_id] = np.array(visualization_data['agent_acc_temporal'][agent_id])
+        if len(visualization_data['agent_demand'][agent_id]) > 0:
+            visualization_data['agent_demand'][agent_id] = np.array(visualization_data['agent_demand'][agent_id])
     
     with open(visualization_filename, 'wb') as f:
         pickle.dump(visualization_data, f)
@@ -1884,7 +1916,10 @@ else:
     print(f"Data structure:")
     print(f"  - agent_price_scalars: {[visualization_data['agent_price_scalars'][a].shape if len(visualization_data['agent_price_scalars'][a]) > 0 else 'empty' for a in [0, 1]]}")
     print(f"  - agent_reb_actions: {[visualization_data['agent_reb_actions'][a].shape if len(visualization_data['agent_reb_actions'][a]) > 0 else 'empty' for a in [0, 1]]}")
+    print(f"  - agent_reb_flows: {[visualization_data['agent_reb_flows'][a].shape if len(visualization_data['agent_reb_flows'][a]) > 0 else 'empty' for a in [0, 1]]}")
     print(f"  - agent_acc_temporal: {[visualization_data['agent_acc_temporal'][a].shape if len(visualization_data['agent_acc_temporal'][a]) > 0 else 'empty' for a in [0, 1]]}")
+    print(f"  - agent_demand: {[visualization_data['agent_demand'][a].shape if len(visualization_data['agent_demand'][a]) > 0 else 'empty' for a in [0, 1]]}")
+    print(f"  - edges: {len(visualization_data['edges'])} edges")
     print(f"{'='*80}\n")
     
     # Save trip data from last episode to CSV
@@ -1942,8 +1977,8 @@ else:
     print(f"  Total rebalancing cost (mean, std): {np.mean(costs_total):.2f}, {np.std(costs_total):.2f}")
     print(f"  Total arrivals (mean, std): {np.mean(arrivals_total):.2f}, {np.std(arrivals_total):.2f}")
     
-    # Only show rebalancing trips for modes 0 and 2 (not mode 1, 3, or 4)
-    if args.mode not in [1, 3, 4]:
+    # Only show rebalancing trips for modes with rebalancing (0, 2, 4; not mode 1 or 3)
+    if args.mode not in [1, 3]:
         reb_agent0 = [ep[0] for ep in epoch_rebalancing_list]
         reb_agent1 = [ep[1] for ep in epoch_rebalancing_list]
         reb_total = [ep[0] + ep[1] for ep in epoch_rebalancing_list]

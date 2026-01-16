@@ -8,8 +8,8 @@ import re
 import sys
 
 # Configuration
-CHECKPOINT_BASE = "base_case_single_agent_mode{}_cars_2200"
-CITY = "nyc_man_south"
+CHECKPOINT_BASE = "single_agent_san_francisco_mode{}"
+CITY = "san_francisco"
 MODEL_TYPE = "test"
 
 # Metrics to collect (in order for the table)
@@ -21,9 +21,10 @@ METRIC_PATTERNS = {
     "Wait/mins": r"Waiting time \(mean, std\): ([\d.-]+) ([\d.-]+)",
     "Queue": r"Queue length \(mean, std\): ([\d.-]+) ([\d.-]+)",
     "Served Demand": r"Served demand \(mean, std\): ([\d.-]+) ([\d.-]+)",
+    "Arrivals": r"Arrivals \(mean, std\): ([\d.-]+) ([\d.-]+)",
 }
 
-METRIC_ORDER = ["Reward", "Rebalancing Costs", "Rebalance Trips", "Price", "Wait/mins", "Queue", "Served Demand"]
+METRIC_ORDER = ["Reward", "Rebalancing Costs", "Rebalance Trips", "Price", "Wait/mins", "Queue", "Served Demand", "Arrivals"]
 
 def run_mode(mode):
     """Run a single mode and return the output."""
@@ -37,8 +38,7 @@ def run_mode(mode):
         "--city", CITY,
         "--checkpoint_path", checkpoint_path,
         "--model_type", MODEL_TYPE,
-        "--use_od_prices",
-        "--loss_aversion", "0.0"
+        "--use_od_prices"
     ]
     
     # Only add --load for modes that need checkpoints (0, 1, 2)

@@ -1,0 +1,4 @@
+City,Number of Regions,Avg Total Demand,Std Total Demand,Avg Demand per Region,Avg CV,Std CV
+San Francisco,10,5490.1,63.6,549.0,1.305,0.013
+Washington DC,18,16881.3,135.7,937.8,1.264,0.008
+NYC Manhattan South,12,21269.9,118.6,1772.5,0.694,0.006
