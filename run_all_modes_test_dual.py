@@ -8,28 +8,36 @@ import re
 import sys
 
 # Configuration
-CHECKPOINT_BASE = "dual_agent_washington_dc_mode{}"
-CITY = "washington_dc"
+CHECKPOINT_BASE = "dual_agent_nyc_man_south_mode{}"
+CITY = "nyc_man_south"
 MODEL_TYPE = "test"
 
 # Metrics to collect for Combined totals (in order for the table)
 METRIC_PATTERNS = {
-    "Reward": r"Total rewards \(mean, std\): ([\d.-]+), ([\d.-]+)",
-    "Rebalancing Costs": r"Total rebalancing cost \(mean, std\): ([\d.-]+), ([\d.-]+)",
-    "Rebalance Trips": r"Total rebalancing trips \(mean, std\): ([\d.-]+), ([\d.-]+)",
+    "Total Reward": r"Total rewards \(mean, std\): ([\d.-]+), ([\d.-]+)",
+    "Reward Agent 0": r"Agent 0 Metrics:[\s\S]*?Rewards \(mean, std\): ([\d.-]+), ([\d.-]+)",
+    "Reward Agent 1": r"Agent 1 Metrics:[\s\S]*?Rewards \(mean, std\): ([\d.-]+), ([\d.-]+)",
+    "Total Rebalancing Costs": r"Total rebalancing cost \(mean, std\): ([\d.-]+), ([\d.-]+)",
+    "Rebalancing Costs Agent 0": r"Agent 0 Metrics:[\s\S]*?Rebalancing cost \(mean, std\): ([\d.-]+), ([\d.-]+)",
+    "Rebalancing Costs Agent 1": r"Agent 1 Metrics:[\s\S]*?Rebalancing cost \(mean, std\): ([\d.-]+), ([\d.-]+)",
+    "Total Rebalance Trips": r"Total rebalancing trips \(mean, std\): ([\d.-]+), ([\d.-]+)",
+    "Rebalance Trips Agent 0": r"Agent 0 rebalancing trips \(mean, std\): ([\d.-]+), ([\d.-]+)",
+    "Rebalance Trips Agent 1": r"Agent 1 rebalancing trips \(mean, std\): ([\d.-]+), ([\d.-]+)",
+    "Total Served Demand": r"Total served demand \(mean, std\): ([\d.-]+), ([\d.-]+)",
+    "Served Demand Agent 0": r"Agent 0 Metrics:[\s\S]*?Served demand \(mean, std\): ([\d.-]+), ([\d.-]+)",
+    "Served Demand Agent 1": r"Agent 1 Metrics:[\s\S]*?Served demand \(mean, std\): ([\d.-]+), ([\d.-]+)",
     "Price Agent 0": r"Agent 0 price scalar \(mean, std\): ([\d.-]+), ([\d.-]+)",
     "Price Agent 1": r"Agent 1 price scalar \(mean, std\): ([\d.-]+), ([\d.-]+)",
     "Wait/mins Agent 0": r"Agent 0 Metrics:[\s\S]*?Waiting time \(mean, std\): ([\d.-]+), ([\d.-]+)",
     "Wait/mins Agent 1": r"Agent 1 Metrics:[\s\S]*?Waiting time \(mean, std\): ([\d.-]+), ([\d.-]+)",
     "Queue Agent 0": r"Agent 0 Metrics:[\s\S]*?Queue length \(mean, std\): ([\d.-]+), ([\d.-]+)",
     "Queue Agent 1": r"Agent 1 Metrics:[\s\S]*?Queue length \(mean, std\): ([\d.-]+), ([\d.-]+)",
-    "Served Demand": r"Total served demand \(mean, std\): ([\d.-]+), ([\d.-]+)",
     "Arrivals Agent 0": r"Agent 0 Metrics:[\s\S]*?Arrivals \(mean, std\): ([\d.-]+), ([\d.-]+)",
     "Arrivals Agent 1": r"Agent 1 Metrics:[\s\S]*?Arrivals \(mean, std\): ([\d.-]+), ([\d.-]+)",
     "Total Arrivals": r"Total arrivals \(mean, std\): ([\d.-]+), ([\d.-]+)",
 }
 
-METRIC_ORDER = ["Reward", "Rebalancing Costs", "Rebalance Trips", "Price Agent 0", "Price Agent 1", "Wait/mins Agent 0", "Wait/mins Agent 1", "Queue Agent 0", "Queue Agent 1", "Served Demand", "Arrivals Agent 0", "Arrivals Agent 1", "Total Arrivals"]
+METRIC_ORDER = ["Total Reward", "Reward Agent 0", "Reward Agent 1", "Total Rebalancing Costs", "Rebalancing Costs Agent 0", "Rebalancing Costs Agent 1", "Total Rebalance Trips", "Rebalance Trips Agent 0", "Rebalance Trips Agent 1", "Total Served Demand", "Served Demand Agent 0", "Served Demand Agent 1", "Price Agent 0", "Price Agent 1", "Wait/mins Agent 0", "Wait/mins Agent 1", "Queue Agent 0", "Queue Agent 1", "Total Arrivals", "Arrivals Agent 0", "Arrivals Agent 1"]
 
 def run_mode(mode):
     """Run a single mode and return the output."""
