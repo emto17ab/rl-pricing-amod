@@ -503,10 +503,10 @@ parser.add_argument(
 )
 
 parser.add_argument(
-    "--dynamic_wage",
+    "--use_dynamic_wage_man_south",
     action="store_true",
     default=False,
-    help="Enable dynamic wage adjustment (default: False)",
+    help="Enable region-specific wage distributions for NYC Manhattan South (default: False)",
 )
 
 parser.add_argument(
@@ -568,7 +568,7 @@ if not args.test:
                 agent0_vehicle_ratio=args.agent0_vehicle_ratio)
 
     # Create the environment
-    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_agent=args.fix_agent, choice_intercept=choice_intercept[city], wage=wage[city], dynamic_wage=args.dynamic_wage)
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_agent=args.fix_agent, choice_intercept=choice_intercept[city], wage=wage[city], use_dynamic_wage_man_south=args.use_dynamic_wage_man_south)
     
     # Print fixed agent information
     if args.fix_agent == 0:
@@ -1364,7 +1364,7 @@ else:
                 supply_ratio=args.supply_ratio,
                 agent0_vehicle_ratio=args.agent0_vehicle_ratio)
 
-    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_agent=args.fix_agent, choice_intercept=choice_intercept[city], wage=wage[city], dynamic_wage=args.dynamic_wage)
+    env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_agent=args.fix_agent, choice_intercept=choice_intercept[city], wage=wage[city], use_dynamic_wage_man_south=args.use_dynamic_wage_man_south)
     
     # Print fixed agent information
     if args.fix_agent == 0:

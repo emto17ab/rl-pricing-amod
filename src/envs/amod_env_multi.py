@@ -14,7 +14,7 @@ import random
 class AMoD:
     # initialization
     # updated to take scenario and beta (cost for rebalancing) as input
-    def __init__(self, scenario, mode, beta, jitter, max_wait, choice_price_mult, seed, fix_agent, choice_intercept, wage, dynamic_wage):
+    def __init__(self, scenario, mode, beta, jitter, max_wait, choice_price_mult, seed, fix_agent, choice_intercept, wage, use_dynamic_wage_man_south=False):
         # Setting the scenario
         self.scenario = deepcopy(scenario)
 
@@ -31,11 +31,52 @@ class AMoD:
         # Choice model intercept (utility of using ridehailing service)
         self.choice_intercept = choice_intercept
         
-        # Wage parameter for choice model
+        # Wage parameter for choice model (city-wide average)
         self.wage = wage
         
-        # Dynamic wage flag (not used yet)
-        self.dynamic_wage = dynamic_wage
+        # Region-specific wage distributions for NYC Manhattan South
+        self.use_dynamic_wage_man_south = use_dynamic_wage_man_south
+        self.wage_distributions = None
+        self.city_avg_wage = wage  # Default to uniform wage
+        
+        if use_dynamic_wage_man_south:
+            # Load wage distribution from JSON file
+            wage_data_path = os.path.join(os.path.dirname(__file__), '..', '..', 'data', 'manhattan_wage_data.json')
+            if os.path.exists(wage_data_path):
+                with open(wage_data_path, 'r') as f:
+                    wage_data = json.load(f)
+                
+                # Store wage distributions (convert probabilities from percentages to probabilities)
+                self.wage_distributions = {}
+                for region_str, dist_data in wage_data['wage_distribution'].items():
+                    region_id = int(region_str)
+                    wages = np.array(dist_data['hourly_wages'])
+                    probs = np.array(dist_data['probabilities']) / 100.0  # Convert to probabilities
+                    
+                    # Normalize to ensure exact sum of 1.0 (handle rounding errors)
+                    probs = probs / probs.sum()
+                    
+                    self.wage_distributions[region_id] = {
+                        'wages': wages,
+                        'probabilities': probs
+                    }
+                
+                # Use the city-wide average wage already provided
+                self.city_avg_wage = wage
+                
+                print(f"\n{'='*80}")
+                print(f"DYNAMIC WAGE MODE ENABLED (NYC Manhattan South)")
+                print(f"  - Loaded wage distributions for {len(self.wage_distributions)} regions")
+                print(f"  - City-wide average wage: ${self.city_avg_wage:.2f}/hour")
+                print(f"  - Income effect will vary per passenger: city_avg / passenger_wage")
+                print(f"{'='*80}\n")
+            else:
+                print(f"\n{'='*80}")
+                print(f"WARNING: use_dynamic_wage_man_south=True but wage data file not found:")
+                print(f"  {wage_data_path}")
+                print(f"Falling back to uniform wage: ${wage:.2f}/hour")
+                print(f"{'='*80}\n")
+                self.use_dynamic_wage_man_south = False
         
         # Track unprofitable trips for logging
         self.agent_unprofitable_trips = {agent_id: 0 for agent_id in [0, 1]}
@@ -289,54 +330,98 @@ class AMoD:
                 travel_time_in_hours = travel_time / 60
                 U_reject = 0 
                 
-                exp_utilities = []
-                labels = []
-
-                income_effect = self.wage / self.wage
-
-                # Compute utilities for all agents
-                U_0 = self.choice_intercept - 0.71 * self.wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr0
-                U_1 = self.choice_intercept - 0.71 * self.wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr1
-                
-                # Always include both agents in the choice set
-                # (Fixed agent will use base price due to scalar 0.5)
-                exp_utilities.append(np.exp(U_0))
-                labels.append("agent0")
-                exp_utilities.append(np.exp(U_1))
-                labels.append("agent1")
-                
-                # Always include reject option
-                exp_utilities.append(np.exp(U_reject))
-                labels.append("reject")
-
-                Probabilities = np.array(exp_utilities) / np.sum(exp_utilities)
-                labels_array = np.array(labels)
-
                 d0 = d1 = dr = 0
 
                 # Use choice model with appropriate choice set
                 if d_original > 0:
-                    for _ in range(d_original):
-                        choice = np.random.choice(labels_array, p=Probabilities)
-                        if choice == "agent0":
-                            d0 += 1
-                        elif choice == "agent1":
-                            d1 += 1
-                        elif choice == "reject":
-                            dr += 1
+                    # Batched wage sampling for performance
+                    if self.use_dynamic_wage_man_south and self.wage_distributions is not None:
+                        # Sample all passenger wages at once from region-specific distribution
+                        if n in self.wage_distributions:
+                            dist = self.wage_distributions[n]
+                            passenger_wages = np.random.choice(
+                                dist['wages'], 
+                                size=int(d_original), 
+                                p=dist['probabilities']
+                            )
+                        else:
+                            # Fallback to uniform wage if region not in distribution
+                            passenger_wages = np.full(int(d_original), self.wage)
+                        
+                        # Vectorized income effect calculation: city_avg_wage / passenger_wage
+                        income_effects = self.city_avg_wage / passenger_wages
+                        
+                        # Vectorized utility calculations for all passengers
+                        U_0_batch = (
+                            self.choice_intercept 
+                            - 0.71 * passenger_wages * travel_time_in_hours 
+                            - income_effects * self.choice_price_mult * pr0
+                        )
+                        U_1_batch = (
+                            self.choice_intercept 
+                            - 0.71 * passenger_wages * travel_time_in_hours 
+                            - income_effects * self.choice_price_mult * pr1
+                        )
+                        U_reject_batch = np.full(int(d_original), U_reject)
+                        
+                        # Vectorized probability calculation
+                        exp_utilities_batch = np.column_stack([
+                            np.exp(U_0_batch), 
+                            np.exp(U_1_batch), 
+                            np.exp(U_reject_batch)
+                        ])
+                        probabilities_batch = exp_utilities_batch / exp_utilities_batch.sum(axis=1, keepdims=True)
+                        
+                        # Fully vectorized choice sampling (no loops)
+                        random_values = np.random.rand(int(d_original))
+                        cumsum_probs = np.cumsum(probabilities_batch, axis=1)
+                        choices = np.sum(random_values[:, None] > cumsum_probs, axis=1)
+                        d0 = np.sum(choices == 0)
+                        d1 = np.sum(choices == 1)
+                        dr = np.sum(choices == 2)
+                        
+                        # For logging: use average utilities across all passengers
+                        U_0 = np.mean(U_0_batch)
+                        U_1 = np.mean(U_1_batch)
+                        U_reject_mean = U_reject
+                        avg_probabilities = probabilities_batch.mean(axis=0)
+                        
+                    else:
+                        # Original uniform wage approach
+                        income_effect = self.wage / self.wage  # Always 1.0
+                        
+                        # Compute utilities for all agents (same for all passengers)
+                        U_0 = self.choice_intercept - 0.71 * self.wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr0
+                        U_1 = self.choice_intercept - 0.71 * self.wage * travel_time_in_hours - income_effect * self.choice_price_mult * pr1
+                        U_reject_mean = U_reject
+                        
+                        # Build choice set
+                        exp_utilities = []
+                        labels = []
+                        
+                        # Always include both agents in the choice set
+                        # (Fixed agent will use base price due to scalar 0.5)
+                        exp_utilities.append(np.exp(U_0))
+                        labels.append("agent0")
+                        exp_utilities.append(np.exp(U_1))
+                        labels.append("agent1")
+                        
+                        # Always include reject option
+                        exp_utilities.append(np.exp(U_reject))
+                        labels.append("reject")
+
+                        Probabilities = np.array(exp_utilities) / np.sum(exp_utilities)
+                        labels_array = np.array(labels)
+                        
+                        # Batch sample all choices at once with uniform wage
+                        choices = np.random.choice(labels_array, size=int(d_original), p=Probabilities)
+                        d0 = np.sum(choices == "agent0")
+                        d1 = np.sum(choices == "agent1")
+                        dr = np.sum(choices == "reject")
+                        
+                        avg_probabilities = Probabilities
                     
-                    # Log trip assignment details
-                    prob_dict = {}
-                    utility_dict = {}
-                    for idx, label in enumerate(labels):
-                        prob_dict[label] = Probabilities[idx]
-                        if label == "agent0":
-                            utility_dict[label] = U_0
-                        elif label == "agent1":
-                            utility_dict[label] = U_1
-                        elif label == "reject":
-                            utility_dict[label] = U_reject
-                    
+                    # Log trip assignment details (use average values for dynamic wage case)
                     self.trip_assignments.append({
                         'time': t,
                         'origin': n,
@@ -346,10 +431,10 @@ class AMoD:
                         'price_agent1': pr1,
                         'utility_agent0': U_0,
                         'utility_agent1': U_1,
-                        'utility_reject': U_reject,
-                        'prob_agent0': prob_dict.get("agent0", 0.0),
-                        'prob_agent1': prob_dict.get("agent1", 0.0),
-                        'prob_reject': prob_dict.get("reject", 0.0),
+                        'utility_reject': U_reject_mean,
+                        'prob_agent0': avg_probabilities[0],
+                        'prob_agent1': avg_probabilities[1],
+                        'prob_reject': avg_probabilities[2],
                         'demand_agent0': d0,
                         'demand_agent1': d1,
                         'demand_rejected': dr,
