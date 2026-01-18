@@ -55,19 +55,8 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
                             desiredAcc[a] = {env.region[i]: env.agent_initial_acc[a][env.region[i]] for i in range(env.nregion)}
                         else:
                             # For active agent, use action to determine desired distribution
-                            total_vehicles = dictsum(env.agent_acc[a], env.time + 1)
-                            desired_floats = action_rl[a] * total_vehicles
-                            desired_ints = np.floor(desired_floats).astype(int)
-                            remainder = int(total_vehicles - desired_ints.sum())
-                            
-                            # Distribute remainder to preserve exact vehicle count
-                            if remainder > 0:
-                                fractional_parts = desired_floats - desired_ints
-                                top_indices = np.argpartition(fractional_parts, -remainder)[-remainder:]
-                                desired_ints[top_indices] += 1
-                            
                             desiredAcc[a] = {
-                                env.region[i]: desired_ints[i]
+                                env.region[i]: int(action_rl[a][i] * dictsum(env.agent_acc[a], env.time + 1))
                                 for i in range(env.nregion)
                             }
 
@@ -131,19 +120,8 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
                             desiredAcc[a] = {env.region[i]: env.agent_initial_acc[a][env.region[i]] for i in range(env.nregion)}
                         else:
                             # For active agent, use action to determine desired distribution
-                            total_vehicles = dictsum(env.agent_acc[a], env.time + 1)
-                            desired_floats = action_rl[a][:, -1] * total_vehicles
-                            desired_ints = np.floor(desired_floats).astype(int)
-                            remainder = int(total_vehicles - desired_ints.sum())
-                            
-                            # Distribute remainder to preserve exact vehicle count
-                            if remainder > 0:
-                                fractional_parts = desired_floats - desired_ints
-                                top_indices = np.argpartition(fractional_parts, -remainder)[-remainder:]
-                                desired_ints[top_indices] += 1
-                            
                             desiredAcc[a] = {
-                                env.region[i]: desired_ints[i]
+                                env.region[i]: int(action_rl[a][i, -1] * dictsum(env.agent_acc[a], env.time + 1))
                                 for i in range(env.nregion)
                             }
                     
@@ -800,19 +778,8 @@ if not args.test:
                         }
                     else:
                         # For active agent, use action to determine desired distribution
-                        total_vehicles = dictsum(env.agent_acc[a], env.time + 1)
-                        desired_floats = action_rl[a] * total_vehicles
-                        desired_ints = np.floor(desired_floats).astype(int)
-                        remainder = int(total_vehicles - desired_ints.sum())
-                        
-                        # Distribute remainder to preserve exact vehicle count
-                        if remainder > 0:
-                            fractional_parts = desired_floats - desired_ints
-                            top_indices = np.argpartition(fractional_parts, -remainder)[-remainder:]
-                            desired_ints[top_indices] += 1
-                        
                         desiredAcc[a] = {
-                            env.region[i]: desired_ints[i]
+                            env.region[i]: int(action_rl[a][i] * dictsum(env.agent_acc[a], env.time + 1))
                             for i in range(env.nregion)
                         }
 
@@ -940,19 +907,8 @@ if not args.test:
                         }
                     else:
                         # For active agent, use action to determine desired distribution
-                        total_vehicles = dictsum(env.agent_acc[a], env.time + 1)
-                        desired_floats = action_rl[a][:, -1] * total_vehicles
-                        desired_ints = np.floor(desired_floats).astype(int)
-                        remainder = int(total_vehicles - desired_ints.sum())
-                        
-                        # Distribute remainder to preserve exact vehicle count
-                        if remainder > 0:
-                            fractional_parts = desired_floats - desired_ints
-                            top_indices = np.argpartition(fractional_parts, -remainder)[-remainder:]
-                            desired_ints[top_indices] += 1
-                        
                         desiredAcc[a] = {
-                            env.region[i]: desired_ints[i]
+                            env.region[i]: int(action_rl[a][i, -1] * dictsum(env.agent_acc[a], env.time + 1))
                             for i in range(env.nregion)
                         }
                 
@@ -1570,19 +1526,8 @@ else:
                         desiredAcc[a] = {env.region[i]: env.agent_initial_acc[a][env.region[i]] for i in range(env.nregion)}
                     else:
                         # For active agent, use action to determine desired distribution
-                        total_vehicles = dictsum(env.agent_acc[a], env.time + 1)
-                        desired_floats = action_rl[a] * total_vehicles
-                        desired_ints = np.floor(desired_floats).astype(int)
-                        remainder = int(total_vehicles - desired_ints.sum())
-                        
-                        # Distribute remainder to preserve exact vehicle count
-                        if remainder > 0:
-                            fractional_parts = desired_floats - desired_ints
-                            top_indices = np.argpartition(fractional_parts, -remainder)[-remainder:]
-                            desired_ints[top_indices] += 1
-                        
                         desiredAcc[a] = {
-                            env.region[i]: desired_ints[i]
+                            env.region[i]: int(action_rl[a][i] * dictsum(env.agent_acc[a], env.time + 1))
                             for i in range(env.nregion)
                         }
 
@@ -1711,19 +1656,8 @@ else:
                         desiredAcc[a] = {env.region[i]: env.agent_initial_acc[a][env.region[i]] for i in range(env.nregion)}
                     else:
                         # For active agent, use action to determine desired distribution
-                        total_vehicles = dictsum(env.agent_acc[a], env.time + 1)
-                        desired_floats = action_rl[a][:, -1] * total_vehicles
-                        desired_ints = np.floor(desired_floats).astype(int)
-                        remainder = int(total_vehicles - desired_ints.sum())
-                        
-                        # Distribute remainder to preserve exact vehicle count
-                        if remainder > 0:
-                            fractional_parts = desired_floats - desired_ints
-                            top_indices = np.argpartition(fractional_parts, -remainder)[-remainder:]
-                            desired_ints[top_indices] += 1
-                        
                         desiredAcc[a] = {
-                            env.region[i]: desired_ints[i]
+                            env.region[i]: int(action_rl[a][i, -1] * dictsum(env.agent_acc[a], env.time + 1))
                             for i in range(env.nregion)
                         }
                 

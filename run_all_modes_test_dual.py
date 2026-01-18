@@ -8,8 +8,8 @@ import re
 import sys
 
 # Configuration
-CHECKPOINT_BASE = "dual_agent_nyc_man_south_mode{}"
-CITY = "nyc_man_south"
+CHECKPOINT_BASE = "dual_agent_san_francisco_mode{}"
+CITY = "san_francisco"
 MODEL_TYPE = "test"
 
 # Metrics to collect for Combined totals (in order for the table)
@@ -100,7 +100,7 @@ def format_value(mean, std):
 def main():
     # Collect results for all modes
     all_results = {}
-    modes_to_run = [3, 4]
+    modes_to_run = [0, 1, 2, 3, 4]
     
     for mode in modes_to_run:
         output = run_mode(mode)

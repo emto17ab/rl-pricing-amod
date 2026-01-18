@@ -97,7 +97,7 @@ class GNNActor(nn.Module):
             if self.mode == 0:
                 # Dirichlet: single joint distribution over nregion categories
                 # concentration shape: [1, nregion]
-                m = Dirichlet(concentration + 0.01)
+                m = Dirichlet(concentration + 0.1)
                 action = m.rsample()  # Shape: [1, nregion]
                 log_prob = m.log_prob(action)  # Shape: [1] (scalar for joint distribution)
                 action = action.squeeze(0)  # Shape: [nregion]
@@ -120,7 +120,7 @@ class GNNActor(nn.Module):
                 action_o = m_o.rsample()  # Shape: [1, nregion]
                 # Dirichlet for rebalancing
                 # Rebalancing concentration shape: [1, nregion]
-                m_reb = Dirichlet(concentration[:,:,-1] + 0.01)
+                m_reb = Dirichlet(concentration[:,:,-1] + 0.1)
                 action_reb = m_reb.rsample()  # Shape: [1, nregion]
                 # Joint log prob: sum of Beta log probs + Dirichlet log prob
                 log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_reb.log_prob(action_reb)  # Shape: [1]
