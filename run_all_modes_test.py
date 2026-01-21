@@ -10,7 +10,7 @@ import sys
 # Configuration
 CHECKPOINT_BASE = "single_agent_san_francisco_mode{}"
 CITY = "san_francisco"
-MODEL_TYPE = "test"
+MODEL_TYPE = "running"
 
 # Metrics to collect (in order for the table)
 METRIC_PATTERNS = {

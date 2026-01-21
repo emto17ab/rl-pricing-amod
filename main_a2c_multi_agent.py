@@ -10,6 +10,7 @@ from src.algos.reb_flow_solver_multi_agent import solveRebFlow
 import json, pickle
 import wandb
 from dotenv import load_dotenv
+from concurrent.futures import ThreadPoolExecutor
 
 # Load environment variables from .env file
 load_dotenv()
@@ -60,11 +61,13 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
                                 for i in range(env.nregion)
                             }
 
-                    # Compute rebalancing flows for both agents
-                    rebAction = {
-                        a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], cplexpath, directory, a, max_episodes, mode, job_id=job_id)
-                        for a in [0, 1]
-                    }
+                    # Compute rebalancing flows for both agents in parallel
+                    with ThreadPoolExecutor(max_workers=2) as executor:
+                        results = list(executor.map(
+                            lambda a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], cplexpath, directory, a, max_episodes, mode, job_id=job_id),
+                            [0, 1]
+                        ))
+                    rebAction = {0: results[0], 1: results[1]}
                     
                     _, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
                     eps_reward = {a: eps_reward[a] + rebreward[a] for a in [0, 1]}
@@ -126,11 +129,13 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
                             }
                     
                     # --- Rebalancing step ---
-                    # Compute rebalancing flows for both agents
-                    rebAction = {
-                        a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], cplexpath, directory, a, max_episodes, mode, job_id=job_id)
-                        for a in [0, 1]
-                    }
+                    # Compute rebalancing flows for both agents in parallel
+                    with ThreadPoolExecutor(max_workers=2) as executor:
+                        results = list(executor.map(
+                            lambda a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], cplexpath, directory, a, max_episodes, mode, job_id=job_id),
+                            [0, 1]
+                        ))
+                    rebAction = {0: results[0], 1: results[1]}
                 
                     _, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
                 
@@ -178,11 +183,13 @@ def test_agents(model_agents, test_episodes, env, cplexpath, directory, max_epis
                             for i in range(env.nregion)
                         }
                     
-                    # Solve rebalancing flows
-                    rebAction = {
-                        a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], cplexpath, directory, a, max_episodes, mode, job_id=job_id)
-                        for a in [0, 1]
-                    }
+                    # Solve rebalancing flows in parallel
+                    with ThreadPoolExecutor(max_workers=2) as executor:
+                        results = list(executor.map(
+                            lambda a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], cplexpath, directory, a, max_episodes, mode, job_id=job_id),
+                            [0, 1]
+                        ))
+                    rebAction = {0: results[0], 1: results[1]}
                     
                     # Execute rebalancing step
                     _, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
@@ -487,29 +494,6 @@ parser.add_argument(
     help="Enable region-specific wage distributions for NYC Manhattan South (default: False)",
 )
 
-parser.add_argument(
-    "--entropy_coef_max",
-    type=float,
-    default=0.1,
-    help="Maximum entropy coefficient at start of training (default: 0.1)",
-)
-
-parser.add_argument(
-    "--entropy_coef_min",
-    type=float,
-    default=0.005,
-    help="Minimum entropy coefficient at end of training (default: 0.0)",
-)
-
-parser.add_argument(
-    "--entropy_decay_rate",
-    type=float,
-    default=0.001,
-    help="Entropy coefficient decay rate - 0.001 decays to ~2%% over 4000 episodes (default: 0.001)",
-)
-
-
-
 # Parser arguments
 args = parser.parse_args()
 
@@ -662,11 +646,6 @@ if not args.test:
     initial_vehicles = env.get_initial_vehicles()
 
     for i_episode in epochs:
-        # Update episode counter for entropy scheduling
-        if args.mode not in [3, 4]:
-            for agent_id in [0, 1]:
-                model_agents[agent_id].current_episode = i_episode
-        
         obs = env.reset()  # initialize environment
 
         action_rl = {
@@ -783,11 +762,13 @@ if not args.test:
                             for i in range(env.nregion)
                         }
 
-                # Compute rebalancing flows for both agents
-                rebAction = {
-                    a: solveRebFlow(env, "nyc_manhattan", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode, job_id=args.checkpoint_path)
-                    for a in [0, 1]
-                }
+                # Compute rebalancing flows for both agents in parallel
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    results = list(executor.map(
+                        lambda a: solveRebFlow(env, "nyc_manhattan", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode, job_id=args.checkpoint_path),
+                        [0, 1]
+                    ))
+                rebAction = {0: results[0], 1: results[1]}
                 
                 new_obs, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
                 episode_reward = {a: episode_reward[a] + rebreward[a] for a in [0, 1]}
@@ -913,11 +894,13 @@ if not args.test:
                         }
                 
                 # --- Rebalancing step ---
-                # Compute rebalancing flows for both agents
-                rebAction = {
-                    a: solveRebFlow(env, "nyc_manhattan", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode, job_id=args.checkpoint_path)
-                    for a in [0, 1]
-                }
+                # Compute rebalancing flows for both agents in parallel
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    results = list(executor.map(
+                        lambda a: solveRebFlow(env, "nyc_manhattan", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode, job_id=args.checkpoint_path),
+                        [0, 1]
+                    ))
+                rebAction = {0: results[0], 1: results[1]}
             
                 new_obs, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
             
@@ -969,11 +952,13 @@ if not args.test:
                         for i in range(env.nregion)
                     }
                 
-                # Compute rebalancing flows for both agents
-                rebAction = {
-                    a: solveRebFlow(env, "nyc_manhattan", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode, job_id=args.checkpoint_path)
-                    for a in [0, 1]
-                }
+                # Compute rebalancing flows for both agents in parallel
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    results = list(executor.map(
+                        lambda a: solveRebFlow(env, "nyc_manhattan", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode, job_id=args.checkpoint_path),
+                        [0, 1]
+                    ))
+                rebAction = {0: results[0], 1: results[1]}
                 
                 new_obs, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
                 episode_reward = {a: episode_reward[a] + rebreward[a] for a in [0, 1]}
@@ -1531,11 +1516,13 @@ else:
                             for i in range(env.nregion)
                         }
 
-                # Compute rebalancing flows for both agents
-                rebAction = {
-                    a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode, job_id=args.checkpoint_path)
-                    for a in [0, 1]
-                }
+                # Compute rebalancing flows for both agents in parallel
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    results = list(executor.map(
+                        lambda a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode, job_id=args.checkpoint_path),
+                        [0, 1]
+                    ))
+                rebAction = {0: results[0], 1: results[1]}
                 
                 # Capture actual rebalancing flows for visualization (last episode only)
                 if episode == 9:
@@ -1662,11 +1649,13 @@ else:
                         }
                 
                 # --- Rebalancing step ---
-                # Compute rebalancing flows for both agents
-                rebAction = {
-                    a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode, job_id=args.checkpoint_path)
-                    for a in [0, 1]
-                }
+                # Compute rebalancing flows for both agents in parallel
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    results = list(executor.map(
+                        lambda a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode, job_id=args.checkpoint_path),
+                        [0, 1]
+                    ))
+                rebAction = {0: results[0], 1: results[1]}
                 
                 # Capture actual rebalancing flows for visualization (last episode only)
                 if episode == 9:
@@ -1754,11 +1743,13 @@ else:
                         demand_current = np.array([sum(env.agent_demand[a].get((env.region[i], j), {}).get(env.time, 0) for j in env.region) for i in range(env.nregion)])
                         visualization_data['agent_demand'][a].append(demand_current)
                 
-                # Compute rebalancing flows for both agents
-                rebAction = {
-                    a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode, job_id=args.checkpoint_path)
-                    for a in [0, 1]
-                }
+                # Compute rebalancing flows for both agents in parallel
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    results = list(executor.map(
+                        lambda a: solveRebFlow(env, "scenario_san_francisco4", desiredAcc[a], args.cplexpath, args.directory, a, args.max_episodes, args.mode, job_id=args.checkpoint_path),
+                        [0, 1]
+                    ))
+                rebAction = {0: results[0], 1: results[1]}
                 
                 _, rebreward, done, info, system_info, _, _ = env.reb_step(rebAction)
                 eps_reward = {a: eps_reward[a] + rebreward[a] for a in [0, 1]}
