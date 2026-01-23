@@ -60,36 +60,38 @@ class GNNActor(nn.Module):
         if self.mode == 0:
             # Mode 0: Dirichlet - squeeze last dim to get [1, nregion]
             assert x.shape == (1, self.act_dim, 1), f"Mode 0: Expected shape (1, {self.act_dim}, 1), got {x.shape}"
-            concentration = x.squeeze(-1)
+            concentration = x.squeeze(-1) + 0.1
             assert concentration.shape == (1, self.act_dim), f"Mode 0: Expected concentration shape (1, {self.act_dim}), got {concentration.shape}"
         elif self.mode == 1:
             # Mode 1: Beta - keep [1, nregion, 2]
             assert x.shape == (1, self.act_dim, 2), f"Mode 1: Expected shape (1, {self.act_dim}, 2), got {x.shape}"
-            concentration = x
+            concentration = x + 1
         else:
             # Mode 2: Beta + Dirichlet - keep [1, nregion, 3]
             assert x.shape == (1, self.act_dim, 3), f"Mode 2: Expected shape (1, {self.act_dim}, 3), got {x.shape}"
-            concentration = x
+            concentration = x.clone()
+            concentration[:,:,:2] = concentration[:,:,:2] + 1  # Add 1 to Beta parameters
+            concentration[:,:,2] = concentration[:,:,2] + 0.1  # Add 0.1 to Dirichlet parameters
     
         if deterministic:
             if self.mode == 0:
                 # Dirichlet mean: normalize concentration parameters
                 # Shape: [1, nregion] -> [nregion]
-                action = (concentration) / (concentration.sum() + 1e-5)
+                action = concentration / concentration.sum()
                 action = action.squeeze(0)
             elif self.mode == 1:
                 # Beta mean: alpha / (alpha + beta)
                 # Shape: [1, nregion, 2] -> [nregion]
-                action_o = (concentration[:,:,0])/(concentration[:,:,0] + concentration[:,:,1] + 1e-5)
+                action_o = concentration[:,:,0] / (concentration[:,:,0] + concentration[:,:,1])
                 action_o[action_o<0] = 0
                 action = action_o.squeeze(0)
             else:
                 # Mode 2: Beta mean for pricing + Dirichlet mean for rebalancing
                 # Pricing shape: [1, nregion] -> [nregion]
-                action_o = (concentration[:,:,0])/(concentration[:,:,0] + concentration[:,:,1] + 1e-5)
+                action_o = concentration[:,:,0] / (concentration[:,:,0] + concentration[:,:,1])
                 action_o[action_o<0] = 0
                 # Rebalancing shape: [1, nregion] -> [nregion]
-                action_reb = (concentration[:,:,2]) / (concentration[:,:,2].sum() + 1e-5)
+                action_reb = concentration[:,:,2] / concentration[:,:,2].sum()
                 # Combined shape: [nregion, 2]
                 action = torch.stack((action_o.squeeze(0), action_reb.squeeze(0)), dim=-1)
             log_prob = None
@@ -97,7 +99,7 @@ class GNNActor(nn.Module):
             if self.mode == 0:
                 # Dirichlet: single joint distribution over nregion categories
                 # concentration shape: [1, nregion]
-                m = Dirichlet(concentration + 0.1)
+                m = Dirichlet(concentration)
                 action = m.rsample()  # Shape: [1, nregion]
                 log_prob = m.log_prob(action)  # Shape: [1] (scalar for joint distribution)
                 action = action.squeeze(0)  # Shape: [nregion]
@@ -106,7 +108,7 @@ class GNNActor(nn.Module):
             elif self.mode == 1:
                 # Beta: nregion independent distributions
                 # concentration shape: [1, nregion, 2]
-                m_o = Beta(concentration[:,:,0] + 1, concentration[:,:,1] + 1)
+                m_o = Beta(concentration[:,:,0], concentration[:,:,1])
                 action_o = m_o.rsample()  # Shape: [1, nregion]
                 # Sum log probs across independent distributions (not mean!)
                 log_prob = m_o.log_prob(action_o).sum(dim=-1)  # Shape: [1]
@@ -116,11 +118,11 @@ class GNNActor(nn.Module):
             else:
                 # Mode 2: nregion independent Beta distributions + 1 Dirichlet
                 # Beta concentration shape: [1, nregion, 2]
-                m_o = Beta(concentration[:,:,0] + 1, concentration[:,:,1] + 1)
+                m_o = Beta(concentration[:,:,0], concentration[:,:,1])
                 action_o = m_o.rsample()  # Shape: [1, nregion]
                 # Dirichlet for rebalancing
                 # Rebalancing concentration shape: [1, nregion]
-                m_reb = Dirichlet(concentration[:,:,-1] + 0.1)
+                m_reb = Dirichlet(concentration[:,:,2])
                 action_reb = m_reb.rsample()  # Shape: [1, nregion]
                 # Joint log prob: sum of Beta log probs + Dirichlet log prob
                 log_prob = m_o.log_prob(action_o).sum(dim=-1) + m_reb.log_prob(action_reb)  # Shape: [1]

@@ -48,10 +48,14 @@ def solveRebFlow(env, res_path, desiredAcc, CPLEXPATH, directory, agent_id, max_
             file.write('edgeAttr='+mat2str(edgeAttr)+';\r\n')
             file.write('accInitTuple='+mat2str(accTuple)+';\r\n')
             file.write('accRLTuple='+mat2str(accRLTuple)+';\r\n')
+            file.flush()
+            os.fsync(file.fileno())
         
         # Verify the file was written correctly
-        if not os.path.exists(datafile) or os.path.getsize(datafile) == 0:
-            raise IOError(f"Failed to write data file or file is empty: {datafile}")
+        if not os.path.exists(datafile):
+            raise IOError(f"Data file does not exist: {datafile}")
+        if os.path.getsize(datafile) == 0:
+            raise IOError(f"Data file is empty: {datafile}")
             
     except Exception as e:
         print(f"Error writing data file {datafile}: {e}")

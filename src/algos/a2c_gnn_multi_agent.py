@@ -16,14 +16,16 @@ class GNNParser:
     Parser converting raw environment observations to agent inputs (s_t).
     """
 
-    def __init__(self, env, T, scale_factor, agent_id, json_file=None, use_od_prices=False):
+    def __init__(self, env, T, scale_factor, agent_id, json_file=None, use_od_prices=False, no_share_info=False):
         super().__init__()
         self.env = env
         self.T = T
         self.s = scale_factor
         self.json_file = json_file
         self.agent_id = agent_id
-        self.opponent_id = 1 - agent_id
+        self.no_share_info = no_share_info
+        # Only compute opponent_id if sharing info
+        self.opponent_id = 1 - agent_id if not no_share_info else None
         self.use_od_prices = use_od_prices
         if self.json_file is not None:
             with open(json_file, "r") as file:
@@ -52,41 +54,68 @@ class GNNParser:
                                               for j in self.env.region] 
                                              for i in self.env.region]).view(1, self.env.nregion, self.env.nregion).float()
             
-            competitor_current_price = torch.tensor([[self.env.agent_price[self.opponent_id][i, j].get(time, 0) * self.s 
-                                                     for j in self.env.region] 
-                                                    for i in self.env.region]).view(1, self.env.nregion, self.env.nregion).float()
-            
-            # Price difference: own - competitor (shape [1, nregion, nregion])
-            price_difference = own_current_price - competitor_current_price
-            
-            # Concatenate: [1, 1+T+1+1+nregion+nregion+nregion, nregion]
-            x = (
-                torch.cat(
-                    [current_avb, future_avb, queue_length, current_demand, own_current_price, competitor_current_price, price_difference], 
-                    dim=1
+            if self.no_share_info:
+                # Only include own prices, no competitor info
+                # Concatenate: [1, 1+T+1+1+nregion, nregion]
+                x = (
+                    torch.cat(
+                        [current_avb, future_avb, queue_length, current_demand, own_current_price], 
+                        dim=1
+                    )
+                    .squeeze(0)
+                    .view(1 + self.T + 1 + 1 + self.env.nregion, self.env.nregion)
+                    .T
                 )
-                .squeeze(0)
-                .view(1 + self.T + 1 + 1 + self.env.nregion + self.env.nregion + self.env.nregion, self.env.nregion)
-                .T
-            )
+            else:
+                # Include competitor prices and difference
+                competitor_current_price = torch.tensor([[self.env.agent_price[self.opponent_id][i, j].get(time, 0) * self.s 
+                                                         for j in self.env.region] 
+                                                        for i in self.env.region]).view(1, self.env.nregion, self.env.nregion).float()
+                
+                # Price difference: own - competitor (shape [1, nregion, nregion])
+                price_difference = own_current_price - competitor_current_price
+                
+                # Concatenate: [1, 1+T+1+1+nregion+nregion+nregion, nregion]
+                x = (
+                    torch.cat(
+                        [current_avb, future_avb, queue_length, current_demand, own_current_price, competitor_current_price, price_difference], 
+                        dim=1
+                    )
+                    .squeeze(0)
+                    .view(1 + self.T + 1 + 1 + self.env.nregion + self.env.nregion + self.env.nregion, self.env.nregion)
+                    .T
+                )
         else:
             # Aggregated prices: shape [1, 1, nregion]
             own_current_price = torch.tensor([sum([(self.env.agent_price[self.agent_id][i, j][time])* self.s for j in self.env.region]) for i in self.env.region]).view(1, 1, self.env.nregion).float()
 
-            competitor_current_price = torch.tensor([sum([(self.env.agent_price[self.opponent_id][i, j][time])* self.s for j in self.env.region]) for i in self.env.region]).view(1, 1, self.env.nregion).float()
-
-            # Price difference: own - competitor (shape [1, 1, nregion])
-            price_difference = own_current_price - competitor_current_price
-
-            x = (
-                torch.cat(
-                    [current_avb, future_avb, queue_length, current_demand, own_current_price, competitor_current_price, price_difference], 
-                    dim=1
+            if self.no_share_info:
+                # Only include own prices, no competitor info
+                x = (
+                    torch.cat(
+                        [current_avb, future_avb, queue_length, current_demand, own_current_price], 
+                        dim=1
+                    )
+                    .squeeze(0)
+                    .view(1 + self.T + 1 + 1 + 1, self.env.nregion)
+                    .T
                 )
-                .squeeze(0)
-                .view(1 + self.T + 1 + 1 + 1 + 1 + 1, self.env.nregion)
-                .T
-            )
+            else:
+                # Include competitor prices and difference
+                competitor_current_price = torch.tensor([sum([(self.env.agent_price[self.opponent_id][i, j][time])* self.s for j in self.env.region]) for i in self.env.region]).view(1, 1, self.env.nregion).float()
+
+                # Price difference: own - competitor (shape [1, 1, nregion])
+                price_difference = own_current_price - competitor_current_price
+
+                x = (
+                    torch.cat(
+                        [current_avb, future_avb, queue_length, current_demand, own_current_price, competitor_current_price, price_difference], 
+                        dim=1
+                    )
+                    .squeeze(0)
+                    .view(1 + self.T + 1 + 1 + 1 + 1 + 1, self.env.nregion)
+                    .T
+                )
 
         if self.json_file is not None:
             edge_index = torch.vstack(
@@ -132,6 +161,7 @@ class A2C(nn.Module):
         agent_id,
         json_file,
         use_od_prices,
+        no_share_info=False,  # whether to share competitor pricing info
         reward_scale=1000.0,  # reward scaling factor
         eps=np.finfo(np.float32).eps.item(),
     ):
@@ -161,7 +191,7 @@ class A2C(nn.Module):
     
         # Set the observation parser
         self.obs_parser = GNNParser(self.env, T=T, json_file=json_file, scale_factor=scale_factor,
-                                   agent_id=agent_id, use_od_prices=use_od_prices)
+                                   agent_id=agent_id, use_od_prices=use_od_prices, no_share_info=no_share_info)
 
         # Set learning rates
         self.p_lr = p_lr

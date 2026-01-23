@@ -474,9 +474,16 @@ parser.add_argument(
 )
 
 parser.add_argument(
+    "--no_share_info",
+    action="store_true",
+    default=False,
+    help="Don't share competitor pricing info between agents (default: False)",
+)
+
+parser.add_argument(
     "--reward_scalar",
     type=float,
-    default=1000.0,
+    default=2000.0,
     help="Reward scaling factor (default: 1000.0)",
 )
 
@@ -560,11 +567,19 @@ if not args.test:
     if args.mode not in [3, 4]:
         # Calculate input size based on price type
         if args.use_od_prices:
-            # OD price matrices: T (future) + 3 (current_avb, queue, demand) + 3*nregion (own, competitor, and difference OD prices)
-            input_size = args.look_ahead + 3 + 3 * env.nregion
+            if args.no_share_info:
+                # Only own prices: T (future) + 3 (current_avb, queue, demand) + nregion (own OD prices)
+                input_size = args.look_ahead + 3 + env.nregion
+            else:
+                # OD price matrices: T (future) + 3 (current_avb, queue, demand) + 3*nregion (own, competitor, and difference OD prices)
+                input_size = args.look_ahead + 3 + 3 * env.nregion
         else:
-            # Aggregated prices: T (future) + 3 (current_avb, queue, demand) + 3 (own, competitor, and difference aggregated prices)
-            input_size = args.look_ahead + 6
+            if args.no_share_info:
+                # Only own price: T (future) + 3 (current_avb, queue, demand) + 1 (own aggregated price)
+                input_size = args.look_ahead + 4
+            else:
+                # Aggregated prices: T (future) + 3 (current_avb, queue, demand) + 3 (own, competitor, and difference aggregated prices)
+                input_size = args.look_ahead + 6
         
         model_agents = {
                 a: A2C(
@@ -583,6 +598,7 @@ if not args.test:
                     gamma=args.gamma,
                     agent_id = a,
                     use_od_prices = args.use_od_prices,
+                    no_share_info = args.no_share_info,
                     reward_scale=args.reward_scalar,
                 )
                 for a in [0, 1]
@@ -1332,11 +1348,19 @@ else:
 
     # Calculate input size based on price type
     if args.use_od_prices:
-        # OD price matrices: T (future) + 3 (current_avb, queue, demand) + 3*nregion (own, competitor, and difference OD prices)
-        input_size = args.look_ahead + 3 + 3 * env.nregion
+        if args.no_share_info:
+            # Only own prices: T (future) + 3 (current_avb, queue, demand) + nregion (own OD prices)
+            input_size = args.look_ahead + 3 + env.nregion
+        else:
+            # OD price matrices: T (future) + 3 (current_avb, queue, demand) + 3*nregion (own, competitor, and difference OD prices)
+            input_size = args.look_ahead + 3 + 3 * env.nregion
     else:
-        # Aggregated prices: T (future) + 3 (current_avb, queue, demand) + 3 (own, competitor, and difference aggregated prices)
-        input_size = args.look_ahead + 6
+        if args.no_share_info:
+            # Only own price: T (future) + 3 (current_avb, queue, demand) + 1 (own aggregated price)
+            input_size = args.look_ahead + 4
+        else:
+            # Aggregated prices: T (future) + 3 (current_avb, queue, demand) + 3 (own, competitor, and difference aggregated prices)
+            input_size = args.look_ahead + 6
     
     # Only create models if not in baseline mode (mode 3 or 4)
     if args.mode not in [3, 4]:
@@ -1357,6 +1381,7 @@ else:
                     gamma=args.gamma,
                     agent_id = a,
                     use_od_prices = args.use_od_prices,
+                    no_share_info = args.no_share_info,
                     reward_scale=args.reward_scalar,
                 )
                 for a in [0, 1]

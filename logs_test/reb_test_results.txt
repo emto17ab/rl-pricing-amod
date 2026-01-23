@@ -1,0 +1,38 @@
+================================================================================
+RUNNING REBALANCING PERFORMANCE TESTS
+================================================================================
+Testing 50 episodes for each configuration
+
+
+--------------------------------------------------------------------------------
+TEST 1: Sequential Rebalancing
+--------------------------------------------------------------------------------
+  Episode 10/50: Avg reb time (last 10) = 1.990s
+  Episode 20/50: Avg reb time (last 10) = 2.084s
+  Episode 30/50: Avg reb time (last 10) = 1.689s
+  Episode 40/50: Avg reb time (last 10) = 1.693s
+  Episode 50/50: Avg reb time (last 10) = 1.733s
+
+--------------------------------------------------------------------------------
+TEST 2: Parallel Rebalancing (ThreadPoolExecutor)
+--------------------------------------------------------------------------------
+  Episode 10/50: Avg reb time (last 10) = 0.947s
+  Episode 20/50: Avg reb time (last 10) = 0.927s
+  Episode 30/50: Avg reb time (last 10) = 0.983s
+  Episode 40/50: Avg reb time (last 10) = 0.949s
+  Episode 50/50: Avg reb time (last 10) = 0.919s
+
+================================================================================
+FINAL COMPARISON
+================================================================================
+
+Sequential:
+  Mean rebalancing time: 1.838s ± 0.337s
+  Total time: 122.20s
+
+Parallel:
+  Mean rebalancing time: 0.945s ± 0.057s
+  Total time: 77.13s
+
+Speedup: 1.94x (FASTER with parallel)
+================================================================================
