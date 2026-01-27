@@ -361,6 +361,12 @@ parser.add_argument(
     help="name of checkpoint file to save/load (default: A2C)",
 )
 parser.add_argument(
+    "--load_checkpoint_path",
+    type=str,
+    default=None,
+    help="name of checkpoint file to load from (if different from checkpoint_path). If not specified, uses checkpoint_path (default: None)",
+)
+parser.add_argument(
     "--load",
     action="store_true",
     default=False,
@@ -621,9 +627,13 @@ if not args.test:
         model_agents = None  # No models needed
 
     if args.load and args.mode not in [3, 4]:
-        print("load checkpoint")
+        # Determine which checkpoint path to load from
+        load_from = args.load_checkpoint_path if args.load_checkpoint_path is not None else args.checkpoint_path
+        print(f"Loading checkpoint from: {load_from}")
+        if args.load_checkpoint_path is not None:
+            print(f"Will save new checkpoints to: {args.checkpoint_path}")
         for agent_id in [0, 1]:
-            checkpoint_path = f"ckpt/{args.checkpoint_path}_agent{agent_id+1}_running.pth"
+            checkpoint_path = f"ckpt/{load_from}_agent{agent_id+1}_running.pth"
             model_agents[agent_id].load_checkpoint(path=checkpoint_path)
             print(f"Loaded checkpoint for agent {agent_id} from {checkpoint_path}")
         print("Loaded models from checkpoint successfully")
