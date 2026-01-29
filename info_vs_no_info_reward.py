@@ -38,7 +38,7 @@ for i, ax in enumerate(axes):
     # Process both experimental groups (Info vs No Info)
     for key, color, label, linestyle in [
         (m['k_in'], c_info, 'Shared Info', '-'), 
-        (m['k_no'], c_no_info, 'No Shared Info', '--')
+        (m['k_no'], c_no_info, 'No Shared Info', '-')
     ]:
         df = dfs[key]
         
@@ -75,11 +75,11 @@ for i, ax in enumerate(axes):
     if i == 0:
         ax.legend(loc='lower right', framealpha=0.9, fontsize=9)
 
-# Common X-axis label with the exclusion note
-axes[-1].set_xlabel("Training Steps ($10^3$)\n(Initial 5,000 steps excluded)", fontsize=10)
+# Common X-axis label
+axes[-1].set_xlabel("Training Episodes ($10^3$)", fontsize=10)
 
 # Overall Figure Title
-fig.suptitle("Convergence Dynamics of Dispatching Policies\nwith and without Information Sharing", 
+fig.suptitle("Convergence Dynamics: With vs. Without Competitor Price Visibility", 
              fontsize=13, y=0.97)
 
 # Adjust layout to fit titles and labels

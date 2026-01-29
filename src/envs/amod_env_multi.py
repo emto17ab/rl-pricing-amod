@@ -240,6 +240,9 @@ class AMoD:
         # - rejection_rate: ratio of rejected demand to total demand
         self.system_info = dict.fromkeys(['rejected_demand', 'total_demand', 'rejection_rate'], 0)
 
+        # Wage tracking for dynamic wage scenarios (only when use_dynamic_wage_man_south=True)
+        self.system_wage_samples = []
+
         # Multi-agent external rewards (operating costs): ext_reward[agent_id] = np.array of external rewards per region
         self.ext_reward_agents = {a: np.zeros(self.nregion) for a in [0, 1]}
 
@@ -276,6 +279,9 @@ class AMoD:
         # Reset system_info for this timestep
         for key in self.system_info:
             self.system_info[key] = 0
+        
+        # Reset wage samples for this timestep
+        self.system_wage_samples = []
 
         total_original_demand = 0
         total_rejected_demand = 0
@@ -353,6 +359,9 @@ class AMoD:
                             # Fallback to uniform wage if region not in distribution
                             passenger_wages = np.full(int(d_original), self.wage)
                         
+                        # Track sampled wages for system-wide average
+                        self.system_wage_samples.extend(passenger_wages.tolist())
+                        
                         # Vectorized income effect calculation: city_avg_wage / passenger_wage
                         income_effects = self.city_avg_wage / passenger_wages
                         
@@ -392,7 +401,10 @@ class AMoD:
                         avg_probabilities = probabilities_batch.mean(axis=0)
                         
                     else:
-                        # Original uniform wage approach
+                        # Original uniform wage approach (track wages too)
+                        passenger_wages = np.full(int(d_original), self.wage)
+                        self.system_wage_samples.extend(passenger_wages.tolist())
+                        
                         income_effect = self.wage / self.wage  # Always 1.0
                         
                         # Compute utilities for all agents (same for all passengers)
@@ -546,6 +558,12 @@ class AMoD:
         self.system_info['rejection_rate'] = (
             total_rejected_demand / total_original_demand if total_original_demand > 0 else 0
         )
+        
+        # Calculate average wage (always track, regardless of dynamic wage flag)
+        if len(self.system_wage_samples) > 0:
+            self.system_info['avg_wage'] = np.mean(self.system_wage_samples)
+        else:
+            self.system_info['avg_wage'] = None
 
         # Add unprofitable trips count to agent info
         for agent_id in [0, 1]:
@@ -835,6 +853,8 @@ class AMoD:
         # Reset system-level info tracking
         self.system_info = dict.fromkeys(['rejected_demand', 'total_demand', 'rejection_rate'], 0)
         
+        # Reset wage tracking
+        self.system_wage_samples = []
         
         # Create observations for each agent
         self.agent_obs = {agent_id: (self.agent_acc[agent_id], self.time, 
@@ -847,7 +867,7 @@ class AMoD:
 
 class Scenario:
     def __init__(self, N1=2, N2=4, tf=60, sd=None, ninit=5, tripAttr=None, demand_input=None, demand_ratio=None, supply_ratio=1,
-                 trip_length_preference=0.25, grid_travel_time=1, fix_price=True, alpha=0.0, json_file=None, json_hr=19, json_tstep=3, varying_time=False, json_regions=None, impute=False, agent0_vehicle_ratio=0.5):
+                 trip_length_preference=0.25, grid_travel_time=1, fix_price=True, alpha=0.0, json_file=None, json_hr=19, json_tstep=3, varying_time=False, json_regions=None, impute=False, agent0_vehicle_ratio=0.5, total_vehicles=None):
         # trip_length_preference: positive - more shorter trips, negative - more longer trips
         # grid_travel_time: travel time between grids
         # demand_input： list - total demand out of each region,
@@ -1163,17 +1183,25 @@ class Scenario:
 
             # Initial vehicle distribution
             # Data contains hour and total number of vehicles in network
-            for item in data["totalAcc"]:
-                hr, acc = item["hour"], item["acc"]
-                if hr == json_hr+int(round(json_tstep/2*tf/60)):
-                    # Total fleet with supply ratio applied
-                    total_fleet = int(supply_ratio * acc)
+            # Use total_vehicles if provided, otherwise read from data
+            if total_vehicles is not None:
+                # Use the provided total_vehicles value
+                total_fleet = total_vehicles
+                fleet_agent0 = int(total_fleet * self.agent0_vehicle_ratio)
+                fleet_agent1 = total_fleet - fleet_agent0
+            else:
+                # Read from data file
+                for item in data["totalAcc"]:
+                    hr, acc = item["hour"], item["acc"]
+                    if hr == json_hr+int(round(json_tstep/2*tf/60)):
+                        # Total fleet with supply ratio applied
+                        total_fleet = int(supply_ratio * acc)
+                        
+                        # Split fleet between two agents using agent0_vehicle_ratio
+                        fleet_agent0 = int(total_fleet * self.agent0_vehicle_ratio)
+                        fleet_agent1 = total_fleet - fleet_agent0
                     
-                    # Split fleet between two agents using agent0_vehicle_ratio
-                    fleet_agent0 = int(total_fleet * self.agent0_vehicle_ratio)
-                    fleet_agent1 = total_fleet - fleet_agent0
-                    
-                    # Create list of nodes and shuffle for random remainder assignment
+            # Create list of nodes and shuffle for random remainder assignment
                     nodes_list = list(self.G.nodes)
                     random.seed(sd)  # Use scenario seed for reproducibility
                     random.shuffle(nodes_list)

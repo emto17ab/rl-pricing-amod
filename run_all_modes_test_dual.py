@@ -8,7 +8,7 @@ import re
 import sys
 
 # Configuration
-CHECKPOINT_BASE = "dual_agent_nyc_man_south_mode{}"
+CHECKPOINT_BASE = "dual_agent_nyc_man_south_continued_v4_mode{}"
 CITY = "nyc_man_south"
 MODEL_TYPE = "running"
 
@@ -35,9 +35,10 @@ METRIC_PATTERNS = {
     "Arrivals Agent 0": r"Agent 0 Metrics:[\s\S]*?Arrivals \(mean, std\): ([\d.-]+), ([\d.-]+)",
     "Arrivals Agent 1": r"Agent 1 Metrics:[\s\S]*?Arrivals \(mean, std\): ([\d.-]+), ([\d.-]+)",
     "Total Arrivals": r"Total arrivals \(mean, std\): ([\d.-]+), ([\d.-]+)",
+    "Avg Wage": r"Average wage \(mean, std\): ([\d.-]+), ([\d.-]+)",
 }
 
-METRIC_ORDER = ["Total Reward", "Reward Agent 0", "Reward Agent 1", "Total Rebalancing Costs", "Rebalancing Costs Agent 0", "Rebalancing Costs Agent 1", "Total Rebalance Trips", "Rebalance Trips Agent 0", "Rebalance Trips Agent 1", "Total Served Demand", "Served Demand Agent 0", "Served Demand Agent 1", "Price Agent 0", "Price Agent 1", "Wait/mins Agent 0", "Wait/mins Agent 1", "Queue Agent 0", "Queue Agent 1", "Total Arrivals", "Arrivals Agent 0", "Arrivals Agent 1"]
+METRIC_ORDER = ["Total Reward", "Reward Agent 0", "Reward Agent 1", "Total Rebalancing Costs", "Rebalancing Costs Agent 0", "Rebalancing Costs Agent 1", "Total Rebalance Trips", "Rebalance Trips Agent 0", "Rebalance Trips Agent 1", "Total Served Demand", "Served Demand Agent 0", "Served Demand Agent 1", "Price Agent 0", "Price Agent 1", "Wait/mins Agent 0", "Wait/mins Agent 1", "Queue Agent 0", "Queue Agent 1", "Total Arrivals", "Arrivals Agent 0", "Arrivals Agent 1", "Avg Wage"]
 
 def run_mode(mode):
     """Run a single mode and return the output."""
@@ -100,7 +101,7 @@ def format_value(mean, std):
 def main():
     # Collect results for all modes
     all_results = {}
-    modes_to_run = [0,1,2, 3, 4]
+    modes_to_run = [2]
     
     for mode in modes_to_run:
         output = run_mode(mode)

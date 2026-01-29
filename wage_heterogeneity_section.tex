@@ -1,0 +1,91 @@
+\section{Regional Wage Heterogeneity}
+
+To evaluate the impact of spatially varying passenger income structures on the joint pricing and rebalancing policy, we conduct experiments in the NYC Manhattan South network where passenger wages differ substantially across regions. This reflects real-world scenarios where regional income levels vary based on factors such as local economic conditions, employment patterns, and socioeconomic characteristics. Understanding how the learned policy adapts to these income heterogeneities is critical for practical deployment in markets with diverse economic conditions.
+
+The wage distribution is calibrated based on regional income characteristics, with average passenger wages ranging from approximately \$10 per hour in southeastern regions to over \$35 per hour in northwestern regions, as shown in Figure~\ref{fig:wage_distribution}. This heterogeneity creates spatially varying demand patterns where passenger behavior and willingness to pay differ across regions. The two-agent system operates with a total fleet of 1250 vehicles, and both agents learn their policies jointly using the A2C algorithm over the same training horizon as previous experiments.
+
+\begin{figure}[!htbp]
+\centering
+\includegraphics[width=0.48\textwidth]{Images/manhattan_wage_distribution.png}
+\caption{Average hourly passenger wage distribution across regions in NYC Manhattan South under regional income heterogeneity, showing substantial spatial variation with passenger wages ranging from approximately \$10/hour in southeastern regions to over \$35/hour in northwestern regions.}
+\label{fig:wage_distribution}
+\end{figure}
+
+Table~\ref{tab:wage_heterogeneity_results} presents the performance metrics for the joint pricing and rebalancing policy under regional wage heterogeneity. The system achieves a total reward of 24624.2 across both agents, with Agent 0 earning slightly higher rewards (12630.5) compared to Agent 1 (11993.7). This asymmetry is reflected in the served demand, where Agent 0 serves 1549.6 passengers compared to Agent 1's 1483.0 passengers, despite similar total arrivals for both agents.
+
+\begin{table}[!htbp]
+\centering
+\caption{Performance Metrics for Joint Pricing and Rebalancing Policy with Regional Wage Heterogeneity in NYC Manhattan South. The numbers in parentheses indicate the standard deviations across 10 test runs. All values are averaged across all regions.}
+\label{tab:wage_heterogeneity_results}
+\begin{tabular}{lc}
+\toprule
+Metric & Joint Policy \\
+\midrule
+Total Reward & 24624.2 (490.1) \\
+Reward Agent 0 & 12630.5 (264.3) \\
+Reward Agent 1 & 11993.7 (303.2) \\
+\cmidrule(lr){1-2}
+Total Rebalancing Costs & 2486.7 (99.8) \\
+Rebalancing Costs Agent 0 & 1161.0 (61.8) \\
+Rebalancing Costs Agent 1 & 1325.7 (49.8) \\
+\cmidrule(lr){1-2}
+Total Rebalance Trips & 572.7 (25.2) \\
+Rebalance Trips Agent 0 & 266.8 (13.4) \\
+Rebalance Trips Agent 1 & 305.9 (15.1) \\
+\cmidrule(lr){1-2}
+Total Served Demand & 3032.6 (38.0) \\
+Served Demand Agent 0 & 1549.6 (20.3) \\
+Served Demand Agent 1 & 1483.0 (26.1) \\
+\cmidrule(lr){1-2}
+Price Agent 0 & 1.27 (0.00) \\
+Price Agent 1 & 1.31 (0.00) \\
+\cmidrule(lr){1-2}
+Wait/mins Agent 0 & 0.93 (0.06) \\
+Wait/mins Agent 1 & 0.95 (0.09) \\
+\cmidrule(lr){1-2}
+Queue Agent 0 & 4.67 (0.98) \\
+Queue Agent 1 & 5.93 (1.14) \\
+\cmidrule(lr){1-2}
+Total Arrivals & 3510.9 (47.3) \\
+Arrivals Agent 0 & 1775.4 (20.4) \\
+Arrivals Agent 1 & 1735.5 (30.9) \\
+\cmidrule(lr){1-2}
+Average Wage & 25.8 (0.1) \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The rebalancing behavior under wage heterogeneity, shown in Figure~\ref{fig:rebalancing_flows_wage}, reveals a clear pattern: both agents exhibit net positive vehicle flows toward northwestern regions and net negative flows from southeastern regions. Agent 1 demonstrates more aggressive rebalancing, with net flows reaching up to 57 vehicles in northwestern regions and -54 vehicles in southeastern regions, compared to Agent 0's maximum flows of 41 and -71 vehicles respectively. This corresponds to Agent 1's higher total rebalancing costs (1325.7) and more rebalancing trips (305.9) compared to Agent 0 (1161.0 costs and 266.8 trips).
+
+\begin{figure*}[!htb]
+\centering
+\includegraphics[width=0.95\textwidth]{Images/manhattan_rebalancing_flows_different_wages.png}
+\caption{Net rebalancing flows per region for (a) Agent 0 and (b) Agent 1 under regional income heterogeneity. Positive values (red) indicate net inflow of vehicles, while negative values (blue) indicate net outflow. Both agents rebalance vehicles from low-income southeastern regions toward high-income northwestern regions.}
+\label{fig:rebalancing_flows_wage}
+\end{figure*}
+
+Figure~\ref{fig:demand_wage} shows the spatial distribution of demand for both agents. Demand is heavily concentrated in northwestern regions, with Agent 0 serving 300-324 passengers and Agent 1 serving 338-392 passengers in these areas. In contrast, southeastern regions exhibit minimal demand, with fewer than 31 passengers for Agent 0 and fewer than 19 passengers for Agent 1. This demand pattern aligns closely with the income distribution, where northwestern regions have passenger wages exceeding \$30 per hour while southeastern regions have passenger wages below \$20 per hour. The correlation between higher passenger incomes and higher demand suggests that regions with greater economic prosperity naturally generate more ride requests.
+
+\begin{figure*}[!htb]
+\centering
+\includegraphics[width=0.95\textwidth]{Images/manhattan_demand_different_wages.png}
+\caption{Total demand originating from each region for (a) Agent 0 and (b) Agent 1 under regional income heterogeneity. Demand is concentrated in northwestern regions with higher passenger incomes, while southeastern regions with lower passenger incomes exhibit substantially lower demand.}
+\label{fig:demand_wage}
+\end{figure*}
+
+The pricing strategies in Figure~\ref{fig:pricing_wage} demonstrate that both agents set higher price scalars in high-income, high-demand northwestern regions (1.40-1.45) compared to low-income, low-demand southeastern regions (1.15-1.28). Agent 1 maintains a slightly higher average price scalar (1.31) compared to Agent 0 (1.27), consistent with its higher rebalancing costs. The spatial variation in pricing indicates that both agents have learned to charge premium prices in regions where demand is high and passenger incomes are elevated, while moderating prices in areas with lower income levels and demand.
+
+\begin{figure*}[!htb]
+\centering
+\includegraphics[width=0.95\textwidth]{Images/manhattan_pricing_different_wages.png}
+\caption{Average pricing scalars set by (a) Agent 0 and (b) Agent 1 per region under regional income heterogeneity. Both agents set higher prices in northwestern regions with higher passenger incomes and demand, and lower prices in southeastern regions with lower passenger incomes and demand.}
+\label{fig:pricing_wage}
+\end{figure*}
+
+These results demonstrate that the joint pricing and rebalancing policy successfully adapts to regional income heterogeneity by coordinating vehicle allocation and pricing decisions across spatially varying demand patterns. The rebalancing patterns clearly show that both agents concentrate their fleets in high-income, high-demand northwestern regions, accepting the higher rebalancing costs to position vehicles where revenue potential is greatest. This behavior is economically rational: despite northwestern regions having passenger incomes exceeding \$30 per hour compared to \$10-15 per hour in southeastern regions, the substantially higher demand (300+ passengers versus fewer than 30) justifies the increased rebalancing costs.
+
+The pricing strategies further support this observation. Both agents charge premium prices in northwestern regions where both demand and passenger incomes are high, while setting lower prices in southeastern regions. This differential pricing reflects the learned understanding that passengers in high-income areas have greater willingness to pay, allowing agents to maximize revenue while maintaining service levels. The minimal demand in southeastern regions, despite lower prices, suggests that these areas have inherently lower transportation needs rather than price sensitivity driving the demand pattern.
+
+Agent 1's higher rebalancing costs and more aggressive vehicle repositioning toward northwestern regions, combined with its higher average pricing, indicate a more active fleet management strategy. However, this results in slightly lower rewards compared to Agent 0, suggesting that excessive rebalancing under income heterogeneity may not always be optimal. Agent 0's more conservative rebalancing approach achieves better economic performance while still serving comparable demand levels.
+
+The low standard deviations across metrics indicate that the learned policy exhibits stable performance under income heterogeneity, with consistent pricing decisions (standard deviation of 0.00 for both agents) and reliable service quality (wait times of approximately 0.9 minutes for both agents). This stability is critical for real-world deployment where operators require predictable system behavior across diverse economic conditions.

@@ -437,6 +437,13 @@ parser.add_argument(
 )
 
 parser.add_argument(
+    "--total_vehicles",
+    type=int,
+    default=None,
+    help="Total number of vehicles in the system. If None, reads from dataset (default: None)",
+)
+
+parser.add_argument(
     "--look_ahead",
     type=int,
     default=6,
@@ -540,7 +547,8 @@ if not args.test:
                 tf=args.max_steps,
                 impute=args.impute,
                 supply_ratio=args.supply_ratio,
-                agent0_vehicle_ratio=args.agent0_vehicle_ratio)
+                agent0_vehicle_ratio=args.agent0_vehicle_ratio,
+                total_vehicles=args.total_vehicles)
 
     # Create the environment
     env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_agent=args.fix_agent, choice_intercept=choice_intercept[city], wage=wage[city], use_dynamic_wage_man_south=args.use_dynamic_wage_man_south)
@@ -1329,7 +1337,8 @@ else:
                 tf=args.max_steps,
                 impute=args.impute,
                 supply_ratio=args.supply_ratio,
-                agent0_vehicle_ratio=args.agent0_vehicle_ratio)
+                agent0_vehicle_ratio=args.agent0_vehicle_ratio,
+                total_vehicles=args.total_vehicles)
 
     env = AMoD(scenario, args.mode, beta=beta[city], jitter=args.jitter, max_wait=args.maxt, choice_price_mult=args.choice_price_mult, seed = args.seed, fix_agent=args.fix_agent, choice_intercept=choice_intercept[city], wage=wage[city], use_dynamic_wage_man_south=args.use_dynamic_wage_man_south)
     
@@ -1435,6 +1444,9 @@ else:
     epoch_rebalancing_list = []
     epoch_price_mean_list = []
     
+    # Wage tracking (only for dynamic wage scenarios)
+    epoch_avg_wage_list = []
+    
     # Initialize concentration tracking lists based on mode
     if env.mode == 0:
         epoch_concentration_dirichlet_list = []
@@ -1480,6 +1492,9 @@ else:
         eps_rebalancing = {0: 0, 1: 0}
         actions_price = {0: [], 1: []}
         
+        # Wage tracking for episode
+        eps_wage_samples = []
+        
         # Initialize concentration tracking for episode based on mode
         if env.mode == 0:
             actions_concentration_dirichlet = {0: [], 1: []}
@@ -1501,6 +1516,10 @@ else:
             if env.mode == 0:
                 # Make Match Step
                 obs, paxreward, done, info, system_info, _, _ = env.match_step_simple()
+                
+                # Collect wage samples if available
+                if system_info.get('avg_wage') is not None:
+                    eps_wage_samples.append(system_info['avg_wage'])
 
                 # Update episode reward
                 eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
@@ -1570,6 +1589,10 @@ else:
                 
             elif env.mode == 1:
                 obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
+                
+                # Collect wage samples if available
+                if system_info.get('avg_wage') is not None:
+                    eps_wage_samples.append(system_info['avg_wage'])
 
                 eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
 
@@ -1617,6 +1640,10 @@ else:
             elif env.mode == 2:
                 # --- Matching step ---
                 obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
+                
+                # Collect wage samples if available
+                if system_info.get('avg_wage') is not None:
+                    eps_wage_samples.append(system_info['avg_wage'])
                 
                 eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
 
@@ -1712,6 +1739,10 @@ else:
                 # Matching step with fixed prices
                 obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
                 
+                # Collect wage samples if available
+                if system_info.get('avg_wage') is not None:
+                    eps_wage_samples.append(system_info['avg_wage'])
+                
                 # Track rewards (no rebalancing cost in baseline)
                 eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
                 
@@ -1743,6 +1774,10 @@ else:
                 
                 # Matching step with fixed prices
                 obs, paxreward, done, info, system_info, _, _ = env.match_step_simple(action_rl)
+                
+                # Collect wage samples if available
+                if system_info.get('avg_wage') is not None:
+                    eps_wage_samples.append(system_info['avg_wage'])
                 
                 # Track rewards
                 eps_reward = {a: eps_reward[a] + paxreward[a] for a in [0, 1]}
@@ -1836,6 +1871,9 @@ else:
                 eps_concentration_dirichlet[a] = np.mean(actions_concentration_dirichlet[a]) if len(actions_concentration_dirichlet[a]) > 0 else 0
         # Mode 3 and 4: No concentration tracking
         
+        # Wage mean: average wage across all steps (only when use_dynamic_wage_man_south=True)
+        eps_avg_wage = np.mean(eps_wage_samples) if len(eps_wage_samples) > 0 else None
+        
         # Append episode results to epoch lists
         epoch_reward_list.append(eps_reward) # Done
         epoch_demand_list.append(eps_demand) # Done
@@ -1845,6 +1883,7 @@ else:
         epoch_arrivals_list.append(eps_arrivals) # Done
         epoch_rebalancing_list.append(eps_rebalancing) # Done
         epoch_price_mean_list.append(eps_price_mean) # Done
+        epoch_avg_wage_list.append(eps_avg_wage)
         
         # Append concentration results (mode-specific)
         if env.mode == 0:
@@ -1949,6 +1988,11 @@ else:
     print(f"  Total served demand (mean, std): {np.mean(demands_total):.2f}, {np.std(demands_total):.2f}")
     print(f"  Total rebalancing cost (mean, std): {np.mean(costs_total):.2f}, {np.std(costs_total):.2f}")
     print(f"  Total arrivals (mean, std): {np.mean(arrivals_total):.2f}, {np.std(arrivals_total):.2f}")
+    
+    # Show average wage (always available now, regardless of dynamic wage flag)
+    avg_wages = [w for w in epoch_avg_wage_list if w is not None]
+    if avg_wages:
+        print(f"  Average wage (mean, std): {np.mean(avg_wages):.2f}, {np.std(avg_wages):.2f}")
     
     # Only show rebalancing trips for modes with rebalancing (0, 2, 4; not mode 1 or 3)
     if args.mode not in [1, 3]:
