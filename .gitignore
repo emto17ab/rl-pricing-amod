@@ -5,8 +5,8 @@ saved_files/
 thesis_env/
 wandb/
 
-# Job script
-base_job.sh
+# Shell scripts
+*.sh
 
 # Gradient explosion diagnosis files
 gradient_explosion_diagnosis_*.txt
